@@ -1,6 +1,7 @@
 // 开场和背景 (设置 › 外观; 界面改版方案 第 7 版 #opening): the settings and the rules, pure. The desktop shell reads the
 // same keys from meta.json before the server is up (desktop/src/opening-pack.ts `openingSettings`) — the defaults here
-// and there must agree: Claude Web 娘, each day's first start, full length, no sound, the loop kept at 30%.
+// and there must agree: Claude Web 娘, every start, full length, with sound, the loop kept at 60% (the user's own
+// choices, made the defaults 2026-11-20).
 import type { OpeningInfo } from '@shared';
 import { backdropOff } from '@/features/home/letter-flow';
 
@@ -23,7 +24,7 @@ export type DrawnId = (typeof DRAWN_IDS)[number];
 export const isDrawnId = (id: unknown): id is DrawnId => id === 'ignite' || id === 'stars' || id === 'ascii';
 /** 网吧开门: the 3D cafe (its script: web/dist/opening/cafe-opening.js) */
 export const CAFE_ID = 'cafe';
-export const OPACITY_DEFAULT = 30;
+export const OPACITY_DEFAULT = 60;
 export const OPACITY_MAX = 60;
 
 export type OpeningWhen = 'always' | 'daily' | 'never';
@@ -34,10 +35,10 @@ export const packOf = (s: Record<string, unknown>): string => {
 };
 export const whenOf = (s: Record<string, unknown>): OpeningWhen => {
   const v = s[OPENING_KEYS.when];
-  return v === 'always' || v === 'never' ? v : 'daily';
+  return v === 'daily' || v === 'never' ? v : 'always';
 };
 export const fullOf = (s: Record<string, unknown>) => s[OPENING_KEYS.length] !== 'short';
-export const soundOf = (s: Record<string, unknown>) => s[OPENING_KEYS.sound] === true;
+export const soundOf = (s: Record<string, unknown>) => s[OPENING_KEYS.sound] !== false;
 
 /**
  * 放完留作背景: on unless switched off. While it was never set, someone who had turned 背景动画 off (they asked for a
@@ -49,7 +50,7 @@ export function keepOn(s: Record<string, unknown>): boolean {
   return typeof v === 'boolean' ? v : !backdropOff(s);
 }
 
-/** 浓淡: how much of the background shows through the shell (0–60 %, 30 by default). */
+/** 浓淡: how much of the background shows through the shell (0–60 %, 60 by default). */
 export function opacityOf(s: Record<string, unknown>): number {
   const raw = s[OPENING_KEYS.opacity];
   const v = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN;

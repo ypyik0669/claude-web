@@ -1,53 +1,86 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { tr } from '@/i18n';
 import portrait from '@/assets/opening/portrait.webp';
-import { whenOf } from './model';
+import { tunnelHost } from '@/ws/tunnel';
+import { fullOf, whenOf } from './model';
+import { firstStartToday, phoneOpening, playsFull, type PhoneOpening } from './phone-opening';
+import './phone-opening.css';
 
-/** How long the phone's start screen stays (then it fades out in 0.35 s). */
-export const PHONE_SPLASH_MS = 1100;
+/** How long it waits for the settings (完整 / 简短 / 不放) before it plays with the defaults. */
+export const PHONE_SPLASH_WAIT_MS = 1200;
+/** This phone's last start day (每天第一次), in the page's own storage: one per phone, not the PC's meta.json. */
+const DAY_KEY = 'cw.phone.openingDay';
 
-/** The logo (opening-logo.svg), as the desktop's opening draws it. */
-function Logo() {
-  return (
-    <svg viewBox="0 0 1024 1024" aria-hidden>
-      <rect width="1024" height="1024" rx="236" fill="#0B0B0C" />
-      <g transform="translate(92 452)" fill="#FFFFFF"><path d="M0 260 V0 H250 V110 H120 V260 Z" /><path d="M300 0 H420 L360 260 H240 Z" /><path d="M460 -140 H580 V260 H460 Z" /><circle cx="710" cy="130" r="130" fill="#FF5A1F" /></g>
-    </svg>
-  );
-}
+const reducedMotion = () => (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) || document.documentElement.dataset.reduceMotion === '1';
 
 /**
- * The phone's start screen (界面改版方案 第 7 版 #opening): Claude Web 娘's portrait, the logo and the wordmark lighting
- * up under it, about a second, no video. Only when the page opens at phone width; a tap ends it; 开场 set to 不放 ends
- * it as soon as the settings are in.
+ * The phone's opening (phone-opening.ts: her portrait, embers, the fuse round the gold logo, the wordmark), when a
+ * phone opens the app by itself (局域网). Inside the phone shell it plays nothing — the shell played it while it
+ * connected — and tells the shell the opening settings for its next start. Decided once, at mount: a desktop window
+ * made narrow later never gets it. 开场 set to 不放 shows nothing; 每天第一次 plays 简短 after the day's first start
+ * (playsFull); a tap ends it.
  */
 export function PhoneSplash() {
   const mobile = useStore((s) => s.mobile);
-  const never = useStore((s) => s.metaLoaded && whenOf(s.settings) === 'never');
-  // decided once: a desktop window made narrow later never gets it
-  const [phase, setPhase] = useState<'on' | 'out' | 'gone'>(() => (mobile ? 'on' : 'gone'));
+  const metaLoaded = useStore((s) => s.metaLoaded);
+  const when = useStore((s) => whenOf(s.settings));
+  const full = useStore((s) => fullOf(s.settings));
+  const [inShell] = useState(() => !!tunnelHost());
+  // 'wait': a dark ground until the settings are in (or PHONE_SPLASH_WAIT_MS); 'play': the opening owns the screen
+  const [phase, setPhase] = useState<'wait' | 'play' | 'gone'>(() => (mobile && !inShell ? 'wait' : 'gone'));
+  const host = useRef<HTMLDivElement>(null);
+  const op = useRef<PhoneOpening | null>(null);
+
+  // the shell's next start plays (or skips) the opening as this PC has it set
   useEffect(() => {
-    if (phase !== 'on') return;
-    const t = setTimeout(() => setPhase('out'), PHONE_SPLASH_MS);
-    return () => clearTimeout(t);
-  }, [phase]);
+    if (!inShell || !metaLoaded) return;
+    try {
+      window.parent.postMessage({ type: 'cw-shell', opening: { when, full } }, window.location.origin);
+    } catch {
+      /* the shell is gone: nothing to tell */
+    }
+  }, [inShell, metaLoaded, when, full]);
+
   useEffect(() => {
-    if (phase !== 'out') return;
-    const t = setTimeout(() => setPhase('gone'), 380);
+    if (phase !== 'wait') return;
+    if (metaLoaded && when === 'never') return setPhase('gone');
+    if (metaLoaded) return setPhase('play');
+    const t = setTimeout(() => setPhase('play'), PHONE_SPLASH_WAIT_MS);
     return () => clearTimeout(t);
+  }, [phase, metaLoaded, when]);
+
+  // 不放 arriving after it started (the settings came late): it goes at once
+  useEffect(() => {
+    if (phase === 'play' && metaLoaded && when === 'never') void op.current?.out();
+  }, [phase, metaLoaded, when]);
+
+  useEffect(() => {
+    if (phase !== 'play' || !host.current) return;
+    const long = playsFull(when === 'daily' ? 'daily' : 'always', full, firstStartToday(DAY_KEY));
+    const o = phoneOpening(host.current, { portrait, full: long, reduced: reducedMotion(), label: tr('Claude Web 正在打开') });
+    op.current = o;
+    let live = true;
+    void o.played.then(() => o.out()).then(() => live && setPhase('gone'));
+    return () => {
+      live = false;
+      void o.out();
+    };
+    // the length is read once, when it starts
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
-  useEffect(() => { if (never && phase === 'on') setPhase('gone'); }, [never, phase]);
+
   if (phase === 'gone') return null;
   return (
-    <div className={phase === 'out' ? 'phone-splash out' : 'phone-splash'} role="presentation" onClick={() => setPhase('out')}>
-      <img src={portrait} alt="" draggable={false} />
-      <i className="fade" />
-      <div className="mark" aria-label={tr('Claude Web 正在打开')}>
-        <Logo />
-        <div className="w"><span className="c">Claude</span>Web</div>
-        <div className="by"><span>by</span>Super NB</div>
-      </div>
-    </div>
+    <div
+      ref={host}
+      className={phase === 'wait' ? 'phone-splash-host wait' : 'phone-splash-host'}
+      role="presentation"
+      onClick={() => {
+        // a tap: the opening jumps to its end and fades out; while still waiting, straight away
+        if (op.current) op.current.skip();
+        else setPhase('gone');
+      }}
+    />
   );
 }

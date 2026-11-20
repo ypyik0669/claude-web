@@ -9,9 +9,10 @@ import {
 
 describe('开场 · which one a start shows', () => {
   it('the settings and their defaults: Claude Web 娘, the day\'s first start, full, no sound', () => {
-    expect(openingSettings({})).toEqual({ pack: DEFAULT_PACK, when: 'daily', full: true, sound: false });
+    expect(openingSettings({})).toEqual({ pack: DEFAULT_PACK, when: 'always', full: true, sound: true });
+    expect(openingSettings({ 'ui.opening.when': 'daily', 'ui.opening.sound': false })).toMatchObject({ when: 'daily', sound: false });
     expect(openingSettings({ 'ui.opening.pack': 'ignite', 'ui.opening.when': 'always', 'ui.opening.length': 'short', 'ui.opening.sound': true })).toEqual({ pack: 'ignite', when: 'always', full: false, sound: true });
-    expect(openingSettings({ 'ui.opening.when': 'weekly', 'ui.opening.pack': '' })).toMatchObject({ when: 'daily', pack: DEFAULT_PACK });
+    expect(openingSettings({ 'ui.opening.when': 'weekly', 'ui.opening.pack': '' })).toMatchObject({ when: 'always', pack: DEFAULT_PACK });
   });
   it('每天第一次: the chosen one once a day (the day used up), the classic one the other times', () => {
     expect(pickOpening({ when: 'daily', today: '2026-11-19', hidden: false })).toEqual({ show: 'fancy', markDay: true });

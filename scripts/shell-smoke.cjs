@@ -13,6 +13,10 @@
 //   · offline, the shell opens from its precache (each file checked against the sha256 table in sw.js); a shell file
 //     rewritten in Cache Storage (what a tampered PC's app could do on this origin) is not served: the real one comes
 //     from the network and the copy is dropped (F3);
+//   · the opening (phone-opening.ts) plays over the pairing the QR's page starts, and over the list on a start, and
+//     goes by itself;
+//   · 扫码配对: Chromium's fake camera plays a Y4M file with the QR of a fresh pairing code (the settings page's whole
+//     link); the shell's scanner reads it (jsQR: Windows' Chromium has no BarcodeDetector), pairs and opens the app;
 //   · the localStorage override (cw.shell.brokers / cw.shell.stun) is said in the console, as an info line;
 //   · any console error or warning in the shell page, the app frame or the service worker fails the run;
 //   · nothing goes out: Electron's proxy and the server's are a recorder that must see no request, and every
@@ -65,6 +69,32 @@ function png(w, h) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
+/**
+ * A pairing link as a QR code on one size×size Y4M frame (black on white, a quiet zone round it), or a blank frame:
+ * what Chromium's fake camera plays (--use-file-for-fake-video-capture) to the shell's 扫码配对. The file is read when
+ * the camera starts, so the runner draws the QR of a fresh code into it just before the driver opens the scanner.
+ */
+function qrY4m(text, size = 720) {
+  const Y = Buffer.alloc(size * size, 255);
+  if (text) {
+    const qr = require('qrcode').create(text, { errorCorrectionLevel: 'M' });
+    const n = qr.modules.size;
+    const scale = Math.floor(size / (n + 8));
+    const off = Math.floor((size - n * scale) / 2);
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (!qr.modules.get(r, c)) continue;
+        for (let y = 0; y < scale; y++) {
+          const at = (off + r * scale + y) * size + off + c * scale;
+          Y.fill(0, at, at + scale);
+        }
+      }
+    }
+  }
+  const UV = Buffer.alloc((size / 2) * (size / 2) * 2, 128);
+  return Buffer.concat([Buffer.from(`YUV4MPEG2 W${size} H${size} F10:1 Ip A1:1 C420jpeg\nFRAME\n`), Y, UV]);
+}
+
 /** One finished Claude conversation in the temp HOME (Claude Code's transcript layout): sessions.list shows it. */
 function seed(home, proj) {
   const sid = '5a0e0e0e-0000-4000-8000-0000000051e1';
@@ -85,11 +115,12 @@ function seed(home, proj) {
 /**
  * dist-shell at the root of 127.0.0.1:<port>, its CSP widened for the ws:// test broker, and sw.js's hash of the page
  * swapped for the widened page's (else the worker would rightly refuse its cached copy); `/__smoke` is a blank page.
+ * `hooks`: paths the driver calls on the runner (`/__paircode`: a fresh pairing QR for the fake camera), filled later.
  */
-async function shellServer() {
+async function shellServer(hooks = {}) {
   const http = require('node:http');
   const { createHash } = require('node:crypto');
-  const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+  const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.webp': 'image/webp', '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.txt': 'text/plain; charset=utf-8' };
   const index = fs.readFileSync(path.join(SHELL_DIR, 'index.html'), 'utf8');
   const CSP = "connect-src 'self' wss:;";
   if (!index.includes(CSP)) throw new Error(`web/dist-shell/index.html has no ${CSP} to widen (rebuild the shell?)`);
@@ -105,6 +136,12 @@ async function shellServer() {
     if (p === '/__smoke') return void s.writeHead(200, { 'content-type': MIME['.html'] }).end('<!doctype html><title>shell smoke</title>');
     // what this server was asked for so far (the driver tells a load from the precache from one over the network)
     if (p === '/__hits') return void s.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(hits));
+    if (hooks[p]) {
+      return void hooks[p]().then(
+        (v) => s.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(v)),
+        (e) => s.writeHead(500, { 'content-type': 'text/plain' }).end(String(e && e.message ? e.message : e)),
+      );
+    }
     if (p === '/' || p === '/index.html') return void s.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache' }).end(widened);
     if (p === '/sw.js') return void s.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-cache' }).end(swServed);
     const f = path.join(SHELL_DIR, p);
@@ -145,7 +182,11 @@ async function runner() {
   const { startBroker } = await import(pathToFileURL(path.join(ROOT, 'server', 'src', 'remote', 'anywhere', '__mocks__', 'mqtt-broker.mjs')).href);
   const broker = await startBroker();
   const brokers = [{ name: 'smoke', url: broker.url, relay: true }];
-  const shell = await shellServer();
+  const hooks = {};
+  const shell = await shellServer(hooks);
+  // what the fake camera plays: blank until the driver asks for a fresh pairing QR (/__paircode, below)
+  const qrFile = path.join(root, 'qr.y4m');
+  fs.writeFileSync(qrFile, qrY4m(null));
 
   const token = require('node:crypto').randomBytes(12).toString('hex');
   const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1' };
@@ -187,6 +228,13 @@ async function runner() {
   let qr = null;
   try { qr = JSON.parse(Buffer.from(hash.slice(3), 'base64url').toString('utf8')); } catch { /* checked below */ }
   const linkLists = { ok: JSON.stringify(qr?.b) === JSON.stringify(brokers) && JSON.stringify(qr?.st) === '[]', detail: JSON.stringify({ b: qr?.b, st: qr?.st }) };
+  // 扫码配对: a new code (the first one is spent by then) drawn as the QR the settings page shows, its whole link
+  hooks['/__paircode'] = async () => {
+    const pc2 = await req({ kind: 'remote.pairCode' });
+    if (!pc2.anywhereUrl) throw new Error('no 在外面也能用 link');
+    fs.writeFileSync(qrFile, qrY4m(pc2.anywhereUrl));
+    return { ok: true, chars: pc2.anywhereUrl.length };
+  };
   console.log(`server :${port}, broker ${broker.url}, shell ${shell.url} (HOME=${home})`);
 
   const result = path.join(out, 'shell-smoke.json');
@@ -199,6 +247,7 @@ async function runner() {
     SHELL_PC: os.hostname(),
     SHELL_PROXY: proxy,
     SHELL_USERDATA: path.join(root, 'electron'),
+    SHELL_QR: qrFile,
     SHELL_OUT: out,
     SHELL_RESULT: result,
     SHELL_SHOW: arg('--show', false) ? '1' : '',
@@ -283,6 +332,10 @@ function driver() {
   // the checks read Chinese texts (RELAY_BAR, the override's info line): the shell and the app follow the browser's
   // language, which follows the PC's (an en-US Windows showed the English bar and failed the relay check)
   app.commandLine.appendSwitch('lang', 'zh-CN');
+  // 扫码配对: a camera that plays the runner's Y4M file (a pairing QR), granted without a prompt
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+  app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+  app.commandLine.appendSwitch('use-file-for-fake-video-capture', E.SHELL_QR);
   const logFile = `${E.SHELL_RESULT}.log`;
   const log = (s) => { try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${s}\n`); } catch { /* ignore */ } };
   try { fs.writeFileSync(logFile, ''); } catch { /* ignore */ }
@@ -345,15 +398,22 @@ function driver() {
       setTimeout(() => res({ ok: false, timeout: true }), 60000);
     })`;
     const rtcConfigs = `(window.__smokeRtc || []).map((c) => (c && c.iceServers ? c.iceServers.length : 0))`;
+    /** The shell's paired-device records (IndexedDB cw-shell › devices). */
+    const deviceCount = `new Promise((res) => { const q = indexedDB.open('cw-shell'); q.onsuccess = () => { const g = q.result.transaction('devices').objectStore('devices').count(); g.onsuccess = () => { res(g.result); q.result.close(); }; g.onerror = () => res(-1); }; q.onerror = () => res(-1); })`;
+    const opening = `!!document.querySelector('.ph-open')`;
 
     try {
       // ---- pair through the QR link, open the app over a direct link: no override, the link's own lists only ----
       await win.loadURL(`${E.SHELL_URL}__smoke`);
       check('the shell origin starts with no localStorage override', await js(`localStorage.getItem('cw.shell.brokers') === null && localStorage.getItem('cw.shell.stun') === null`));
       await win.loadURL(`${E.SHELL_URL}${E.SHELL_PAIR}`);
+      // the page opened by the QR: the opening plays over the pairing and the first connection
+      const coverAtPair = await waitFor(opening, 5_000);
       const opened = await waitFor(appUp, 90_000);
       check('the QR link pairs (over the brokers it names) and the app frame opens, its WebSocket open through the tunnel', opened, opened ? '' : await js(`document.querySelector('main.page')?.innerText ?? ''`).catch(() => ''));
       if (!opened) { await shot('pair-failed'); return finish(1); }
+      const coverGone = await waitFor(`!${opening}`, 10_000);
+      check('a page opened by the QR plays the opening over the pairing, and it goes once the app is in', coverAtPair && coverGone, JSON.stringify({ coverAtPair, coverGone }));
       check('the pairing link is cleared from the address', (await js('location.hash')) === '');
       check('no override was in use (no info line about one)', !res.infos.some((m) => m.includes('自定义列表')), res.infos.join(' | '));
       const rec = await js(`new Promise((res) => { const q = indexedDB.open('cw-shell'); q.onsuccess = () => { const g = q.result.transaction('devices').objectStore('devices').getAll(); g.onsuccess = () => res(g.result.map((d) => ({ brokers: d.brokers, stun: d.stun }))); g.onerror = () => res(null); }; q.onerror = () => res(null); })`);
@@ -378,8 +438,13 @@ function driver() {
       // ---- open it again with ICE failing: the slow relay ----
       await js(`localStorage.setItem('smoke.noDirect', '1'); true`);
       await win.loadURL(E.SHELL_URL);
+      // a start in a browser tab (not the home-screen app): the opening over the list, which it leaves by itself
+      const coverAtStart = await waitFor(opening, 5_000);
+      if (coverAtStart) { await sleep(1800); await shot('opening'); }
       const listed = await waitFor(`[...document.querySelectorAll('button.device .pc')].map((e) => e.textContent).join('|') || null`, 15_000);
       check('the shell lists the paired PC', listed && listed.split('|').includes(E.SHELL_PC), String(listed));
+      const coverLeft = await waitFor(`!${opening}`, 8_000);
+      check('a start plays the opening over the list, and it goes by itself', coverAtStart && coverLeft, JSON.stringify({ coverAtStart, coverLeft }));
       check('… and the page sees ICE made to fail', await js('window.__smokeNoDirect === true'));
       await js(`document.querySelector('button.device').click(); true`);
       const relayed = await waitFor(`${appUp} && ${barText}.includes(${S(RELAY_BAR)})`, 120_000);
@@ -425,6 +490,24 @@ function driver() {
       // …and the real one came from the network (the static server was asked for it)
       const refetched = tamper ? (await hitsNow()).slice(beforeTamper).includes(new URL(tamper.url).pathname) : false;
       check('a shell file rewritten in Cache Storage is not served: the page runs the real one from the network and the copy is dropped', !!tamper && !!listedAgain && !ran && kept === false && refetched, JSON.stringify({ tamper, listedAgain, ran, kept, refetched }));
+
+      // ---- 扫码配对: the shell's own scanner reads a fresh pairing QR off the camera (Chromium's fake one plays the
+      // QR the runner drew, the settings page's whole link) and pairs; the app opens ----
+      const fresh = await js(`fetch('/__paircode', { cache: 'no-store' }).then((r) => r.json())`).catch((e) => ({ error: String(e.message || e) }));
+      await win.loadURL(E.SHELL_URL);
+      const scanOffered = await waitFor(`!!document.querySelector('button.scan-btn')`, 15_000);
+      const pasteFolded = await js(`(() => { const f = document.querySelector('.paste'); return !!f && f.hidden && !!document.querySelector('.paste-toggle'); })()`);
+      check('the list offers 扫码配对, the paste field folded away under its 扫不了？ line', scanOffered && pasteFolded, JSON.stringify({ scanOffered, pasteFolded }));
+      await waitFor(`!${opening}`, 8_000);
+      const before2 = await js(deviceCount);
+      await js(`document.querySelector('button.scan-btn').click(); true`);
+      const camera = await waitFor(`(() => { const v = document.querySelector('.scan video'); return !!(v && v.srcObject && v.videoWidth) && v.videoWidth + 'x' + v.videoHeight; })()`, 15_000);
+      if (camera) await shot('scanner');
+      check('扫码配对 opens the camera full screen (the fake camera\'s frames reach its video)', !!camera, String(camera));
+      const scannedIn = await waitFor(`${appUp} && !document.querySelector('.scan')`, 90_000);
+      const after2 = await js(deviceCount);
+      check('the scanned QR pairs (the PC\'s fresh code over its own lists) and the app opens',!!(fresh && fresh.ok) && !!scannedIn && after2 === before2 + 1, JSON.stringify({ fresh, scannedIn: !!scannedIn, before2, after2 }));
+      if (!scannedIn) await shot('scan-failed');
 
       // ---- the localStorage override: said in the console as an info line (not a warning) ----
       await js(`localStorage.setItem('cw.shell.brokers', ${S(E.SHELL_BROKERS)}); localStorage.setItem('cw.shell.stun', '[]'); true`);

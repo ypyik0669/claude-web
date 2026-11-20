@@ -4,7 +4,7 @@
 
 ## 放哪一种（桌面版启动时，`desktop/src/opening-pack.ts`，纯函数 + 测试）
 
-- 设置在 meta.json 的 `ui.opening.*`：`pack`（默认 `claude-web-chan`；`ignite` = 点火，`stars` = 星图，`ascii` = 字符雨，`cafe` = 网吧开门，见「开场 第二批」；或导入的包 id）、`when`（`always` / `daily` 默认 / `never`）、`length`（`full` 默认 / `short`）、`sound`（默认关）、`keep` + `opacity`（放完留作背景，见下）。主进程在 server 起来之前就要定，所以直接读 `<数据目录>/meta.json`（`readMetaSettings`，数据目录同 server 的 `CLAUDE_WEB_DIR` 规则）。
+- 设置在 meta.json 的 `ui.opening.*`：`pack`（默认 `claude-web-chan`；`ignite` = 点火，`stars` = 星图，`ascii` = 字符雨，`cafe` = 网吧开门，见「开场 第二批」；或导入的包 id）、`when`（`always` 默认 / `daily` / `never`）、`length`（`full` 默认 / `short`）、`sound`（默认开）、`keep` + `opacity`（放完留作背景，默认开、60%，见下）。默认值 11-20 照用户截图改成「每次打开 · 完整 · 声音开 · 留作背景 · 60%」（以前是每天第一次、声音关、30%）：`model.ts` 的 `whenOf` / `soundOf` / `OPACITY_DEFAULT` 和主进程 `opening-pack.ts` 的 `openingSettings` 两处一起改，`weekly`（老值）读成 `always`。存了值的人不受影响。主进程在 server 起来之前就要定，所以直接读 `<数据目录>/meta.json`（`readMetaSettings`，数据目录同 server 的 `CLAUDE_WEB_DIR` 规则）。
 - `pickOpening()`：`--hidden`（开机自启）→ 老开场、不算「今天放过」；`never` → 老开场的最后一帧（`still`），不等 `openingHold`；`daily` 且 `flags.json`（userData）的 `openingDay` 是今天（本地日期）→ 老开场；其余放人设版并写 `openingDay`。包没了（删了 / 文件缺）退回点火。`main.log` 记一行 `[opening] video claude-web-chan full` / `ignite short`。
 - 窗口的底色（`titleBar.bg`）按主题取开场结束时的底（`groundOf`：dark `#12110f`、light `#f7f6f2`、dracula / nord / tokyo-night / paper 各自的，system 和字符画主题跟系统），开场的黑淡出到这个颜色，应用接着淡入，不闪。
 
@@ -20,7 +20,7 @@
 
 ## 放完留作背景（`web/src/features/opening/OpeningBackdrop.tsx`）
 
-- `.obd` 固定在 body 上、`z-index: -1`、在 `.app` 外面；`html.obd-on` 时外壳变半透明：`.app` 底色 `color-mix(surface-1 var(--obd-side))`，首页那一栏（`.pane[data-home]`，只有前面是新对话首页时才有）`var(--obd-main)`。`shellSolid(op)`：side = 100 − 0.55·浓淡，main = 100 − 浓淡（浓淡 0–60，默认 30）。对话、代码、输入框都是实色，背景只从首页和空白处透出来。
+- `.obd` 固定在 body 上、`z-index: -1`、在 `.app` 外面；`html.obd-on` 时外壳变半透明：`.app` 底色 `color-mix(surface-1 var(--obd-side))`，首页那一栏（`.pane[data-home]`，只有前面是新对话首页时才有）`var(--obd-main)`。`shellSolid(op)`：side = 100 − 0.55·浓淡，main = 100 − 浓淡（浓淡 0–60，默认 60）。对话、代码、输入框都是实色，背景只从首页和空白处透出来。
 - 深色主题放包里的 `loop`（静音循环；窗口看不见或没焦点就暂停；减少动画停在第一帧）；浅色主题（light / paper：暗片子垫在浅色外壳下只会发灰）、点火、没有 loop 的包 → 火星（`embers.ts` 纯函数 + 画布 ~24 fps）。火星每种颜色先画一张「实心核 + 4.5 倍光晕」的小图再盖章，底下一层很淡的暖光；**一开始是 2 px 的实心点，隔着 70% 的外壳在浅色主题上完全看不见**（11-19 真机截图才发现）。字符画主题自己有背景时不叠。
 - `ui.opening.keep` 没设过时跟着老的「背景动画」开关（`backdropOn`）：关过背景动画的人不会突然多出会动的东西。开着时首页的字流（LetterFlow）不画——`ui-smoke` 的「新对话页 … the moving backdrop behind it」因此认两种：字流的 `canvas.ascii-field`，或 `html.obd-on` + `.obd > video / canvas` + 这一栏有 `data-home`。
 
@@ -46,13 +46,17 @@
 - 查硬切：`ffmpeg -i x.mp4 -vf "select='gte(scene,0)',metadata=print:file=sc.txt" -f null -` 拿每一帧的变化分。旧片硬切那一帧 0.28；新片白光之前每帧都低于 0.075，只有白光那一下 0.44。切黑点看 `signalstats` 的 YAVG 什么时候回到黑。
 - 给用户比候选：把构建好的 `fancyOpeningHtml`（`mode: 'preview'`）塞进 iframe 的 `srcdoc`，片子用 data: URI，CSP 换成 `media-src data: blob:`；嵌进外层页面的 JSON 要把 `</` 和 `<!--` 转义。几条并排，一起从头放，双击就能看（全在一个文件里）。
 
-## 手机网页（`PhoneSplash.tsx`）
+## 手机（`phone-opening.ts`：手机网页 `PhoneSplash.tsx` 和手机壳共用，11-20 改成动画）
 
-- 手机宽度打开时盖一层：立绘（`web/src/assets/opening/portrait.webp`，包里 `character/portrait.png` 用 sharp 转的 720×1080 q76，77 KB）+ 下面 logo 和字标亮起来，1.1 s 后 0.35 s 淡出；点一下提前结束；`never` 在 meta 加载后立刻撤掉。挂载时定一次：桌面窗口后来拉窄不会出。不放视频。
+- 以前是立绘静止 1.1 s 再淡出，用户 11-20 在 iPhone 上录屏：「手机也要有动画才对」。现在是一段 CSS + SVG 的动画（不放视频：手机上首屏要小）：立绘（`web/src/assets/opening/portrait.webp`，包里 `character/portrait.png` 用 sharp 转的 720×1080 q76，77 KB）从暗处升起 → 火星往上飘（`embers.ts` 的运动，比背景密 1.6 倍，1.1 s 内淡入）→ 一道火沿着她身后金色标志的圆角方框烧一圈（三条同一路径：模糊的光、烧过的线、跑在前面的亮头，`pathLength: 1000` 配 `stroke-dashoffset`）→ 字母那块闪一下、她手里的火球亮起 → 下面 logo、Claude Web、「by Super NB」升上来。完整 2.9 s、简短 1.6 s（同样的步骤 ×0.55，CSS 里每个时长和延时都乘 `--k`）、减少动画 0.7 s 只给最后一帧（`.still`，没有火星）。点一下跳到最后一帧（`.end`）。
+- **对位**：立绘和叠在上面的 SVG 共用一个 viewBox `0 0 720 1080`、`xMidYMin slice`，所以引线永远贴着画里的标志（`PORTRAIT_MARKS` 是在图上量的：方框 x191 y14 w334 h276 r74、字母中心、火球中心）。手机竖屏比 2:3 窄，左右会裁掉一点，标志在中间不受影响。
+- **谁来放**：局域网（手机直接开电脑的地址）由界面的 `PhoneSplash` 放：等 meta（最多 1.2 s，`PHONE_SPLASH_WAIT_MS`），`never` 不放，挂载时定一次（桌面窗口后来拉窄不会出）。手机壳（在外面也能用）由**壳自己**放，一边放一边连电脑——等界面加载完再放就晚了（录屏里先是壳的「正在连接」几屏，最后才闪一下静止图）。iframe 里的界面认出壳（`tunnelHost()`）就不放了，只把 `{when, full}` 用 `postMessage` 告诉壳（`type: 'cw-shell'`，壳只认同源、来自自己 iframe 的消息），壳存进 localStorage `cw.shell.opening`，下次启动照它放；没收到过就按默认（每次 · 完整）。
+- **每天第一次**在手机上：当天第一次放选的长度，之后放简短（1.6 s，和电脑上那几次的老开场一样长）。`playsFull()` + `firstStartToday()`（这台手机自己的 localStorage：壳是 `cw.shell.openingDay`，局域网页面是 `cw.phone.openingDay`——这是每台手机各自的记忆，不能放 meta.json，那是电脑上大家共用的）。
+- 壳里什么时候盖着它见「手机在外面也能连」的「扫码配对 / 开场」。
 
 ## 真机验证 / 截图
 
-- `node scripts/opening-shots.mjs <场景> [输出目录]`（先 `npm run build:all`）：临时 HOME / `CLAUDE_WEB_DIR` / `--user-data-dir`，按场景写 meta.json 和 flags.json，`--remote-debugging-port` 连 CDP，在指定时刻 `Page.captureScreenshot`；`Page.frameNavigated` 知道应用页什么时候接手；系统减少动画用 `--force-prefers-reduced-motion`；手机用 `Emulation.setDeviceMetricsOverride` + reload；最后 `taskkill /T /F` 整棵进程树。场景：full short skip reduced reducedApp light classic ignite igniteLight never sound phone settings（设置页的卡片）。
+- `node scripts/opening-shots.mjs <场景> [输出目录]`（先 `npm run build:all`）：临时 HOME / `CLAUDE_WEB_DIR` / `--user-data-dir`，按场景写 meta.json 和 flags.json，`--remote-debugging-port` 连 CDP，在指定时刻 `Page.captureScreenshot`；`Page.frameNavigated` 知道应用页什么时候接手；系统减少动画用 `--force-prefers-reduced-motion`；手机用 `Emulation.setDeviceMetricsOverride` + reload；最后 `taskkill /T /F` 整棵进程树。场景：full short skip reduced reducedApp light classic ignite igniteLight never sound phone settings（设置页的卡片）。`phone` 拍的是局域网页面的手机开场（0.3–3.6 s 七张）；壳里的开场在 `scripts/shell-smoke.cjs` 里拍（`ux-shell-opening.png`）。
 - 实测（开发版、临时目录、冷启动）：完整版开场页 0.7 s 出现、14.5 s 进应用（片子 9.7 s + logo 2.25 s + 飞 0.7 s，server 早就好了）；简短版 7.5 s（11-20 换片后，机器忙、截图脚本每张要 1.5–2.5 s：完整版 0.8 s 出现、15.1 s 进应用，简短版 9.2 s）；3 s 时点一下 → 4.5 s；老开场 2.3 s；减少动画 1.6–2.2 s；点火 5.3 s。刚 build 完、机器正忙时有一次 server 起了 104 s：开场停在最后一帧、20 s 后下面换成「电脑比较忙…」，server 好了才飞走——截图脚本等 60 s 就报 `app never came`，不是卡死。
 - 控制台偶尔出现 `Electron sandboxed_renderer.bundle.js script failed to run` / `Cannot destructure property 'preloadScripts' of 'binding.startupData' as it is null`（截图脚本连着 CDP 才看得见）：**老问题，不是开场带来的**——同一台机器上用 `main`（eaa8853c）的桌面壳跑老开场 12 次有 4 次，这个分支的壳 12 次 0 次（之前零星跑二十几次里有 3 次）。出现时应用页的 preload 是好的（窗口按钮都在、`window.desktop` 在），像是 Electron 44 自己的竞态：data: → http 换进程时，新渲染进程的脚本上下文比启动数据先到（多半是那个临时文档）。对比办法：`git archive eaa8853c desktop/src` 解出来用 esbuild 编成 CJS 盖到 `desktop/dist`，跑完 `npm run build -w desktop` 换回来。
 

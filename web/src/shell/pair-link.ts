@@ -72,6 +72,18 @@ export function parsePairLink(input: string): PairLink | typeof BAD_LISTS | null
   return link;
 }
 
+/**
+ * What the shell's scanner read (scan.ts): a pairing QR (「在哪都能用」), the 「只在局域网」 one (`http://<ip>:<port>/pair#<6
+ * digits>`, which only the PC's own /pair page can take — an https page cannot reach a LAN http address), one whose
+ * server list does not read, or a QR that is nothing of ours.
+ */
+export function scannedQr(text: string): { kind: 'pair'; link: PairLink } | { kind: 'lan' } | { kind: 'bad-lists' } | { kind: 'other' } {
+  const p = parsePairLink(text);
+  if (p === BAD_LISTS) return { kind: 'bad-lists' };
+  if (p) return { kind: 'pair', link: p };
+  return /^https?:\/\/[^/\s]+\/pair#\d{6}$/i.test(text.trim()) ? { kind: 'lan' } : { kind: 'other' };
+}
+
 /** What POST api/pair answered: the device token and the PC's id for this device, or the PC's own (Chinese) refusal. */
 export function readPairAnswer(res: MuxResponse): { token: string; id: string } | { error: string } {
   let j: { token?: unknown; device?: { id?: unknown }; error?: unknown } | null = null;

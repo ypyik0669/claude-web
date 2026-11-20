@@ -20,6 +20,7 @@ import { tr } from '@/i18n';
 import { ProcessGlyph } from '@/themes/ProcessGlyph';
 import { dlg } from '@/ui/dialog';
 import { loginInTerminal } from '@/features/providers/ConnectModel';
+import { tunnelHost } from '@/ws/tunnel';
 
 /** The project's pages: 帮助与反馈 opens them in the browser. */
 const REPO = 'https://github.com/ypyik0669/claude-web';
@@ -126,6 +127,7 @@ export function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null;
   const mobile = useStore((s) => s.mobile);
   const lang = useStore((s) => (s.settings['ui.language'] as string | undefined) ?? 'auto');
   const theme = useStore((s) => themeChoice(s.settings['ui.theme']));
+  const [inShell] = useState(() => !!tunnelHost());
   const [today, setToday] = useState(cachedToday);
   useEffect(() => {
     let live = true;
@@ -177,6 +179,8 @@ export function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null;
         <button data-id={id('appearance')} onClick={act(() => st().openSettings({ section: 'appearance' }))}><Icon name="settings" size={14} /> {tr('外观…')}</button>
       </SubMenu>
       {!mobile && <button data-id={id('shortcuts')} onClick={act(() => useStore.setState({ shortcutsOpen: true }))}><Icon name="keyboard" size={14} /> <span className="grow">{tr('键盘快捷键')}</span><span className="k">{modKey} /</span></button>}
+      {/* the phone shell (web/src/shell): an installed app with one PC goes straight into it, this goes back to its list */}
+      {mobile && inShell && <button data-id={id('devices')} onClick={act(() => { window.parent.postMessage({ type: 'cw-shell', action: 'devices' }, window.location.origin); })}><Icon name="device" size={14} /> <span className="grow">{tr('换一台电脑')}</span></button>}
       <SubMenu id={id('help')} icon="info" label={tr('帮助与反馈')} panelClass="acct-fly">
         <button data-help="guide" onClick={act(() => openExternal(HELP_LINKS.guide))}><Icon name="read" size={14} /> {tr('使用说明')}<Icon name="external" size={12} className="ext" /></button>
         <button data-help="issue" onClick={act(() => openExternal(HELP_LINKS.issue))}><Icon name="chat" size={14} /> {tr('报告问题或提建议')}<Icon name="external" size={12} className="ext" /></button>

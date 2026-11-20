@@ -30,13 +30,23 @@ export const SAY = {
   /** No service worker or Cache Storage (a private window, an in-app browser): the app's files have nowhere to go. */
   noWorker: tr('这个浏览器不能运行界面（可能是无痕模式或 App 里的浏览器）：换个浏览器打开这个页面。'),
   /** A `#p=` that does not read. */
-  badLink: tr('这个配对链接读不出来：在电脑上重新生成二维码，再扫一次。'),
+  badLink: tr('这个二维码读不出来：在电脑上重新生成配对码，再扫一次。'),
   /** A `#p=` that reads, but the server list it carries has nothing usable in it. */
-  badLists: tr('这个配对链接里的服务器列表读不出来：在电脑上重新生成二维码，再扫一次。'),
+  badLists: tr('这个二维码里的服务器列表读不出来：在电脑上重新生成配对码，再扫一次。'),
   /** A `#p=` this page already paired with, or one the PC already refused. */
-  usedLink: tr('这个配对链接已经用过了：需要再配对的话，在电脑上重新生成二维码。'),
+  usedLink: tr('这个二维码已经用过了：要再配对，在电脑上重新生成配对码。'),
   /** A `#p=` first seen more than 10 minutes ago that never paired. */
-  expiredLink: tr('这个配对链接已过期（10 分钟有效）：在电脑上重新生成二维码再扫一次。'),
+  expiredLink: tr('这个二维码已过期（10 分钟有效）：在电脑上重新生成配对码再扫一次。'),
+  /** 扫码配对 read the 「只在局域网」 QR (only the PC's own /pair page takes it). */
+  lanQr: tr('这是「只在局域网」的二维码：在电脑上切到「在哪都能用」再扫。'),
+  /** 扫码配对 read a QR that is nothing of ours. */
+  notPairQr: tr('这不是 Claude Web 的配对二维码。'),
+  /** The camera was refused (here, or in the phone's settings). */
+  cameraDenied: tr('没能打开相机：允许 Claude Web 使用相机后再试一次，或者用手机自带的相机扫码。'),
+  /** No camera this page can use. */
+  noCamera: tr('这台设备上没有能用的相机。'),
+  /** The camera did not open for another reason. */
+  cameraFailed: tr('相机打不开。'),
   /** A shell window that cannot be asked (service worker side). */
   noWindow: tr('连接电脑的页面没有回应：回到 Claude Web 重新连一次。'),
   /** The shell window did not answer within the service worker's 60 s. */

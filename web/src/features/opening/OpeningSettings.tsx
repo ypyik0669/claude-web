@@ -167,7 +167,7 @@ const requestFor = (c: OpeningCard | undefined): PreviewRequest =>
 
 /**
  * 开场动画: the cards (Claude Web 娘 · 点火 · 星图 · 字符雨 · 网吧开门 · the user's packs · 自己的视频) and 试放一次.
- * The chosen card is what a start plays (每天第一次 by default); a chosen pack that is gone plays 点火.
+ * The chosen card is what a start plays (every start by default); a chosen pack that is gone plays 点火.
  */
 export function OpeningPicker({ label }: { label: string }) {
   const cur = useStore((s) => packOf(s.settings));

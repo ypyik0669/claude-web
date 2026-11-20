@@ -143,7 +143,28 @@ h2 { margin: 28px 0 8px; font-size: 14px; line-height: 20px; font-weight: 600; c
 .paste-in:focus { outline: 1.5px solid var(--accent-text); outline-offset: 0; }
 .paste-row .primary { flex: none; padding: 0 20px; }
 .paste-err { margin: 8px 2px 0; font-size: 13px; line-height: 18px; color: var(--red); }
-.paste-clip { margin-top: 4px; }
+
+/* 扫码配对: the list's button, then the camera full screen with a frame to aim at (dark whatever the theme: it is a
+   camera) */
+.scan-btn { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 16px; }
+.qr-mark { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.scan { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: #000; color: #fff; }
+.scan-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scan-top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 4px; padding: calc(env(safe-area-inset-top) + 4px) calc(env(safe-area-inset-right) + 12px) 16px calc(env(safe-area-inset-left) + 8px); background: linear-gradient(rgba(0, 0, 0, 0.6), transparent); }
+.scan-top h1 { margin: 0; font: 600 17px/24px var(--font); color: #fff; }
+.scan-x { flex: none; width: 44px; height: 44px; border-radius: 50%; color: #fff; font-size: 28px; line-height: 1; }
+.scan-x:active { background: rgba(255, 255, 255, 0.16); }
+.scan-frame { position: relative; width: min(68vw, 280px); aspect-ratio: 1; border: 2px solid rgba(255, 255, 255, 0.92); border-radius: 26px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45); overflow: hidden; }
+.scan-sweep { position: absolute; left: 10%; right: 10%; top: 10%; height: 2px; border-radius: 2px; background: linear-gradient(90deg, transparent, #f5914f, transparent); box-shadow: 0 0 14px #f5914f; animation: scan-sweep 2.2s ease-in-out infinite alternate; }
+@keyframes scan-sweep { from { top: 10%; } to { top: 90%; } }
+.scan-bottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 20px calc(env(safe-area-inset-right) + 24px) calc(env(safe-area-inset-bottom) + 28px) calc(env(safe-area-inset-left) + 24px); text-align: center; background: linear-gradient(transparent, rgba(0, 0, 0, 0.66) 40%); }
+.scan-hint { font-size: 14px; line-height: 22px; color: rgba(255, 255, 255, 0.86); }
+.scan-line { margin-top: 8px; font-size: 13px; line-height: 20px; color: #ffd38a; }
+.scan-fail { max-width: 380px; margin: 14px auto 0; text-align: left; }
+.scan-fail .why { padding: 12px 16px; border-radius: 16px; background: rgba(255, 255, 255, 0.1); color: #fff; }
+.scan-fail .why-raw { color: rgba(255, 255, 255, 0.6); }
+.scan-fail .ghost { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.scan-fail .primary { background: #fff; color: #111; }
 
 /* the app: a full-screen frame inside the safe area (env() is 0 inside an iframe), on the app's own surface colour */
 .app {
@@ -187,5 +208,6 @@ h2 { margin: 28px 0 8px; font-size: 14px; line-height: 20px; font-weight: 600; c
   button { transition-duration: 80ms; }
   button:not(:disabled):active { transform: none; }
   .bar { animation: none; }
+  .scan-sweep { animation: none; top: 50%; }
   .spin { animation-duration: 1.2s; }
 }

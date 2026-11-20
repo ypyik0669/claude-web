@@ -64,18 +64,7 @@ html.opening-in .app { animation: cw-app-in 0.55s var(--ease-out) both; }
 .op-preview { position: fixed; inset: 0; z-index: 210; border: 0; width: 100%; height: 100%; background: transparent; color-scheme: normal; }
 
 /* ---- the phone's start screen: her portrait, the logo and the wordmark lighting up under it (~1 s) */
-.phone-splash { position: fixed; inset: 0; z-index: 300; background: #0b0a09; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; overflow: hidden; transition: opacity 0.35s var(--ease-out); }
-.phone-splash.out { opacity: 0; pointer-events: none; }
-.phone-splash img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 18%; animation: ps-img 1.2s var(--ease-out) both; }
-.phone-splash .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 52%; background: linear-gradient(to bottom, transparent, rgba(11, 10, 9, 0.82) 45%, #0b0a09); }
-.phone-splash .mark { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
-.phone-splash .mark svg { width: 54px; height: 54px; border-radius: 23%; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 28px rgba(255, 90, 31, 0.35); animation: ps-logo 0.7s 0.15s var(--ease-out) both; }
-.phone-splash .w { font: 400 38px/1.1 Georgia, 'Times New Roman', serif; letter-spacing: -0.05em; color: #f3eee6; animation: ps-up 0.55s 0.35s var(--ease-out) both; }
-.phone-splash .w .c { color: #d97757; margin-right: 0.22em; }
-.phone-splash .by { font-size: 14px; color: #b8b0a4; letter-spacing: -0.01em; animation: ps-up 0.5s 0.55s var(--ease-out) both; }
-.phone-splash .by span { color: #8a8378; font-size: 0.82em; margin-right: 5px; }
-@keyframes ps-img { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: none; } }
-@keyframes ps-logo { from { opacity: 0; transform: scale(0.6); filter: brightness(2.2); } to { opacity: 1; transform: none; filter: none; } }
-@keyframes ps-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .phone-splash img, .phone-splash .mark svg, .phone-splash .w, .phone-splash .by { animation: none; } }
-html[data-reduce-motion='1'] .phone-splash { transition: none; }
+/* the phone's opening (PhoneSplash.tsx; its look is features/opening/phone-opening.css, shared with the phone shell):
+   the host covers the app, dark while it waits for the settings */
+.phone-splash-host { position: fixed; inset: 0; z-index: 300; }
+.phone-splash-host.wait { background: #0b0a09; }

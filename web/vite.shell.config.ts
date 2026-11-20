@@ -6,6 +6,7 @@
 // The app's first-screen files must stay under the slow relay's response cap: the build fails when one passes it.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build, defineConfig, type Plugin } from 'vite';
@@ -82,6 +83,9 @@ function shellBuild(): Plugin {
       // icons under fixed names, precached and hashed with the rest
       for (const f of ['icon-192.png', 'icon-512.png']) fs.copyFileSync(path.join(root, 'public', f), path.join(outDir, f));
       fs.writeFileSync(path.join(outDir, 'manifest.webmanifest'), `${JSON.stringify(SHELL_MANIFEST, null, 2)}\n`);
+      // 扫码配对's QR reader ships in the page's own files (a chunk loaded on first use): its licence goes with it
+      fs.mkdirSync(path.join(outDir, 'licenses'), { recursive: true });
+      fs.copyFileSync(path.join(path.dirname(createRequire(import.meta.url).resolve('jsqr/package.json')), 'LICENSE'), path.join(outDir, 'licenses', 'jsQR-LICENSE.txt'));
       const files = filesIn(outDir).filter((f) => f !== 'sw.js').sort();
       const h = createHash('sha256');
       const hashes: Record<string, string> = {};

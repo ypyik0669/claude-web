@@ -145,11 +145,12 @@ export function RemoteSection() {
                 )}
                 <div className="pair-code">{pair.code}</div>
                 {shown === 'anywhere' ? (
-                  <div className="sub">{tr('{left}s 后失效 · 用手机相机扫码，在哪都能连上这台电脑。iPhone 上照提示先加到主屏幕，从图标打开就会自动配对。', { left })}</div>
+                  <div className="sub">{tr('{left}s 后失效 · 用手机相机扫，或在手机上的 Claude Web 里点「扫码配对」，在哪都能连上这台电脑。iPhone 第一次照提示先加到主屏幕，从图标打开就自动配好。', { left })}</div>
                 ) : (
                   <div className="sub">{tr('{left}s 后失效 · 手机连同一个 Wi-Fi 扫码，或打开', { left })} <code>{pair.url.split('#')[0]}</code> {tr('手动输入')}</div>
                 )}
-                {shown === 'anywhere' && <button className="btn sm ghost" data-id="pair-copy" title={tr('链接里有一次性的配对密钥：10 分钟内有效，只能用一次')} onClick={() => void copyLink()} style={{ marginTop: 8 }}><Icon name="copy" size={12} /> {tr('复制配对链接')}</button>}
+                {/* one way to pair: the code and its QR. The link itself only when the QR could not be drawn (a server list too long for it) */}
+                {shown === 'anywhere' && qrFailed && <button className="btn sm ghost" data-id="pair-copy" title={tr('链接里有一次性的配对密钥：10 分钟内有效，只能用一次')} onClick={() => void copyLink()} style={{ marginTop: 8 }}><Icon name="copy" size={12} /> {tr('复制配对链接')}</button>}
               </div>
             )}
             {pair && left <= 0 && <div className="sub" style={{ marginTop: 8 }}>{tr('配对码已过期')}</div>}

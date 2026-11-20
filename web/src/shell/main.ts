@@ -2,7 +2,10 @@
 // relay when that does not get through), and runs the app — fetched from that PC — in a same-origin frame whose
 // WebSockets (window.__cwTunnel) and requests (the service worker, sw.ts) go over the link.
 import './shell.css';
+import '../features/opening/phone-opening.css';
 import { Brokers, b64u, dial, type BrokerDef, type DialState, type RtcCtor } from '@anywhere';
+import portrait from '../assets/opening/portrait.webp';
+import { firstStartToday, phoneOpening, playsFull, type PhoneOpening } from '../features/opening/phone-opening';
 import { appCaches, type CachesLike } from './assets';
 import { idbDevices, memoryDevices, type DeviceRec, type DeviceStore } from './devices';
 import { SAY, type Explained } from './explain';
@@ -18,12 +21,14 @@ import {
   pairPlan,
   parsePairLink,
   rememberLink,
+  scannedQr,
   startLink,
   type LinkMemory,
   type PairLink,
 } from './pair-link';
 import { Session, ShellError, explain, pairWith, type Dialer, type SessionView } from './session';
-import { EMPTY_HOME, Ui, type BarState } from './ui';
+import { canScan, scanQr, type ScanSession } from './scan';
+import { Ui, type BarState } from './ui';
 import { tr } from './i18n';
 
 const scope = new URL('./', location.href).href;
@@ -44,6 +49,9 @@ const standalone = (navigator as Navigator & { standalone?: boolean }).standalon
 /** The shell's folder on its host: where the handoff cookie lives (pair-link.ts). */
 const scopePath = new URL(scope).pathname;
 const INSTALL_KEY = 'cw.shell.installBar';
+/** The opening as the PC has it set (the app in the frame tells: PhoneSplash.tsx), for the next start; and its day. */
+const OPENING_KEY = 'cw.shell.opening';
+const OPENING_DAY_KEY = 'cw.shell.openingDay';
 
 // the home-screen icon (iOS reads it when the page is added), and everywhere but iOS a manifest: what has Android's
 // browsers offer to install. Not on iOS: there a manifest's start_url would replace the address a home-screen app
@@ -104,6 +112,10 @@ const dialer: Dialer = {
 
 let store: DeviceStore = typeof indexedDB === 'undefined' ? memoryDevices() : idbDevices();
 let session: Session | null = null;
+/** The opening over a connection it hides (an installed app with one PC): it goes when the app is up, or the dial fails. */
+let cover: PhoneOpening | null = null;
+/** The connecting line it shows once its motion has played. */
+let coverLine: string | null = null;
 /** The pairing in flight: cancelled by a newer one or by leaving its screen (its link closed, its result dropped). */
 let pairing: AbortController | null = null;
 /** Bumped by every new screen flow: an older one's late results are dropped. */
@@ -158,18 +170,53 @@ function clearHandoff(): void {
   if (cookies().includes(`${HANDOFF_COOKIE}=`)) setCookie(handoffClear(scopePath));
 }
 
-/** Called in the tap itself: iOS refuses a clipboard write that comes after an await. */
-function copyText(text: string): Promise<boolean> {
-  try {
-    const w = navigator.clipboard?.writeText(text);
-    return w ? w.then(() => true, () => false) : Promise.resolve(false);
-  } catch {
-    return Promise.resolve(false);
-  }
+/** The camera of 扫码配对 while it runs (scan.ts): stopped by whatever screen comes next. */
+let scanning: ScanSession | null = null;
+
+function stopScan(): void {
+  scanning?.stop();
+  scanning = null;
 }
 
-/** 「从剪贴板粘贴」: read in the tap (iOS shows its own 粘贴 bubble first); declined or unavailable is null. */
-const readClipboard = typeof navigator.clipboard?.readText === 'function' ? () => navigator.clipboard.readText().catch(() => null) : null;
+/**
+ * 扫码配对: the shell's own scanner (a QR seen by the system camera opens Safari, never this app). A pairing QR pairs
+ * here, like a pasted link; the 「只在局域网」 one, or anything else, says so and the camera goes on.
+ */
+function scan(): void {
+  dropCover();
+  leave(true);
+  const mine = ++flow;
+  const screen = ui.scanner({
+    close: () => {
+      stopScan();
+      void showList();
+    },
+    paste: () => {
+      stopScan();
+      void showList(null, true);
+    },
+  });
+  void scanQr(
+    screen.video,
+    (text) => {
+      const k = scannedQr(text);
+      if (k.kind === 'pair') {
+        // seen here on purpose: pair here, whatever browser this is (a link already used says so)
+        void takeLink(k.link, 'pair', { pasted: true });
+        return true;
+      }
+      screen.say(k.kind === 'lan' ? SAY.lanQr : k.kind === 'bad-lists' ? SAY.badLists : SAY.notPairQr);
+      return false;
+    },
+    (why, raw) => {
+      if (mine === flow) screen.failed({ text: why === 'denied' ? SAY.cameraDenied : why === 'nocamera' ? SAY.noCamera : SAY.cameraFailed, raw });
+    },
+  ).then((s) => {
+    // the scanner was left while the camera was still being asked for
+    if (mine !== flow) s.stop();
+    else scanning = s;
+  });
+}
 
 function linkMemory(): LinkMemory {
   try {
@@ -211,12 +258,15 @@ async function forget(d: DeviceRec): Promise<void> {
   for (const k of appCaches(await caches.keys().catch(() => []))) await caches.delete(k).catch(() => false);
 }
 
-async function showList(notice: Explained | null = null): Promise<void> {
+async function showList(notice: Explained | null = null, pasteOpen = false): Promise<void> {
+  stopScan();
   const mine = ++flow;
   const list = await devices();
   if (mine !== flow) return;
   ui.devices(list, {
     notice,
+    scan: canScan() ? scan : null,
+    pasteOpen,
     connect: (d) => void connect(d),
     remove: (d) => void forget(d).then(() => showList()),
     iosHint:
@@ -234,13 +284,12 @@ async function showList(notice: Explained | null = null): Promise<void> {
       void takeLink(p, 'pair', { pasted: true });
       return null;
     },
-    readClipboard,
-    empty: ios && standalone ? EMPTY_HOME : undefined,
   });
 }
 
-/** Ends the connection and any pairing (the app frame with them); `rest`: no dial follows, the brokers close too. */
+/** Ends the connection, any pairing and the scanner (the app frame with them); `rest`: no dial follows, the brokers close too. */
 function leave(rest = false): void {
+  stopScan();
   pairing?.abort();
   pairing = null;
   session?.close();
@@ -250,8 +299,86 @@ function leave(rest = false): void {
 }
 
 function back(): void {
+  dropCover();
   leave(true);
   void showList();
+}
+
+/** The opening as the PC has it set, from the app's last word (PhoneSplash.tsx); before any: every start, 完整. */
+function openingPref(): { when: 'always' | 'daily' | 'never'; full: boolean } {
+  try {
+    const v = JSON.parse(local(OPENING_KEY) ?? 'null') as { when?: unknown; full?: unknown } | null;
+    const when = v?.when === 'daily' || v?.when === 'never' ? v.when : 'always';
+    return { when, full: v?.full !== false };
+  } catch {
+    return { when: 'always', full: true };
+  }
+}
+
+/** Starts the opening over the page, unless the PC has it 不放 (每天第一次: 简短 after the day's first start). */
+function openingNow(): PhoneOpening | null {
+  const pref = openingPref();
+  if (pref.when === 'never') return null;
+  const full = playsFull(pref.when, pref.full, firstStartToday(OPENING_DAY_KEY));
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const op = phoneOpening(document.body, { portrait, full, reduced, label: tr('Claude Web 正在打开') });
+  // a tap: straight to its end frame (and on, when nothing waits behind it)
+  op.el.addEventListener('click', () => op.skip());
+  return op;
+}
+
+function dropCover(): void {
+  const c = cover;
+  cover = null;
+  coverLine = null;
+  void c?.out();
+}
+
+/**
+ * The line under the opening's wordmark (once its motion has played) while it hides a connection or a pairing, with a
+ * way out to the list (换电脑; 取消 while pairing).
+ */
+function coverSays(text: string, label = tr('换电脑')): void {
+  const c = cover;
+  if (!c) return;
+  coverLine = text;
+  void c.played.then(() => {
+    if (cover === c && coverLine === text) c.status(text, { label, run: back });
+  });
+}
+
+/**
+ * A start without a pairing link to take: the opening first (it is the app opening). Behind it an installed app with
+ * one paired PC connects straight away (the app shows when the opening goes; with 不放, it just connects); anything
+ * else shows the list as it ends.
+ */
+async function start(notice: Explained | null = null): Promise<void> {
+  const list = await devices();
+  persist();
+  const op = openingNow();
+  if (standalone && list.length === 1) {
+    cover = op;
+    void connect(list[0]);
+    return;
+  }
+  await showList(notice);
+  if (op) {
+    await op.played;
+    await op.out();
+  }
+}
+
+/** What the app in the frame asks of the shell (same origin, that frame only): 换一台电脑, the opening's settings. */
+function onFrameMessage(ev: MessageEvent): void {
+  const frame = ui.frameWindow();
+  if (ev.origin !== location.origin || !frame || ev.source !== frame) return;
+  const d = ev.data as { type?: unknown; action?: unknown; opening?: { when?: unknown; full?: unknown } } | null;
+  if (!d || d.type !== 'cw-shell') return;
+  if (d.action === 'devices') return back();
+  if (d.opening && typeof d.opening === 'object') {
+    const when = d.opening.when === 'daily' || d.opening.when === 'never' ? d.opening.when : 'always';
+    setLocal(OPENING_KEY, JSON.stringify({ when, full: d.opening.full !== false }));
+  }
 }
 
 function cacheStorage(): CachesLike | null {
@@ -288,15 +415,19 @@ const noWorker = (): Explained => ({ text: SAY.noWorker, raw: 'no active service
 /**
  * A pairing link from the address, the handoff cookie or the paste field: one already used here, or past its 10
  * minutes, is not tried again (a home-screen app may reopen its saved address, #p= and all); on iOS Safari the user
- * chooses first (R12b). `raw`: the link as it came (`#p=…`), for the cookie and the clipboard.
+ * chooses first (R12b). `raw`: the link as it came (`#p=…`), for the cookie. `atStart`: the page opened with it (the
+ * camera's QR, a home-screen app's first start): the opening plays over the pairing, as it does over a connection.
  */
-async function takeLink(p: PairLink, plan: 'ask' | 'pair', o: { pasted?: boolean; raw?: string } = {}): Promise<void> {
+async function takeLink(p: PairLink, plan: 'ask' | 'pair', o: { pasted?: boolean; raw?: string; atStart?: boolean } = {}): Promise<void> {
+  // a pairing is its own screen: an opening (and the connection it hid) gives way
+  dropCover();
   const key = await linkKey(p);
   const state = linkState(linkMemory(), key, Date.now());
   if (state !== 'fresh') {
     clearHash();
-    // a used link in the address is the home-screen bookmark opening again: just the list (it paired already)
-    return showList(state === 'expired' ? { text: SAY.expiredLink, raw: '' } : o.pasted ? { text: SAY.usedLink, raw: '' } : null);
+    const notice = state === 'expired' ? { text: SAY.expiredLink, raw: '' } : o.pasted ? { text: SAY.usedLink, raw: '' } : null;
+    // a used link in the address is the home-screen bookmark opening again: an ordinary start (it paired already)
+    return o.atStart ? start(notice) : showList(notice);
   }
   setLocal(LINKS_KEY, JSON.stringify(rememberLink(linkMemory(), key, Date.now(), false)));
   if (plan === 'ask') {
@@ -317,29 +448,35 @@ async function takeLink(p: PairLink, plan: 'ask' | 'pair', o: { pasted?: boolean
         clearHash();
         back();
       },
-      copy: () => copyText(new URL(raw, location.href).href),
     });
     return;
   }
   clearHash();
+  if (o.atStart) cover = openingNow();
   return pair(p, key);
 }
 
 async function pair(p: PairLink, key: string): Promise<void> {
   leave();
   const mine = ++flow;
-  const title = tr('正在配对 {pc}', { pc: p.pc || tr('电脑') });
+  const pc = p.pc || tr('电脑');
+  const title = tr('正在配对 {pc}', { pc });
   ui.busy(title, tr('正在准备…'), { cancel: back });
   // before any dial: the code is single-use, a browser that cannot run the app must not spend it
   if (!(await appReady())) {
-    if (mine === flow) ui.failed(tr('配对没有成功'), noWorker(), { back });
+    if (mine === flow) {
+      dropCover();
+      ui.failed(tr('配对没有成功'), noWorker(), { back });
+    }
     return;
   }
   if (mine !== flow) return;
   const ac = new AbortController();
   pairing = ac;
   const busy = (step: DialState) => {
-    if (mine === flow) ui.busy(title, STEP[step], { cancel: back });
+    if (mine !== flow) return;
+    ui.busy(title, STEP[step], { cancel: back });
+    coverSays(tr('{step}（{pcName}）', { step: STEP[step], pcName: pc }), tr('取消'));
   };
   busy('finding');
   try {
@@ -354,7 +491,10 @@ async function pair(p: PairLink, key: string): Promise<void> {
     if (ac.signal.aborted) return;
     // refused by the PC (a wrong code, too many tries): this link is spent
     if (e instanceof ShellError && e.pcAnswered) setLocal(LINKS_KEY, JSON.stringify(rememberLink(linkMemory(), key, Date.now(), true)));
-    if (mine === flow) ui.failed(tr('配对没有成功'), explain(e, { rtcMissing }), { retry: () => void pair(p, key), back });
+    if (mine === flow) {
+      dropCover();
+      ui.failed(tr('配对没有成功'), explain(e, { rtcMissing }), { retry: () => void pair(p, key), back });
+    }
   }
 }
 
@@ -367,7 +507,10 @@ async function connect(d: DeviceRec, justPaired = false): Promise<void> {
   ui.busy(title, STEP.finding, { cancel: back });
   const caches = await appReady();
   if (mine !== flow) return;
-  if (!caches) return ui.failed(tr('没连上'), noWorker(), { retry: () => void connect(d), back });
+  if (!caches) {
+    dropCover();
+    return ui.failed(tr('没连上'), noWorker(), { retry: () => void connect(d), back });
+  }
   const s: Session = new Session({
     device: d,
     dialer,
@@ -391,22 +534,39 @@ function view(s: Session, v: SessionView, title: string): void {
   switch (v.k) {
     case 'dialing':
       if (open) ui.setBar({ text: tr('连接断了，正在重新连接：{v}', { v: STEP[v.step] }), tone: 'warn', busy: true });
-      else ui.busy(title, STEP[v.step], { cancel: back });
+      else {
+        ui.busy(title, STEP[v.step], { cancel: back });
+        coverSays(tr('{step}（{pcName}）', { step: STEP[v.step], pcName: s.device.pcName }));
+      }
       return;
     case 'files': {
       const line = tr('正在取界面文件…（{done}/{total}）', { done: v.done, total: v.total });
       if (open) ui.setBar({ text: line, tone: 'info', busy: true });
-      else ui.busy(title, line, { progress: v.total ? v.done / v.total : 0, cancel: back });
+      else {
+        ui.busy(title, line, { progress: v.total ? v.done / v.total : 0, cancel: back });
+        coverSays(line);
+      }
       return;
     }
-    case 'open':
-      ui.app(v.url, () => s.tunnel.closeAll());
+    case 'open': {
+      // the opening (when one hides this connection) goes once the app has loaded and its motion has played
+      const c = cover;
+      ui.app(v.url, () => s.tunnel.closeAll(), () => {
+        if (!c) return;
+        void c.played.then(() => {
+          if (cover === c) dropCover();
+        });
+      });
       ui.setBar(v.kind === 'relay' ? relayBar() : null);
       offerInstall();
       return;
+    }
     case 'relinking':
       if (open) ui.setBar({ text: tr('连接断了，正在重新连接…'), tone: 'warn', busy: true });
-      else ui.busy(title, tr('连接断了，正在重新连接…'), { cancel: back });
+      else {
+        ui.busy(title, tr('连接断了，正在重新连接…'), { cancel: back });
+        coverSays(tr('连接断了，正在重新连接…'));
+      }
       return;
     case 'linked':
       ui.setBar(v.kind === 'relay' ? relayBar() : null);
@@ -422,6 +582,7 @@ function view(s: Session, v: SessionView, title: string): void {
       ui.setBar({ text: v.why.text, raw: v.why.raw, tone: 'err', actions: [{ label: tr('重新连接'), run: () => void s.redial() }, { label: tr('返回'), run: back }] });
       return;
     case 'failed':
+      dropCover();
       ui.failed(tr('没连上'), v.why, { retry: () => void connect(s.device), back });
       return;
   }
@@ -452,17 +613,17 @@ function clearHash(): void {
  * A pairing link in the address, or in a home-screen app the one the handoff cookie brought: iOS Safari asks first and
  * keeps it in the address; elsewhere it is taken (and cleared).
  */
-function takePairLink(): boolean {
-  const start = startLink({ hash: location.hash, cookies: cookies(), standalone });
+function takePairLink(atStart = false): boolean {
+  const link = startLink({ hash: location.hash, cookies: cookies(), standalone });
   // a home-screen app takes the cookie's link once: from then on the link memory (pairLinks) answers for it
   if (standalone) clearHandoff();
-  const plan = pairPlan({ ios, standalone, hasPairLink: !!start });
-  if (plan === 'list' || !start) return false;
-  const p = parsePairLink(start.link);
+  const plan = pairPlan({ ios, standalone, hasPairLink: !!link });
+  if (plan === 'list' || !link) return false;
+  const p = parsePairLink(link.link);
   if (!p || p === BAD_LISTS) {
     clearHash();
-    void showList(p ? { text: SAY.badLists, raw: 'the link names a server list with nothing usable in it' } : { text: SAY.badLink, raw: `unreadable #p= link (from the ${start.from})` });
-  } else void takeLink(p, plan, { raw: start.link });
+    void showList(p ? { text: SAY.badLists, raw: 'the link names a server list with nothing usable in it' } : { text: SAY.badLink, raw: `unreadable #p= link (from the ${link.from})` });
+  } else void takeLink(p, plan, { raw: link.link, atStart });
   return true;
 }
 
@@ -525,10 +686,8 @@ document.addEventListener('visibilitychange', () => {
 });
 // a QR scanned while the shell is already open in this tab only changes the fragment
 window.addEventListener('hashchange', () => void takePairLink());
+window.addEventListener('message', onFrameMessage);
 
 // installed early (its precache), whatever comes next
 void appReady();
-if (!takePairLink()) {
-  void showList();
-  persist();
-}
+if (!takePairLink(true)) void start();

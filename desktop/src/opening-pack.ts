@@ -37,15 +37,18 @@ export function readMetaSettings(dir = dataDir()): Record<string, unknown> {
   }
 }
 
-/** The opening settings (`ui.opening.*`) with their defaults: Claude Web 娘, the first start of a day, full, no sound. */
+/**
+ * The opening settings (`ui.opening.*`) with their defaults (web/src/features/opening/model.ts has the same): Claude
+ * Web 娘, every start, full, with sound.
+ */
 export function openingSettings(s: Record<string, unknown>): { pack: string; when: OpeningWhen; full: boolean; sound: boolean } {
   const pack = s['ui.opening.pack'];
   const when = s['ui.opening.when'];
   return {
     pack: typeof pack === 'string' && pack ? pack : DEFAULT_PACK,
-    when: when === 'always' || when === 'never' ? when : 'daily',
+    when: when === 'daily' || when === 'never' ? when : 'always',
     full: s['ui.opening.length'] !== 'short',
-    sound: s['ui.opening.sound'] === true,
+    sound: s['ui.opening.sound'] !== false,
   };
 }
 

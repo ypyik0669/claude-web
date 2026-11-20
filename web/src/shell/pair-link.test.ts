@@ -12,6 +12,7 @@ import {
   parsePairLink,
   readPairAnswer,
   rememberLink,
+  scannedQr,
   startLink,
   type PairLink,
 } from './pair-link';
@@ -133,6 +134,24 @@ describe('pairPlan (ruling R12b: iOS keeps Safari and the home screen apart)', (
   it('from the home screen, or any other browser: pair at once', () => {
     expect(pairPlan({ ios: true, standalone: true, hasPairLink: true })).toBe('pair');
     expect(pairPlan({ ios: false, standalone: false, hasPairLink: true })).toBe('pair');
+  });
+});
+
+describe('扫码配对: what the shell\'s scanner read', () => {
+  it('the 在哪都能用 QR (the whole address, as the PC draws it) pairs', () => {
+    const r = scannedQr(`${SHELL}${GOOD}`);
+    expect(r.kind).toBe('pair');
+    expect(r.kind === 'pair' && r.link.code).toBe('123456');
+  });
+  it('the 只在局域网 QR is told apart: only the PC\'s own /pair page takes it', () => {
+    expect(scannedQr('http://192.168.0.113:8091/pair#123456')).toEqual({ kind: 'lan' });
+    expect(scannedQr(' http://[fe80::1]:3091/pair#654321 ')).toEqual({ kind: 'lan' });
+  });
+  it('a pairing QR whose server list does not read says so; anything else is not ours', () => {
+    expect(scannedQr(link({ v: 1, ps: b64u(P), code: '123456', pc: 'x', b: [{ name: 'x', url: 'http://not-wss' }] }))).toEqual({ kind: 'bad-lists' });
+    expect(scannedQr('https://example.com/some/page')).toEqual({ kind: 'other' });
+    expect(scannedQr('WIFI:S:home;T:WPA;P:secret;;')).toEqual({ kind: 'other' });
+    expect(scannedQr('http://192.168.0.113:8091/pair#12345')).toEqual({ kind: 'other' });
   });
 });
 

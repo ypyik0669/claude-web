@@ -29,8 +29,8 @@ const SCENARIOS = {
   never: { settings: { 'ui.opening.when': 'never' }, shots: [0.3, 'app+3'] },
   // the speaker (bottom-left) at 2 s: the app takes the setting over once it is in
   sound: { settings: {}, clickSoundAt: 2.0, clickAt: 4.0, shots: [2.4, 'app+3'], prefsCheck: true },
-  // the app at phone width (device emulation + reload): the phone's start screen
-  phone: { settings: {}, flags: { openingDay: today }, shots: ['app+2'], phone: [0.15, 0.5, 0.9, 1.3, 1.7] },
+  // the app at phone width (device emulation + reload): the phone's opening (phone-opening.ts, 2.9 s after the settings)
+  phone: { settings: {}, flags: { openingDay: today }, shots: ['app+2'], phone: [0.3, 0.9, 1.5, 2.1, 2.7, 3.2, 3.6] },
   // 设置 › 外观 › 开场和背景 (the cards load their posters from the server)
   settings: { settings: {}, flags: { openingDay: today }, shots: ['app+1'], open: { section: 'appearance', reveal: 'ui.opening.pack' } },
   // ---- 开场 第二批 (docs/notes/opening.md): 星图 / 字符雨 (drawn, like 点火) and what they leave behind (app+3)
@@ -80,7 +80,7 @@ const home = path.join(base, 'home');
 const data = path.join(base, 'data');
 const ud = path.join(base, 'ud');
 for (const d of [home, data, ud]) fs.mkdirSync(d, { recursive: true });
-fs.writeFileSync(path.join(data, 'meta.json'), JSON.stringify({ version: 1, settings: { onboarded: true, 'ui.language': 'zh', ...sc.settings } }));
+fs.writeFileSync(path.join(data, 'meta.json'), JSON.stringify({ version: 1, settings: { onboarded: true, 'ui.language': 'zh', 'ui.opening.sound': false, ...sc.settings } }));
 fs.writeFileSync(path.join(ud, 'window-state.json'), JSON.stringify({ v: 2, windows: { main: { x: 40, y: 30, width: W, height: H } } }));
 for (const id of sc.packs ?? []) {
   const dir = path.join(data, 'openings', id);

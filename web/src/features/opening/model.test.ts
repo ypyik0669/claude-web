@@ -9,10 +9,16 @@ const WEB: OpeningInfo = { id: 'glow', name: '萤火', builtin: false, kind: 'we
 const url = (id: string, f: string) => `u/${id}/${f}`;
 
 describe('开场和背景 · settings', () => {
-  it('defaults agree with the desktop shell: Claude Web 娘, each day\'s first start, full, no sound, kept at 30%', () => {
-    expect([packOf({}), whenOf({}), fullOf({}), soundOf({}), keepOn({}), opacityOf({})]).toEqual([DEFAULT_PACK, 'daily', true, false, true, OPACITY_DEFAULT]);
+  it('defaults agree with the desktop shell: Claude Web 娘, every start, full, with sound, kept at 60%', () => {
+    expect([packOf({}), whenOf({}), fullOf({}), soundOf({}), keepOn({}), opacityOf({})]).toEqual([DEFAULT_PACK, 'always', true, true, true, 60]);
+    expect(OPACITY_DEFAULT).toBe(60);
     expect(whenOf({ 'ui.opening.when': 'never' })).toBe('never');
+    expect(whenOf({ 'ui.opening.when': 'daily' })).toBe('daily');
+    expect(whenOf({ 'ui.opening.when': 'weekly' })).toBe('always');
     expect(fullOf({ 'ui.opening.length': 'short' })).toBe(false);
+    // a sound switched off stays off; anything else is the default (on)
+    expect(soundOf({ 'ui.opening.sound': false })).toBe(false);
+    expect(soundOf({ 'ui.opening.sound': true })).toBe(true);
   });
   it('留作背景 never set: off for someone who turned 背景动画 off; a set value wins', () => {
     expect(keepOn({ 'ui.backdropMotion': false })).toBe(false);

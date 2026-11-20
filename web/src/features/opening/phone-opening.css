@@ -1,0 +1,86 @@
+/* The phone's opening (phone-opening.ts): shared by the app (PhoneSplash.tsx) and the phone shell, so nothing here
+   leans on the app's tokens. Every delay and duration is multiplied by --k (1 完整, 0.55 简短). Timeline at --k 1:
+   0–1.2 s she comes up out of the dark (and keeps closing in till 3.2 s) · 0.55–1.55 s a line of fire runs round the
+   gold logo behind her · 0.9 s the orb ignites · 1.35 s the letters flare · 1.55 s the logo, 1.8 s the wordmark,
+   2.05 s the credit. `.end` jumps there (a tap); `.still` is the end frame with nothing moving (reduced motion). */
+.ph-open {
+  --k: 1;
+  --ph-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  background: #0b0a09;
+  color: #f3eee6;
+  transition: opacity 0.35s var(--ph-ease);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.ph-open.out { opacity: 0; pointer-events: none; }
+
+.ph-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 28%;
+  animation: ph-rise calc(var(--k) * 1.2s) var(--ph-ease) both, ph-close calc(var(--k) * 3.2s) cubic-bezier(0.2, 0.6, 0.3, 1) both;
+}
+.ph-embers { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.ph-fade { position: absolute; left: 0; right: 0; bottom: 0; height: 50%; background: linear-gradient(to bottom, transparent, rgba(11, 10, 9, 0.8) 46%, #0b0a09); pointer-events: none; }
+
+/* the fuse: pathLength 1000, lit at the top middle, running clockwise */
+.ph-fuse, .ph-fuse-glow, .ph-fuse-head { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.ph-fuse { stroke: #ffd690; stroke-width: 4.5; stroke-dasharray: 1000 1000; stroke-dashoffset: 1000; animation: ph-trace calc(var(--k) * 1s) calc(var(--k) * 0.55s) cubic-bezier(0.45, 0, 0.25, 1) forwards, ph-cool calc(var(--k) * 0.9s) calc(var(--k) * 1.55s) ease-out forwards; }
+.ph-fuse-glow { stroke: #ff8a3d; stroke-width: 18; stroke-dasharray: 1000 1000; stroke-dashoffset: 1000; opacity: 0.9; animation: ph-trace calc(var(--k) * 1s) calc(var(--k) * 0.55s) cubic-bezier(0.45, 0, 0.25, 1) forwards, ph-glow 2.6s calc(var(--k) * 1.6s) ease-in-out infinite alternate; }
+.ph-fuse-head { stroke: #fffaf0; stroke-width: 7; stroke-dasharray: 46 954; stroke-dashoffset: 46; opacity: 0; animation: ph-head calc(var(--k) * 1s) calc(var(--k) * 0.55s) cubic-bezier(0.45, 0, 0.25, 1) forwards; }
+
+.ph-flare { opacity: 0; transform-box: fill-box; transform-origin: center; mix-blend-mode: screen; animation: ph-flare calc(var(--k) * 0.9s) calc(var(--k) * 1.35s) var(--ph-ease) forwards; }
+.ph-orb { opacity: 0; transform-box: fill-box; transform-origin: center; mix-blend-mode: screen; animation: ph-orb calc(var(--k) * 0.7s) calc(var(--k) * 0.9s) var(--ph-ease) forwards, ph-pulse 1.8s calc(var(--k) * 1.6s) ease-in-out infinite alternate; }
+
+.ph-mark { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 24px calc(56px + env(safe-area-inset-bottom, 0px)); }
+.ph-logo { width: 54px; height: 54px; border-radius: 23%; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 30px rgba(255, 90, 31, 0.45); animation: ph-pop calc(var(--k) * 0.6s) calc(var(--k) * 1.55s) var(--ph-ease) both; }
+.ph-mark .w { font: 400 38px/1.1 Georgia, 'Times New Roman', serif; letter-spacing: -0.05em; color: #f3eee6; animation: ph-up calc(var(--k) * 0.55s) calc(var(--k) * 1.8s) var(--ph-ease) both; }
+.ph-mark .w .c { color: #d97757; margin-right: 0.22em; }
+.ph-mark .by { font: 400 14px/1.3 Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', sans-serif; color: #b8b0a4; letter-spacing: -0.01em; animation: ph-up calc(var(--k) * 0.5s) calc(var(--k) * 2.05s) var(--ph-ease) both; }
+.ph-mark .by span { color: #8a8378; font-size: 0.82em; margin-right: 5px; }
+
+/* the shell, connecting behind it: one quiet line, and what to do instead (换电脑) */
+.ph-status { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: 14px; min-height: 44px; font: 13px/18px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', sans-serif; color: rgba(243, 238, 230, 0.66); text-align: center; animation: ph-up 0.3s var(--ph-ease) both; }
+.ph-status-act { min-height: 44px; padding: 0 16px; border: 0; border-radius: 999px; background: none; font: inherit; color: #f9a56e; cursor: pointer; }
+.ph-status-act:active { background: rgba(255, 255, 255, 0.08); }
+
+@keyframes ph-rise { from { opacity: 0; filter: brightness(0.3); } to { opacity: 1; filter: brightness(1); } }
+@keyframes ph-close { from { transform: scale(1.1); } to { transform: scale(1); } }
+@keyframes ph-trace { to { stroke-dashoffset: 0; } }
+@keyframes ph-cool { to { stroke: #ffc46a; stroke-width: 3.5; } }
+@keyframes ph-head { 0% { opacity: 0; stroke-dashoffset: 46; } 8% { opacity: 1; } 88% { opacity: 1; } 100% { opacity: 0; stroke-dashoffset: -954; } }
+@keyframes ph-glow { from { opacity: 0.9; } to { opacity: 0.45; } }
+@keyframes ph-flare { 0% { opacity: 0; transform: scale(0.6); } 45% { opacity: 1; transform: scale(1.08); } 100% { opacity: 0.4; transform: scale(1); } }
+@keyframes ph-orb { 0% { opacity: 0; transform: scale(0.2); } 60% { opacity: 1; transform: scale(1.18); } 100% { opacity: 0.9; transform: scale(1); } }
+@keyframes ph-pulse { from { transform: scale(1); } to { transform: scale(1.12); } }
+@keyframes ph-pop { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: scale(1); } }
+@keyframes ph-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* a tap: straight to where it ends (the loops keep going) */
+.ph-open.end .ph-art { animation: none; }
+.ph-open.end .ph-fuse { animation: ph-trace 1ms forwards, ph-cool 1ms forwards; }
+.ph-open.end .ph-fuse-glow { animation: ph-trace 1ms forwards, ph-glow 2.6s ease-in-out infinite alternate; }
+.ph-open.end .ph-fuse-head { animation: none; opacity: 0; }
+.ph-open.end .ph-flare { animation: ph-flare 1ms forwards; }
+.ph-open.end .ph-orb { animation: ph-orb 1ms forwards, ph-pulse 1.8s ease-in-out infinite alternate; }
+.ph-open.end .ph-logo, .ph-open.end .ph-mark .w, .ph-open.end .ph-mark .by { animation: none; }
+
+/* 减少动态效果: the end frame, still */
+.ph-open.still .ph-art, .ph-open.still .ph-logo, .ph-open.still .ph-mark .w, .ph-open.still .ph-mark .by, .ph-open.still .ph-status { animation: none; }
+.ph-open.still .ph-fuse { animation: none; stroke-dashoffset: 0; stroke: #ffc46a; stroke-width: 3.5; }
+.ph-open.still .ph-fuse-glow { animation: none; stroke-dashoffset: 0; opacity: 0.5; }
+.ph-open.still .ph-fuse-head { animation: none; opacity: 0; }
+.ph-open.still .ph-flare { animation: none; opacity: 0.4; }
+.ph-open.still .ph-orb { animation: none; opacity: 0.9; }
+.ph-open.still .ph-embers { display: none; }

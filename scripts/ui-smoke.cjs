@@ -85,7 +85,7 @@ function seedHome(home) {
   const { execFileSync } = require('node:child_process');
   // the smoke asserts Chinese texts: the interface language is pinned (scripts/i18n-smoke.cjs looks at the English one)
   fs.mkdirSync(path.join(home, '.claude-web'), { recursive: true });
-  fs.writeFileSync(path.join(home, '.claude-web', 'meta.json'), JSON.stringify({ version: 1, settings: { 'ui.language': 'zh', 'ui.sidebarFolded': false, 'ui.welcomeLayout': 'inbox' } }));
+  fs.writeFileSync(path.join(home, '.claude-web', 'meta.json'), JSON.stringify({ version: 1, settings: { 'ui.language': 'zh', 'ui.sidebarFolded': false, 'ui.welcomeLayout': 'inbox', 'ui.opening.sound': false } }));
   // 连接器 → 编辑: one user-scope MCP server with a credential and a plain variable; 导入: a Pencil copy and a
   // Gemini entry pointing at an extension folder that is gone
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { 'smoke-edit': { type: 'stdio', command: 'smoke-old.exe', args: ['--mcp'], env: { SMOKE_API_KEY: 'smoke-secret-1', SMOKE_HOME: 'D:/old' } } } }));
@@ -1061,22 +1061,20 @@ function driver() {
         check('remote access on, its only broker unreachable: the status line says 连不上牵线服务器，检查网络', awFailing, await js(`document.querySelector('${RS} [data-id="anywhere-status"]')?.textContent ?? 'no status line'`));
         const keep = await js(`({ note: document.querySelector('${RS} [data-id="keep-awake-note"]')?.textContent ?? '', toggle: !!document.querySelector('${RS} [data-id="keep-awake"]') })`);
         check('不让电脑睡眠 in the browser build: the sentence, no switch', keep.note.includes('网页版做不到，去系统电源设置里关掉睡眠') && !keep.toggle, JSON.stringify(keep));
-        await click(`${RS} [data-id="pair-new"]`);
-        const qrAnywhere = await waitFor(`!!document.querySelector('${RS} img.pair-qr[data-kind="anywhere"]') && document.querySelectorAll('${RS} [data-id="pair-switch"] button').length === 2 && !!document.querySelector('${RS} [data-id="pair-copy"]')`, 10_000);
-        const switchText = await js(`[...document.querySelectorAll('${RS} [data-id="pair-switch"] button')].map((b) => b.textContent.trim())`);
-        check('a pairing code: the QR is the 在哪都能用 one, with the switch (在哪都能用 / 只在局域网（不用联网）) and 复制配对链接', qrAnywhere && JSON.stringify(switchText) === JSON.stringify(['在哪都能用', '只在局域网（不用联网）']), JSON.stringify({ qrAnywhere, switchText }));
-        await shot('settings-remote-anywhere');
-        await js(`(() => { window.__cwCopied = null; Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async (t) => { window.__cwCopied = t; } }); })()`);
-        await click(`${RS} [data-id="pair-copy"]`);
-        // the phone page's address as the server reports it (DEFAULT_SHELL_URL lives in one place only)
+        // the QR's link as the server makes it (the page shows it only as the QR now): the phone page's address, #p=…,
+        // and this PC's own broker list in it (F2). Asked before the page's own code, so the code on screen stays the live one
         const shellUrl = (await srvReq({ kind: 'remote.status' }))?.anywhere?.shellUrl ?? '';
+        const probe = await srvReq({ kind: 'remote.pairCode' });
         const linkRe = `^${shellUrl.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}#p=[A-Za-z0-9_-]+$`;
-        const copied = !!shellUrl && await waitFor(`new RegExp(${JSON.stringify(linkRe)}).test(window.__cwCopied ?? '') && [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('配对链接已复制')) && !location.href.includes('#p=')`, 3000);
-        check('复制配对链接 copies the 在哪都能用 link (never into the page address) and says so', copied, `${shellUrl} · ${await js('String(window.__cwCopied).slice(0, 60)')}`);
-        // this PC is not on the default lists: the link names its broker list for the phone to dial (F2)
+        check('the 在哪都能用 QR is the phone page\'s address with #p=… (the address the server reports: DEFAULT_SHELL_URL lives in one place only)', !!shellUrl && new RegExp(linkRe).test(probe?.anywhereUrl ?? ''), `${shellUrl} · ${String(probe?.anywhereUrl ?? '').slice(0, 60)}`);
         let named = null;
-        try { named = JSON.parse(Buffer.from(String(await js('window.__cwCopied')).split('#p=')[1], 'base64url').toString('utf8')); } catch { /* checked below */ }
+        try { named = JSON.parse(Buffer.from(String(probe?.anywhereUrl ?? '').split('#p=')[1], 'base64url').toString('utf8')); } catch { /* checked below */ }
         check('… and the link carries this PC\'s own broker list (it is not the default one)', named?.v === 1 && JSON.stringify(named?.b) === JSON.stringify([{ name: 'smoke', url: 'wss://127.0.0.1:9/mqtt', relay: true }]), JSON.stringify(named));
+        await click(`${RS} [data-id="pair-new"]`);
+        const qrAnywhere = await waitFor(`!!document.querySelector('${RS} img.pair-qr[data-kind="anywhere"]') && document.querySelectorAll('${RS} [data-id="pair-switch"] button').length === 2 && !document.querySelector('${RS} [data-id="pair-copy"]') && (document.querySelector('${RS} .pair-side')?.textContent ?? '').includes('扫码配对')`, 10_000);
+        const switchText = await js(`[...document.querySelectorAll('${RS} [data-id="pair-switch"] button')].map((b) => b.textContent.trim())`);
+        check('a pairing code: the QR is the 在哪都能用 one, with the switch (在哪都能用 / 只在局域网（不用联网）); one way to pair — no 复制配对链接, the line says 扫码配对', qrAnywhere && JSON.stringify(switchText) === JSON.stringify(['在哪都能用', '只在局域网（不用联网）']), JSON.stringify({ qrAnywhere, switchText }));
+        await shot('settings-remote-anywhere');
         await click(`${RS} [data-id="pair-switch"] [data-kind="lan"]`);
         const qrLan = await waitFor(`!!document.querySelector('${RS} img.pair-qr[data-kind="lan"]') && !document.querySelector('${RS} [data-id="pair-copy"]')`, 3000);
         check('只在局域网（不用联网）: the LAN QR, no 复制配对链接', qrLan);

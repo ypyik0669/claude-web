@@ -46,9 +46,10 @@ export const ROW_MENU = ['open-tab', 'open-split', 'resume', 'pin', 'select', 'k
 export const ROW = ['status', 'kids', 'more', 'less', 'select-bar', 'select-section', 'filter'] as const;
 /**
  * The account row at the bottom and its menu (stage 1: eight rows — 设置 · 用量与账本 · 语言 › · 主题 › · 键盘快捷键 ·
- * 帮助与反馈 › · 更新内容 · 登录 / 退出; 字符画主题 / 外观 are in 主题 ›).
+ * 帮助与反馈 › · 更新内容 · 登录 / 退出; 字符画主题 / 外观 are in 主题 ›). On a phone inside the phone shell 换一台电脑
+ * (`devices`) has 键盘快捷键's place: back to the shell's list of PCs.
  */
-export const ACCOUNT = ['account', 'quota', 'connection', 'today', 'expired', 'login', 'logout', 'settings', 'usage', 'language', 'theme', 'ascii-themes', 'appearance', 'shortcuts', 'help', 'whats-new'] as const;
+export const ACCOUNT = ['account', 'quota', 'connection', 'today', 'expired', 'login', 'logout', 'settings', 'usage', 'language', 'theme', 'ascii-themes', 'appearance', 'shortcuts', 'devices', 'help', 'whats-new'] as const;
 /** The light, dismissable hint. */
 export const HINT = ['library-join', 'library-later'] as const;
 
@@ -154,7 +155,7 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
 ];
 
 /** Where the spec's new L0 / L1 entries live (§4.2 / §5.1), beyond the old ones. */
-export const ADDED: `${Place}:${string}`[] = ['top:back', 'top:forward', 'top:artifacts', 'automation:running', 'automation:schedules', 'automation:bots', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:view', 'account:account', 'account:today', 'account:shortcuts', 'account:language', 'account:help', 'account:whats-new', 'view:library', 'view:group-by', 'view:sort-by', 'view:other-agents', 'view:per-group', 'view:new-section', 'view:reset', 'view:all', 'section:custom', 'custom:custom-section', 'custom:custom-rename', 'custom:custom-delete', 'custom:custom-out', 'row:less', 'project:move-top', 'project:move-up', 'project:move-down', 'project:edit', 'account:ascii-themes', 'account:expired', 'account:login', 'account:logout', 'rowMenu:handoff-peer', 'rowMenu:section-add', 'rowMenu:section-out', 'row:select-section', 'view:show', 'groupHead:group-view', 'groupHead:new-here', 'rowMenu:select', 'row:filter'];
+export const ADDED: `${Place}:${string}`[] = ['top:back', 'top:forward', 'top:artifacts', 'automation:running', 'automation:schedules', 'automation:bots', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:view', 'account:account', 'account:today', 'account:shortcuts', 'account:language', 'account:help', 'account:whats-new', 'view:library', 'view:group-by', 'view:sort-by', 'view:other-agents', 'view:per-group', 'view:new-section', 'view:reset', 'view:all', 'section:custom', 'custom:custom-section', 'custom:custom-rename', 'custom:custom-delete', 'custom:custom-out', 'row:less', 'project:move-top', 'project:move-up', 'project:move-down', 'project:edit', 'account:ascii-themes', 'account:expired', 'account:login', 'account:logout', 'rowMenu:handoff-peer', 'rowMenu:section-add', 'rowMenu:section-out', 'row:select-section', 'view:show', 'groupHead:group-view', 'groupHead:new-here', 'rowMenu:select', 'row:filter', 'account:devices'];
 
 export function resolves(ref: `${Place}:${string}`): boolean {
   const [place, id] = ref.split(':') as [Place, string];
