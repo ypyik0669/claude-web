@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_BROKERS, DEFAULT_STUN, b64u, pairLink } from '@anywhere';
-import { BAD_LISTS, LINK_FRESH_MS, linkState, pairPlan, parsePairLink, readPairAnswer, rememberLink, type PairLink } from './pair-link';
+import {
+  BAD_LISTS,
+  HANDOFF_COOKIE,
+  LINK_FRESH_MS,
+  handoffClear,
+  handoffCookie,
+  handoffLink,
+  linkState,
+  pairPlan,
+  parsePairLink,
+  readPairAnswer,
+  rememberLink,
+  startLink,
+  type PairLink,
+} from './pair-link';
 
 const enc = new TextEncoder();
 const P = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
@@ -119,6 +133,49 @@ describe('pairPlan (ruling R12b: iOS keeps Safari and the home screen apart)', (
   it('from the home screen, or any other browser: pair at once', () => {
     expect(pairPlan({ ios: true, standalone: true, hasPairLink: true })).toBe('pair');
     expect(pairPlan({ ios: false, standalone: false, hasPairLink: true })).toBe('pair');
+  });
+});
+
+describe('the handoff cookie (iOS copies cookies into a home-screen app, and not the #p= in the address)', () => {
+  /** What `document.cookie` reads back after the assignment: the name=value part. */
+  const jar = (assignment: string | null) => (assignment ?? '').split(';')[0];
+
+  it('keeps the p= of the link, for as long as a pairing code lives, sent nowhere else than this host over https', () => {
+    const c = handoffCookie(`${SHELL}${GOOD}`, '/');
+    expect(c).toBe(`${HANDOFF_COOKIE}=${GOOD.slice(3)}; Max-Age=600; Path=/; Secure; SameSite=Strict`);
+    // a fragment alone, or a shell below a folder
+    expect(handoffCookie(GOOD, '/cw/')).toContain('; Path=/cw/;');
+  });
+
+  it('the home-screen app reads back the very link the QR gave', () => {
+    const back = handoffLink(`theme=dark; ${jar(handoffCookie(GOOD, '/'))}; x=1`);
+    expect(back).toBe(GOOD);
+    expect(parsed(back!)?.code).toBe('123456');
+  });
+
+  it('no link, one with characters a cookie cannot carry as they are, or one too long for a cookie: none', () => {
+    expect(handoffCookie(`${SHELL}`, '/')).toBeNull();
+    expect(handoffCookie('#p=a;b', '/')).toBeNull();
+    expect(handoffCookie(`#p=${'A'.repeat(3801)}`, '/')).toBeNull();
+    expect(handoffCookie(`#p=${'A'.repeat(3800)}`, '/')).not.toBeNull();
+  });
+
+  it('other cookies, or none, hand nothing over; a name that only ends like it is not it', () => {
+    expect(handoffLink('')).toBeNull();
+    expect(handoffLink('theme=dark')).toBeNull();
+    expect(handoffLink(`x${HANDOFF_COOKIE}=abc`)).toBeNull();
+  });
+
+  it('removing it: the same name and path, gone now', () => {
+    expect(handoffClear('/')).toBe(`${HANDOFF_COOKIE}=; Max-Age=0; Path=/; Secure; SameSite=Strict`);
+  });
+
+  it('the address comes first; the cookie only counts in a home-screen app (Safari still has the link in its address)', () => {
+    const cookies = jar(handoffCookie(GOOD, '/'));
+    expect(startLink({ hash: GOOD, cookies, standalone: true })).toEqual({ link: GOOD, from: 'address' });
+    expect(startLink({ hash: '', cookies, standalone: true })).toEqual({ link: GOOD, from: 'cookie' });
+    expect(startLink({ hash: '', cookies, standalone: false })).toBeNull();
+    expect(startLink({ hash: '#other', cookies: '', standalone: true })).toBeNull();
   });
 });
 

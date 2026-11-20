@@ -145,7 +145,7 @@ export function RemoteSection() {
                 )}
                 <div className="pair-code">{pair.code}</div>
                 {shown === 'anywhere' ? (
-                  <div className="sub">{tr('{left}s 后失效 · 用手机相机扫码，在哪都能连上这台电脑。iPhone 上从主屏幕图标打开的，复制配对链接，粘贴到那里的「粘贴配对链接」。', { left })}</div>
+                  <div className="sub">{tr('{left}s 后失效 · 用手机相机扫码，在哪都能连上这台电脑。iPhone 上照提示先加到主屏幕，从图标打开就会自动配对。', { left })}</div>
                 ) : (
                   <div className="sub">{tr('{left}s 后失效 · 手机连同一个 Wi-Fi 扫码，或打开', { left })} <code>{pair.url.split('#')[0]}</code> {tr('手动输入')}</div>
                 )}

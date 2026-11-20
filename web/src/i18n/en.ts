@@ -533,7 +533,7 @@ export const EN_WEB: Record<string, string> = {
   "{label}（现在 {zoomPercent}）": "{label} (now {zoomPercent})",
   "{left}s 后失效 · 发送": "Expires in {left}s · send",
   "{left}s 后失效 · 手机连同一个 Wi-Fi 扫码，或打开": "Expires in {left}s · scan on a phone connected to the same Wi-Fi, or open",
-  "{left}s 后失效 · 用手机相机扫码，在哪都能连上这台电脑。iPhone 上从主屏幕图标打开的，复制配对链接，粘贴到那里的「粘贴配对链接」。": "Expires in {left}s · scan with your phone’s camera to reach this computer from anywhere. If you opened it from an iPhone home screen icon, copy the pairing link and paste it into “Paste pairing link” there.",
+  "{left}s 后失效 · 用手机相机扫码，在哪都能连上这台电脑。iPhone 上照提示先加到主屏幕，从图标打开就会自动配对。": "Expires in {left}s · scan with your phone’s camera to reach this computer from anywhere. On an iPhone, add it to the Home Screen first as the page asks; opened from the icon, it pairs by itself.",
   "{linesCount} 行{v}": "{linesCount} {linesCount?line:lines}{v}",
   "{lines} 行": "{lines} {lines?line:lines}",
   "{main}{v}\n同一供应商直接换模型；换供应商会无感重启对话；选其它 Agent 的模型 = 交给它继续": "{main}{v}\nSwitching models within the same provider is direct; switching providers restarts the conversation invisibly; picking another agent's model = hand off to it",

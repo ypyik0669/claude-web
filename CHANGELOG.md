@@ -57,6 +57,7 @@ This release trims the interface: fewer entry points and fewer layers, nothing t
 - **An opening with Claude Web-chan** (desktop app). The app opens with a short film, by default on the first start of the day, and it can stay behind the interface as a soft moving background (light themes get drifting embers instead). Settings › Appearance › Opening and background: which opening, how often, the short version, sound, and how strong the background is.
 - **More openings:** Starmap, Code rain and Net cafe opens (3D, needs WebGL), and web packs. Install one from GitHub (you see its author, license and size before anything is installed), or have Claude make one with you. Point at a card to preview it.
 - **View a graph or a Mermaid picture full screen** ([#17](https://github.com/ypyik0669/claude-web/issues/17)). Node graphs and Mermaid pictures in a reply now have "View full screen" next to "Fit to view": the picture opens as big as the window, fitted to it, and you can still drag to pan and scroll to zoom. Esc closes it and the focus goes back to the button.
+- **Android phones can install the phone page on the Home Screen.** Once a computer is paired in Chrome, the page offers "Install on Home Screen": one tap installs it, and the icon opens with the computer already paired, no scanning again.
 
 ### Fixed
 
@@ -64,6 +65,7 @@ This release trims the interface: fewer entry points and fewer layers, nothing t
 - **The compaction point you set with Claude Code's /autocompact holds in every conversation.** /autocompact keeps the point in settings.json (`autoCompactWindow`, for all models or just one). The official Claude Code reads it, but conversations on ccb (GPT, Gemini, DeepSeek and other relays in OpenAI format) ignored it and compacted only near the full window, and the context ring didn't know about it either. Both follow it now; a `CLAUDE_CODE_AUTO_COMPACT_WINDOW` you set yourself still wins.
 - **"Open folder…" on Windows brings the folder dialog to the front** ([#16](https://github.com/ypyik0669/claude-web/pull/16)). The dialog used to open behind the app with no taskbar button, so the menu item looked dead, and every click left a PowerShell process waiting in the background. The dialog now comes to the front; if the system dialog can't run at all, the folder browser inside the page opens instead.
 - **Folders with Chinese names come back intact from the Windows folder dialog.** The picked path came back as ?? or garbled characters, depending on the system's language setting, so the folder couldn't be opened.
+- **On an iPhone, the phone page added to the Home Screen pairs by itself: no more copying and pasting the pairing link.** The link used to get lost on the way to the Home Screen, so the icon opened an empty list and you had to copy the pairing link on the computer and paste it there. Now, after scanning, tap "Add to Home Screen first" as the page asks and open the icon: it carries on pairing (iOS 17.2 or later). If the icon is already on your Home Screen, tap "Already on your Home Screen? Copy the pairing link" after scanning, then "Paste from clipboard" in Claude Web on the Home Screen.
 
 ## [0.5.14] — 2026-11-19
 

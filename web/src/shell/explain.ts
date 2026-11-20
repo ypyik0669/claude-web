@@ -98,7 +98,7 @@ export function explainLinkEnd(why: string): Explained | null {
 /** The PC's (or the Mux's) English reason a request failed, in Chinese (R8c). */
 const PC_ERRORS: [RegExp, string][] = [
   // the bridge could not reach the PC's own remote-access listener (it relays to 127.0.0.1:<port>)
-  [/ECONNREFUSED/, tr('电脑上的远程访问没在运行：在电脑上打开 设置 → 手机与其它电脑 →「允许其它设备访问」。')],
+  [/ECONNREFUSED/, tr('电脑上的远程访问没在运行：在电脑上打开 设置 → 手机与远程 →「允许其它设备访问」。')],
   [/response was cut off/i, tr('电脑那边的响应中断了。')],
   [/no data from the listener/i, tr('电脑那边太久没有回应，这个请求已放弃。')],
   [/link to the PC has ended/i, tr('到电脑的连接断了。')],

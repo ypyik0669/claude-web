@@ -20,6 +20,24 @@ const alias = {
   '@shared': path.join(root, '../server/src/protocol.ts'),
 };
 
+/**
+ * The shell's install manifest (Android): installed, it opens the PC list, with the PCs paired in the browser (the
+ * same storage there). iOS gets no manifest (main.ts): its start_url would be the address a home-screen app opens.
+ */
+const SHELL_MANIFEST = {
+  name: 'Claude Web',
+  short_name: 'Claude Web',
+  start_url: './',
+  scope: './',
+  display: 'standalone',
+  background_color: '#f7f6f2',
+  theme_color: '#f7f6f2',
+  icons: [
+    { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
+    { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+  ],
+};
+
 function filesIn(dir: string, rel = ''): string[] {
   const out: string[] = [];
   for (const e of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
@@ -60,6 +78,10 @@ function shellBuild(): Plugin {
     },
     async closeBundle() {
       fs.renameSync(path.join(outDir, 'shell.html'), path.join(outDir, 'index.html'));
+      // the home-screen icon and what makes Android's browsers offer to install (main.ts links both): the app's own
+      // icons under fixed names, precached and hashed with the rest
+      for (const f of ['icon-192.png', 'icon-512.png']) fs.copyFileSync(path.join(root, 'public', f), path.join(outDir, f));
+      fs.writeFileSync(path.join(outDir, 'manifest.webmanifest'), `${JSON.stringify(SHELL_MANIFEST, null, 2)}\n`);
       const files = filesIn(outDir).filter((f) => f !== 'sw.js').sort();
       const h = createHash('sha256');
       const hashes: Record<string, string> = {};

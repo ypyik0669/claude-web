@@ -97,6 +97,51 @@ export function pairPlan(o: { ios: boolean; standalone: boolean; hasPairLink: bo
   return o.ios && !o.standalone ? 'ask' : 'pair';
 }
 
+/**
+ * The cookie that carries a pairing link into an iOS home-screen app. Adding a site to the home screen copies the
+ * site's cookies into the new app (iOS 17.2 and later, once, at that moment) and nothing else: not localStorage, not
+ * IndexedDB — and on a real iPhone (2026-11) not the `#p=` in the address either, so the app opened on an empty list
+ * and the link had to be pasted. So while iOS Safari asks (R12b) the link also sits in this cookie for as long as a
+ * pairing code lives; the home-screen app reads it on its first start, removes it and pairs.
+ *
+ * The cookie goes to the shell's host with its requests for those minutes, where the fragment never does. The host
+ * serves the shell's own code, so it can read the link anyway; what the fragment keeps the link out of (logs, the
+ * Referer) a cookie stays out of too.
+ */
+export const HANDOFF_COOKIE = 'cw_pair';
+export const HANDOFF_MAX_AGE_S = 600;
+/** Under a browser's 4 KB a cookie, with its name and attributes. */
+const HANDOFF_MAX_CHARS = 3800;
+
+/** The `document.cookie` assignment that keeps `link`'s `p=` (base64url: cookie-safe as it is) for the home screen; null for one that cannot go. */
+export function handoffCookie(link: string, path: string): string | null {
+  const at = link.indexOf('#');
+  const p = new URLSearchParams(at >= 0 ? link.slice(at + 1) : link).get('p');
+  if (!p || p.length > HANDOFF_MAX_CHARS || !/^[\w-]+$/.test(p)) return null;
+  return `${HANDOFF_COOKIE}=${p}; Max-Age=${HANDOFF_MAX_AGE_S}; Path=${path}; Secure; SameSite=Strict`;
+}
+
+/** The assignment that removes it. */
+export function handoffClear(path: string): string {
+  return `${HANDOFF_COOKIE}=; Max-Age=0; Path=${path}; Secure; SameSite=Strict`;
+}
+
+/** The link the cookies (`document.cookie`) hand over, as the `#p=` fragment the QR gave; null when there is none. */
+export function handoffLink(cookies: string): string | null {
+  const m = new RegExp(`(?:^|;\\s*)${HANDOFF_COOKIE}=([\\w-]+)`).exec(cookies ?? '');
+  return m ? `#p=${m[1]}` : null;
+}
+
+/**
+ * The pairing link a page starts with: the address's `#p=`, else — in a home-screen app — the one the handoff cookie
+ * brought. Safari only writes that cookie, it never takes a link from it: there the link is still in the address.
+ */
+export function startLink(o: { hash: string; cookies: string; standalone: boolean }): { link: string; from: 'address' | 'cookie' } | null {
+  if (/^#p=/.test(o.hash)) return { link: o.hash, from: 'address' };
+  const c = o.standalone ? handoffLink(o.cookies) : null;
+  return c ? { link: c, from: 'cookie' } : null;
+}
+
 /** A pairing code lives 10 minutes on the PC. */
 export const LINK_FRESH_MS = 10 * 60_000;
 const LINK_MEMORY = 20;

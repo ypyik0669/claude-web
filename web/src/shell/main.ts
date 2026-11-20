@@ -8,9 +8,22 @@ import { idbDevices, memoryDevices, type DeviceRec, type DeviceStore } from './d
 import { SAY, type Explained } from './explain';
 import { readShellRequest, replyFromError } from './forward';
 import { BROKERS_KEY, STUN_KEY, brokerOverride, dialLists, overrideNote, stunOverride } from './override';
-import { BAD_LISTS, linkKey, linkState, pairPlan, parsePairLink, rememberLink, type LinkMemory, type PairLink } from './pair-link';
+import {
+  BAD_LISTS,
+  HANDOFF_COOKIE,
+  handoffClear,
+  handoffCookie,
+  linkKey,
+  linkState,
+  pairPlan,
+  parsePairLink,
+  rememberLink,
+  startLink,
+  type LinkMemory,
+  type PairLink,
+} from './pair-link';
 import { Session, ShellError, explain, pairWith, type Dialer, type SessionView } from './session';
-import { Ui, type BarState } from './ui';
+import { EMPTY_HOME, Ui, type BarState } from './ui';
 import { tr } from './i18n';
 
 const scope = new URL('./', location.href).href;
@@ -28,6 +41,19 @@ const HINT_KEY = 'cw.shell.iosHint';
 const LINKS_KEY = 'cw.shell.pairLinks';
 const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || matchMedia('(display-mode: standalone)').matches;
+/** The shell's folder on its host: where the handoff cookie lives (pair-link.ts). */
+const scopePath = new URL(scope).pathname;
+const INSTALL_KEY = 'cw.shell.installBar';
+
+// the home-screen icon (iOS reads it when the page is added), and everywhere but iOS a manifest: what has Android's
+// browsers offer to install. Not on iOS: there a manifest's start_url would replace the address a home-screen app
+// opens, #p= and all
+for (const [rel, href] of [['apple-touch-icon', 'icon-192.png'], ...(ios ? [] : [['manifest', 'manifest.webmanifest']])]) {
+  const l = document.createElement('link');
+  l.rel = rel;
+  l.href = href;
+  document.head.append(l);
+}
 
 const STEP: Record<DialState, string> = {
   finding: tr('正在找电脑…'),
@@ -110,6 +136,41 @@ function setLocal(key: string, value: string): void {
   }
 }
 
+function cookies(): string {
+  try {
+    return document.cookie;
+  } catch {
+    return '';
+  }
+}
+
+function setCookie(assignment: string | null): void {
+  if (!assignment) return;
+  try {
+    document.cookie = assignment;
+  } catch {
+    // cookies refused: the address and the paste field are left
+  }
+}
+
+/** The pairing link's copy for a home-screen app (pair-link.ts: handoffCookie), removed once it has done its work. */
+function clearHandoff(): void {
+  if (cookies().includes(`${HANDOFF_COOKIE}=`)) setCookie(handoffClear(scopePath));
+}
+
+/** Called in the tap itself: iOS refuses a clipboard write that comes after an await. */
+function copyText(text: string): Promise<boolean> {
+  try {
+    const w = navigator.clipboard?.writeText(text);
+    return w ? w.then(() => true, () => false) : Promise.resolve(false);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+/** 「从剪贴板粘贴」: read in the tap (iOS shows its own 粘贴 bubble first); declined or unavailable is null. */
+const readClipboard = typeof navigator.clipboard?.readText === 'function' ? () => navigator.clipboard.readText().catch(() => null) : null;
+
 function linkMemory(): LinkMemory {
   try {
     return JSON.parse(local(LINKS_KEY) ?? '{}') as LinkMemory;
@@ -170,9 +231,11 @@ async function showList(notice: Explained | null = null): Promise<void> {
       if (!p) return SAY.badLink;
       if (p === BAD_LISTS) return SAY.badLists;
       // pasted here on purpose: pair here, whatever browser this is
-      void takeLink(p, 'pair', true);
+      void takeLink(p, 'pair', { pasted: true });
       return null;
     },
+    readClipboard,
+    empty: ios && standalone ? EMPTY_HOME : undefined,
   });
 }
 
@@ -223,31 +286,38 @@ async function appReady(): Promise<CachesLike | null> {
 const noWorker = (): Explained => ({ text: SAY.noWorker, raw: 'no active service worker or no Cache Storage' });
 
 /**
- * A pairing link from the address or the paste field: one already used here, or past its 10 minutes, is not tried
- * again (a home-screen app reopens its saved address, #p= and all); on iOS Safari the user chooses first (R12b).
+ * A pairing link from the address, the handoff cookie or the paste field: one already used here, or past its 10
+ * minutes, is not tried again (a home-screen app may reopen its saved address, #p= and all); on iOS Safari the user
+ * chooses first (R12b). `raw`: the link as it came (`#p=…`), for the cookie and the clipboard.
  */
-async function takeLink(p: PairLink, plan: 'ask' | 'pair', pasted = false): Promise<void> {
+async function takeLink(p: PairLink, plan: 'ask' | 'pair', o: { pasted?: boolean; raw?: string } = {}): Promise<void> {
   const key = await linkKey(p);
   const state = linkState(linkMemory(), key, Date.now());
   if (state !== 'fresh') {
     clearHash();
     // a used link in the address is the home-screen bookmark opening again: just the list (it paired already)
-    return showList(state === 'expired' ? { text: SAY.expiredLink, raw: '' } : pasted ? { text: SAY.usedLink, raw: '' } : null);
+    return showList(state === 'expired' ? { text: SAY.expiredLink, raw: '' } : o.pasted ? { text: SAY.usedLink, raw: '' } : null);
   }
   setLocal(LINKS_KEY, JSON.stringify(rememberLink(linkMemory(), key, Date.now(), false)));
   if (plan === 'ask') {
     leave();
     ++flow;
-    // the link stays in the address: a home-screen bookmark made now keeps it
+    const raw = o.raw ?? location.hash;
+    // the link stays in the address, and goes into the cookie iOS copies into a home-screen app added now: that app
+    // takes it from there on its first start (the address's #p= did not survive on a real iPhone)
+    setCookie(handoffCookie(raw, scopePath));
     ui.askPair(p.pc, {
       here: () => {
+        clearHandoff();
         clearHash();
         void pair(p, key);
       },
       back: () => {
+        clearHandoff();
         clearHash();
         back();
       },
+      copy: () => copyText(new URL(raw, location.href).href),
     });
     return;
   }
@@ -332,6 +402,7 @@ function view(s: Session, v: SessionView, title: string): void {
     case 'open':
       ui.app(v.url, () => s.tunnel.closeAll());
       ui.setBar(v.kind === 'relay' ? relayBar() : null);
+      offerInstall();
       return;
     case 'relinking':
       if (open) ui.setBar({ text: tr('连接断了，正在重新连接…'), tone: 'warn', busy: true });
@@ -339,6 +410,7 @@ function view(s: Session, v: SessionView, title: string): void {
       return;
     case 'linked':
       ui.setBar(v.kind === 'relay' ? relayBar() : null);
+      offerInstall();
       return;
     case 'updating':
       ui.setBar({ text: tr('电脑上的 Claude Web 更新了，正在取新版本的界面文件…'), tone: 'info', busy: true });
@@ -376,18 +448,74 @@ function clearHash(): void {
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
 }
 
-/** A pairing link in the address: iOS Safari asks first and keeps it there; elsewhere it is taken (and cleared). */
+/**
+ * A pairing link in the address, or in a home-screen app the one the handoff cookie brought: iOS Safari asks first and
+ * keeps it in the address; elsewhere it is taken (and cleared).
+ */
 function takePairLink(): boolean {
-  const hash = location.hash;
-  const plan = pairPlan({ ios, standalone, hasPairLink: /^#p=/.test(hash) });
-  if (plan === 'list') return false;
-  const p = parsePairLink(hash);
+  const start = startLink({ hash: location.hash, cookies: cookies(), standalone });
+  // a home-screen app takes the cookie's link once: from then on the link memory (pairLinks) answers for it
+  if (standalone) clearHandoff();
+  const plan = pairPlan({ ios, standalone, hasPairLink: !!start });
+  if (plan === 'list' || !start) return false;
+  const p = parsePairLink(start.link);
   if (!p || p === BAD_LISTS) {
     clearHash();
-    void showList(p ? { text: SAY.badLists, raw: 'the link names a server list with nothing usable in it' } : { text: SAY.badLink, raw: 'unreadable #p= link' });
-  } else void takeLink(p, plan);
+    void showList(p ? { text: SAY.badLists, raw: 'the link names a server list with nothing usable in it' } : { text: SAY.badLink, raw: `unreadable #p= link (from the ${start.from})` });
+  } else void takeLink(p, plan, { raw: start.link });
   return true;
 }
+
+/** The browser's install prompt (beforeinstallprompt: Android's Chrome and the like), kept for our own button. */
+type InstallPrompt = Event & { prompt(): Promise<unknown> };
+let installEv: InstallPrompt | null = null;
+let installBarShown = false;
+
+/**
+ * 安装到主屏幕, while the browser offers it: the list's card, and once a visit a bar over the open app when the bar has
+ * nothing to say about the connection (its × keeps it away). On Android the installed app shares this browser's
+ * storage, so it opens with the PCs paired here.
+ */
+function offerInstall(): void {
+  ui.setInstall(installEv ? () => void install() : null);
+  if (!installEv || installBarShown || local(INSTALL_KEY) === 'no' || !ui.barFree()) return;
+  installBarShown = true;
+  ui.setBar({
+    text: tr('装到主屏幕，以后点图标就能用'),
+    tone: 'info',
+    actions: [
+      {
+        label: tr('安装'),
+        run: () => {
+          ui.setBar(null);
+          void install();
+        },
+      },
+    ],
+    closable: true,
+    onClose: () => setLocal(INSTALL_KEY, 'no'),
+  });
+}
+
+async function install(): Promise<void> {
+  const ev = installEv;
+  if (!ev) return;
+  // one prompt per event: the browser sends a new one when it would offer again
+  installEv = null;
+  ui.setInstall(null);
+  await ev.prompt().catch((e) => console.error('[shell] install prompt:', e));
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // our own button (the list, the bar), not the browser's banner over the app
+  e.preventDefault();
+  installEv = e as InstallPrompt;
+  offerInstall();
+});
+window.addEventListener('appinstalled', () => {
+  installEv = null;
+  ui.setInstall(null);
+});
 
 // a phone that changed networks, or came back to this page: a relay link's brokers start over at once, a link that
 // has dropped is dialed again (Session.networkChanged / pageShown: only the first counts as a network change)

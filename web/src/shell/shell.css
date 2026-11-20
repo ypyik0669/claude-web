@@ -125,8 +125,15 @@ h2 { margin: 28px 0 8px; font-size: 14px; line-height: 20px; font-weight: 600; c
 .ask { display: flex; flex-direction: column; gap: 10px; margin-top: 6vh; padding: 24px 20px 8px; border-radius: 24px; }
 .ask h1 { margin: 0; }
 .ask .line { margin-bottom: 10px; }
-.ask .link { align-self: center; }
-.steps { border-radius: 12px; color: var(--fg-1); }
+.ask .link { align-self: center; text-align: center; }
+.steps { margin: 0; padding-left: 36px; border-radius: 12px; color: var(--fg-1); }
+.steps li + li { margin-top: 4px; }
+/* iOS's share mark after step 1, drawn in the text's colour */
+.share-mark { width: 18px; height: 18px; margin-left: 4px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.steps-note { margin: -2px 4px 2px; font-size: 13px; line-height: 20px; color: var(--fg-2); }
+
+/* 安装到主屏幕 (Android, where the browser offers it): a notice with its button */
+.install { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 
 /* 粘贴配对链接 */
 .paste-box { margin-top: 12px; }
@@ -136,6 +143,7 @@ h2 { margin: 28px 0 8px; font-size: 14px; line-height: 20px; font-weight: 600; c
 .paste-in:focus { outline: 1.5px solid var(--accent-text); outline-offset: 0; }
 .paste-row .primary { flex: none; padding: 0 20px; }
 .paste-err { margin: 8px 2px 0; font-size: 13px; line-height: 18px; color: var(--red); }
+.paste-clip { margin-top: 4px; }
 
 /* the app: a full-screen frame inside the safe area (env() is 0 inside an iframe), on the app's own surface colour */
 .app {
