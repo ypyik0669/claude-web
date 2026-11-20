@@ -19,6 +19,8 @@ export function isNotInstalled(e: unknown): boolean {
 
 export interface SessionSource {
   kind: AgentKind;
+  /** what the user sees for a source that is not an agent of its own (Cursor, claude.ai, Antigravity …) */
+  name?: string;
   caps: SourceCaps;
   status(): Promise<SourceStatus>;
   list(o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[]; next?: string }>;

@@ -75,6 +75,7 @@ export function cursorMessages(rows: unknown[], sessionId: string, offset = 0): 
 
 export class CursorSource implements SessionSource {
   readonly kind: AgentKind = 'cursor';
+  readonly name = 'Cursor';
   readonly caps: SourceCaps = CAPS;
   private cache: { at: number; found: Found[] } | null = null;
 

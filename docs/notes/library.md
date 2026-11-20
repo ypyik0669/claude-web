@@ -71,3 +71,36 @@
 - 存储：每个对话一个 `~/.claude-web/claude-ai/conversations/<uuid>.json`（`{ conv, cwd?, importedAt }`）；再导入按 uuid 去重，`updated_at` 更新的覆盖。来源 `ClaudeAiSource`（`AgentKind` 'claudeai'，id `claudeai-<uuid>`，只读：caps 只有 `resume` + `continueInClaude`）；「接着聊」走现成的 `continuation()`（同 dsh）。导入后自动 `library.join('claudeai')`，索引照常建（能搜）。
 - 项目：用户选了文件夹才导；每个项目建 `<文件夹>/<safeName(项目名)>/`，加成项目（`claudeAiUuid` 记来源，再导入就更新同一个），`prompt_template` → 项目说明，docs 写进去（**已有的文件不覆盖**，计 `filesKept`）。导出包里的对话一般不带项目 uuid，带了（`project_uuid` / `project.uuid`）就把 cwd 设成那个项目的文件夹，否则是主目录。
 - 调试：`node server/ws-phase39.mjs [port] [token]`（fixture 在 `server/fixtures/claude-ai-export/`）。
+
+## Antigravity（2026-11-21，用户转述的社区需求「把 Antigravity IDE 的对话接进来」）
+
+- **在哪**（本机实测，2026-05 到 11 月的几个版本）：`~/.gemini/antigravity/conversation_summaries.db`（SQLite：`conversation_summaries`
+  有标题 / preview / `workspace_uris` / `last_modified_time` / `parent_conversation_id`，另有 FTS5 表 `conversations_fts` 存每个对话的
+  user / agent 正文和 `[[step, 字节偏移], …]`）+ `~/.gemini/antigravity/conversations/<id>.db`（每个对话一个 SQLite：`steps` 表一步一个
+  protobuf `step_payload`，`trajectory_metadata_blob` 里有工作区文件夹）。旧版本的目录 `~/.gemini/antigravity-ide/conversations/` 是同样的
+  `<id>.db`，**没有 summaries**（标题取第一句话、文件夹取元数据）；更旧的 `<id>.pb` 是加密的（熵 7.8 bit/byte），读不了、跳过。
+- **只读副本**：Antigravity 开着时这些库可能正在写（WAL）。一律把 `<id>.db` 和 `-wal` 拷到临时目录、读副本、读完删掉，**原文件一次都不打开**
+  （测试里比对了目录快照：没有多出 -wal / -shm，大小和 mtime 都不变）。
+- **step 的 protobuf**（没有公开 schema，对着真数据读出来的）：1 类型、4 状态、5 元数据 `{1 创建时间 {1 秒}, 4 工具调用 {1 id, 2 名字, 3 参数 JSON},
+  30 动作, 31 一句话摘要}`；类型 14 用户说的话 `19.2`；类型 15 agent 这一轮 `20 {1 正文, 3 思考, 7 工具调用[{1 id, 2 名字, 3 参数}]}`；
+  工具那一步的 id 和 15 里给的一样。结果：新版本（类型 132）在 `140.2.1` 有现成的文字（agent 看到的原样，`140.1` 是参数回显、`140.2.6`
+  内嵌一个 Step），旧版本只在各自的字段里（13 grep、14 读文件、15 列目录、28 命令…），取里面的文字、去掉参数自己的键和值。
+  **解析时先试 message 再当文字**只在开头像字段标签（0x08 / 0x0a / 0x10 / 0x12 / 0x18 / 0x1a）时做：列目录的一项 `{1 名字, 4 大小}`
+  本身也是合法 UTF-8（`\n\r.dockerignore ]`）；固定宽度（wire type 1 / 5）读成数，不当成字节，否则 `AGENTS.md` 会被当成「字段 8 + 8 字节」
+  读成 `GENTS.md`。
+- **工具映射成 app 自己的卡片**：`view_file`→Read、`run_command`→Bash、`grep_search`→Grep、`find_by_name` / `list_dir`→Glob、
+  `write_to_file`→Write、`replace_file_content`→Edit、`multi_replace_file_content`→MultiEdit、`search_web`→WebSearch、`read_url_content`
+  →WebFetch；其余（`manage_task`、`schedule`、`browser_subagent`…）保留原名和参数（普通卡片）。所以对话头的「改了几个文件 +N −M」、回合的
+  「读了 1 个文件 · 改了 1 · 搜索 1 · 跑了 1 个命令」都对得上。结果截到 4000 字。
+- **列表**：summaries 里 `parent_conversation_id` 非空的（子代理的对话）不列；summaries 里有但库文件没了的（在 Antigravity 里删了）不列；
+  旧目录里一句话都没说过的不列；同一个 id 两个目录都有时新目录的为准。`lastModified` 取 summaries 的时间和库文件（含 -wal）mtime 较新的。
+- **读**：先读这个对话自己的库；读不出东西（库坏了 / 格式变了）退回 summaries 的 FTS 正文（只有文字，按字节偏移切回每一步）。
+  读过的对话按文件大小 + mtime 缓存，翻页不重拷。
+- **接着聊**：`caps` 同 dsh / claude.ai（`resume` + `continueInClaude`），走 `LibraryService.continuation()` 在 Claude 里开新对话、带上历史；
+  Antigravity 那边一个字节都不写。
+- `SessionSource.name`：不是 agent 的来源（Cursor、claude.ai、Antigravity）自己带显示名，`sources()` 和「只读」报错用它（以前没加入时显示成
+  小写的 kind）。
+- 测试：`library/antigravity-source.test.ts`（自己写 protobuf 的夹具：两个目录、summaries + FTS、子代理 / 删掉的 / 空对话、类型 132、
+  列目录的项、翻页、FTS 退路、原文件快照不变）。真机（`ag-home` 临时 HOME + 本机数据的副本，2026-11-21）：加入前不列、加入后 6 条、读最长的
+  840 条消息一页 40 条、搜「webview2」命中、打开即在 Claude 里续上（transcript 里有 Antigravity 的原话）、再打开进同一个、列表只剩 Claude 那条；
+  界面截图里对话头、回合摘要、改动数都正常。本机直接读（只读副本）32 个对话、首次列表 1.6 秒（要开旧目录 29 个库取标题，之后按 mtime 缓存）。

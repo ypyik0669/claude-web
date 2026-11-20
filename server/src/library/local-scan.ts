@@ -41,6 +41,11 @@ export function localCandidates(env: NodeJS.ProcessEnv = process.env, homeDir = 
       note: tr('只读：可以查看和搜索它的历史对话，不能接着聊'),
     },
     {
+      id: 'antigravity', name: 'Antigravity', readable: true,
+      dirs: [path.join(h, '.gemini', 'antigravity', 'conversations'), path.join(h, '.gemini', 'antigravity-ide', 'conversations')],
+      note: tr('可以查看和搜索它的历史对话；接着聊会在 Claude 里开一个新对话，接上之前的内容'),
+    },
+    {
       id: 'workbuddy', name: 'WorkBuddy', dirs: [path.join(h, '.workbuddy')],
       inspect: async (d) => (await entries(d)).includes('sessions') ? tr('只找到运行记录，还没找到可读的对话文件') : undefined,
     },

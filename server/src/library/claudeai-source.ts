@@ -19,6 +19,7 @@ export const conversationsDir = (root: string) => path.join(root, 'conversations
 
 export class ClaudeAiSource implements SessionSource {
   readonly kind: AgentKind = 'claudeai';
+  readonly name = 'claude.ai';
   readonly caps: SourceCaps = CAPS;
   private cache: { at: number; items: Map<string, StoredConversation> } | null = null;
 

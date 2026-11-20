@@ -23,6 +23,7 @@ import { appendFileSync } from 'node:fs';
 import { currentLeaf, findClaudeTranscript, hasClaudeTranscript, writeClaudeTranscript } from '../runtime/transcript-file.js';
 import { continuationEntries } from './continue-in-claude.js';
 import { dshHome } from './dsh-source.js';
+import { antigravityDataDirs } from './antigravity-source.js';
 
 const LIST_TTL_MS = 60_000;
 /** A source with a file watcher (Codex) learns about changes from it; the TTL is only a backstop. */
@@ -128,6 +129,7 @@ function defaultDataDirs(): Partial<Record<AgentKind, string[]>> {
     opencode: oc,
     cursor: [path.join(home, '.cursor', 'projects')],
     dsh: [process.env.DSH_HOME?.trim() || path.join(home, '.dsh')],
+    antigravity: antigravityDataDirs(home),
   };
 }
 
@@ -571,7 +573,7 @@ export class LibraryService extends EventEmitter {
     const dismissed = this.setting('library.dismissed');
     return Promise.all(this.candidateKinds().map(async (kind): Promise<SourceStatus> => {
       const info = infos.find((x) => x.kind === kind);
-      const defName = info?.name ?? this.opts.agents?.defs().find((d) => d.kind === kind)?.name ?? kind;
+      const defName = info?.name ?? this.opts.agents?.defs().find((d) => d.kind === kind)?.name ?? this.srcs.get(kind)?.name ?? kind;
       const installed = !!info?.installed || this.dirExists(kind);
       const caps = this.srcs.get(kind)?.caps;
       if (!this.isJoined(kind)) {
@@ -787,7 +789,7 @@ export class LibraryService extends EventEmitter {
       // a read-only source has no official way to continue: say so instead of handing it to a driver that cannot
       const src = this.source(route.kind);
       if (!src?.caps.resume) {
-        const name = this.opts.agents?.defs().find((d) => d.kind === route.kind)?.name ?? (route.kind === 'cursor' ? 'Cursor' : route.kind === 'claudeai' ? 'claude.ai' : route.kind);
+        const name = this.opts.agents?.defs().find((d) => d.kind === route.kind)?.name ?? src?.name ?? route.kind;
         throw new Error(src ? tr('{name} 的历史对话是只读的，不能接着聊；可以在对话库里查看和搜索', { name }) : tr('这个对话的来源没有加入对话库'));
       }
       await this.transcripts.create({ sessionId: id, agent: route.kind, cwd: s.cwd, title: s.title, createdAt: s.createdAt ?? s.lastModified ?? Date.now(), nativeSessionId: route.nativeId, imported: true });

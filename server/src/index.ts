@@ -81,6 +81,7 @@ import { ClaudeSource } from './library/claude-source.js';
 import { CodexSource } from './library/codex-source.js';
 import { OpenCodeSource } from './library/opencode-source.js';
 import { CursorSource } from './library/cursor-source.js';
+import { AntigravitySource } from './library/antigravity-source.js';
 import { DshSource } from './library/dsh-source.js';
 import { AcpListSource } from './library/acp-source.js';
 import { PrivacyService } from './privacy/service.js';
@@ -602,6 +603,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       new CursorSource(),
       new DshSource(),
       claudeAiSource,
+      new AntigravitySource(),
     ],
     new LibraryIndex(),
     transcripts,
