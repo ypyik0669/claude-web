@@ -76,6 +76,9 @@ function seed(home, proj) {
     { ...base, parentUuid: null, type: 'user', message: { role: 'user', content: 'shell smoke: seeded conversation' }, uuid: '00000000-0000-4000-8000-0000000051e1', timestamp: t },
     { ...base, parentUuid: '00000000-0000-4000-8000-0000000051e1', type: 'assistant', message: { id: 'msg_shell', type: 'message', role: 'assistant', model: 'claude-smoke', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }, uuid: '00000000-0000-4000-8000-0000000051e2', timestamp: t },
   ].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  // the PC's own sentences (its 413 over the relay) are checked in Chinese: the server follows the computer's language
+  fs.mkdirSync(path.join(home, '.claude-web'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude-web', 'meta.json'), JSON.stringify({ version: 1, settings: { 'ui.language': 'zh' } }));
   return sid;
 }
 
@@ -277,6 +280,9 @@ function driver() {
   app.setPath('userData', E.SHELL_USERDATA); // a fresh profile: service worker, caches, IndexedDB, localStorage
   // every request Chromium makes goes to the recorder, except loopback (Chromium's implicit bypass)
   app.commandLine.appendSwitch('proxy-server', `http://${E.SHELL_PROXY}`);
+  // the checks read Chinese texts (RELAY_BAR, the override's info line): the shell and the app follow the browser's
+  // language, which follows the PC's (an en-US Windows showed the English bar and failed the relay check)
+  app.commandLine.appendSwitch('lang', 'zh-CN');
   const logFile = `${E.SHELL_RESULT}.log`;
   const log = (s) => { try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${s}\n`); } catch { /* ignore */ } };
   try { fs.writeFileSync(logFile, ''); } catch { /* ignore */ }
