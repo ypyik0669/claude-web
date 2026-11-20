@@ -109,6 +109,16 @@ function PanelPicker({ active, mounted, reviewCount, onPick, onClose }: { active
   const others = mounted.filter((id) => !CORE_PANELS.includes(id) && id !== 'artifacts');
   const rest = MORE_PANELS.filter((p) => !mounted.includes(p.id) && p.id !== 'artifacts');
   const pick = (id: PanelId) => { setOpen(false); onPick(id); };
+  // closing one from 「已打开」 (the × was focused — a keyboard user): the focus moves to the next open row, else the one
+  // before it; with none left the menu closes and the focus goes back to the picker (never left on <body>, where
+  // neither the arrows nor Esc reach the menu: re-review M-b of the old 「更多」)
+  const closeOpen = (id: PanelId) => {
+    const i = others.indexOf(id);
+    const next = others[i + 1] ?? others[i - 1];
+    onClose(id);
+    if (!next) { close(true); return; }
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`.dock-pick-menu .dock-more-open[data-open="${next}"] > button[data-panel]`)?.focus());
+  };
   const keyOf = (id: PanelId) => { const k = SHORTCUTS.find((x) => x.id === `panel.${id}`); return k ? keyLabel(k).split(' / ')[0] : ''; };
   const count = (id: PanelId) => (id === 'files' && reviewCount > 0 ? <span className="n">{countText(reviewCount)}</span> : id === 'artifacts' && arts.length > 0 ? <span className="n">{arts.length}</span> : null);
   const row = (id: PanelId, opts: { x?: boolean } = {}) => (
@@ -118,7 +128,7 @@ function PanelPicker({ active, mounted, reviewCount, onPick, onClose }: { active
         {CORE_PANELS.includes(id) && <span className="kbd">{keyOf(id)}</span>}
         <span className="ck">{active === id && <Icon name="check" size={13} />}</span>
       </button>
-      {opts.x && <button className="x" role="menuitem" data-mi title={tr('关闭{v}', { v: PANEL_TITLES[id] })} aria-label={tr('关闭{v}', { v: PANEL_TITLES[id] })} onClick={() => { onClose(id); if (others.length <= 1) close(true); }}><Icon name="close" size={12} /></button>}
+      {opts.x && <button className="x" role="menuitem" data-mi title={tr('关闭{v}', { v: PANEL_TITLES[id] })} aria-label={tr('关闭{v}', { v: PANEL_TITLES[id] })} onClick={() => closeOpen(id)}><Icon name="close" size={12} /></button>}
     </div>
   );
   return (

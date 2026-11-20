@@ -13,7 +13,7 @@ import { BAR_ID, PHONE_SHEET_ID } from './ids';
 import { tr } from '@/i18n';
 import type { ContextUsage } from '@/model/conversation';
 
-/** The header ··· 「本对话用量」 asks the composer of its tile for the card (`showUsageCard`). */
+/** The header ⋯ › 更多 › 「本对话用量」 asks the composer of its tile for the card (`showUsageCard`). */
 export const USAGE_CARD_EVENT = 'cw:usage-card';
 export interface UsageCardDetail { tileId: string }
 export function showUsageCard(tileId: string): void {
@@ -67,7 +67,7 @@ function CardBody({ card }: { card: UsageCard }) {
  * The context ring at the end of the line under the box (redesign 2026-11 「输入框下面这一行」 ⑥): always with its
  * percentage (it used to wait for 60 %); darker from 60 %, bold from 80 %, the error colour from 95 %. On hover, focus
  * or click a card: the context used of the window, 输入 / 输出, 缓存命中, 速度, 轮数 · 步数, 费用, 上一轮用时 — what the row
- * drops when it is narrow is all here. The header's ··· 「本对话用量」 opens the same card, anchored to the ring or,
+ * drops when it is narrow is all here. The header's ⋯ › 更多 › 「本对话用量」 opens the same card, anchored to the ring or,
  * without one, to this corner of the row. A phone: a tap opens the numbers as a sheet (no hover there).
  */
 export function ContextMeter({ sessionId }: { sessionId: string }) {

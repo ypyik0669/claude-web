@@ -2,7 +2,7 @@
 //
 // A desktop: one short menu — 重命名 · 分叉 · 导出… · 步骤视图 · 更多 › | 对话信息栏 (Ctrl I) · Issue 与 PR · Android 屏幕 |
 // 交给其它 Agent… · 归档 · 删除. The panels are the header's five tools now; what the old menu also held and is used less
-// (旁聊, 思考语言, 查看模式, 后台任务, 保持电脑唤醒, 置顶, 在资源管理器 / VS Code 打开, 结束进程, 引用, 原生 CLI, 复制 ID)
+// (旁聊, 思考语言, 查看模式, 本对话用量, 后台任务, 保持电脑唤醒, 置顶, 在资源管理器 / VS Code 打开, 结束进程, 引用, 原生 CLI, 复制 ID)
 // is under 更多, which opens in place (one anchored menu at a time: a fly-out would close this one).
 //
 // A phone: a sheet — the title, a six-grid of what this conversation has to look at (改动 · 任务 · 终端 · 文件 · 浏览器 ·
@@ -33,7 +33,9 @@ import { ThinkingLanguageRow } from '@/features/settings/ThinkingLanguageRow';
 import { VIEW_MODES, normViewMode, viewModeLabel } from '@/features/chat/view-mode';
 import { useConversationArtifacts } from '@/features/panels/ArtifactsPanel';
 import { openMessageSheet } from '@/features/chat/MessageSheet';
+import { showUsageCard } from '@/features/composer/ContextMeter';
 import { runCommand } from '../commands';
+import { openSessionView } from '../right-panel';
 import { modKey } from '../shortcuts';
 
 type ChatTileModel = Extract<Tile, { kind: 'chat' }>;
@@ -107,6 +109,8 @@ export function ConvMenu(p: ConvMenuProps) {
   const lang = !remote && !gone && (!s.agent || s.agent === 'claude') ? <ThinkingLanguageRow sessionId={s.sessionId} /> : null;
   const keepAwake = desktop && !remote && <KeepAwakeRow sessionId={s.sessionId} />;
   const background = <button data-act="background" onClick={act(() => openBackground(s.sessionId))}><Icon name="tasks" size={14} /> <span className="grow">{tr('后台任务')}</span>{bgRunning > 0 && <span className="menu-value">{bgRunning}</span>}</button>;
+  // the ring's card (or a phone's sheet of the numbers) — also when there is no ring yet (an agent that reports no context)
+  const usage = <button data-act="usage" onClick={act(() => { if (tile.wb !== 'live') patch({ wb: 'live' }); requestAnimationFrame(() => showUsageCard(tile.id)); })}><Icon name="usage" size={14} /> {tr('本对话用量')}</button>;
   const pin = !gone && <button data-act="pin" onClick={act(() => st().setSessionMeta(s.sessionId, { pinned: !meta?.pinned }))}><Icon name="pin" size={14} /> {meta?.pinned ? tr('取消置顶') : tr('置顶')}</button>;
   const explorer = !remote && !phone && <button data-act="explorer" onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }))}><Icon name="folder" size={14} /> {tr('在资源管理器打开')}</button>;
   const vscode = !remote && !phone && <button data-act="vscode" onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd, app: 'code' }))}><Icon name="keyboard" size={14} /> {tr('在 VS Code 打开')}</button>;
@@ -128,10 +132,11 @@ export function ConvMenu(p: ConvMenuProps) {
           {page === 'main' && (
             <>
               <div className="cm-title"><b>{s.title || tr('新对话')}</b>{(s.cwd || s.gitBranch) && <small>{[s.peer ? `${s.peer.name} · ${basename(s.cwd ?? '')}` : basename(s.cwd ?? ''), s.gitBranch].filter(Boolean).join(' · ')}</small>}</div>
-              {/* the six things to look at: a tap pulls the bottom panel up on it */}
+              {/* the six things to look at: a tap pulls the bottom panel up on it. A conversation on another machine: its
+                  任务, and its Artifacts in place (its files are over there: panel-entries viewTarget) */}
               <div className="cm-tiles" role="group" aria-label={tr('查看这个对话的')}>
-                {TILES.filter((t) => !remote || t.panel === 'tasks').map((t) => (
-                  <button key={t.panel} className="cm-tile" data-view={t.panel} onClick={act(() => st().dispatchLayout({ t: 'dock.show', panel: t.panel }))}>
+                {TILES.filter((t) => !remote || t.panel === 'tasks' || t.panel === 'artifacts').map((t) => (
+                  <button key={t.panel} className="cm-tile" data-view={t.panel} onClick={act(() => (remote && t.panel === 'artifacts' ? openSessionView('artifacts', { paneId, tileId: tile.id }) : st().dispatchLayout({ t: 'dock.show', panel: t.panel })))}>
                     <Icon name={t.icon} size={20} /><span>{t.label()}</span>{count(t.panel)}
                   </button>
                 ))}
@@ -161,7 +166,7 @@ export function ConvMenu(p: ConvMenuProps) {
               <button data-act="last-message" onClick={act(() => openMessageSheet(s.sessionId, 'user'))}><Icon name="edit" size={14} /> {tr('我的上一条消息…')}</button>
               <div className="menu-sep" />
               <button data-act="handoff" className="cm-push" onClick={() => setPage('handoff')}><Icon name="agent" size={14} /> <span className="grow">{handoffLabel}</span><Icon name="chevronRight" size={14} /></button>
-              {peerHandoff}{pin}{proc}{background}{reference}{copyId}
+              {peerHandoff}{pin}{proc}{usage}{background}{reference}{copyId}
               <div className="menu-sep" />
               {archive}{del}
             </>
@@ -189,7 +194,7 @@ export function ConvMenu(p: ConvMenuProps) {
         <div className="sub-menu cm-more">
           {side}{lang}
           <button data-act="view-mode" onClick={act(() => runCommand('view.cycle'))} title={tr('普通 → 显示思考 → 详细')}><Icon name="eye" size={14} /> <span className="grow">{tr('查看模式：{label}', { label: viewModeLabel(viewMode) })}</span><span className="kbd">{modKey}+O</span></button>
-          {background}{keepAwake}{pin}{explorer}{vscode}{proc}{reference}{peerHandoff}{native}{copyId}
+          {usage}{background}{keepAwake}{pin}{explorer}{vscode}{proc}{reference}{peerHandoff}{native}{copyId}
         </div>
       )}
       <div className="menu-sep" />

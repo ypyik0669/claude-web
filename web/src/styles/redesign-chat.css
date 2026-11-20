@@ -79,7 +79,7 @@ html .composer-under.cb.cb .cb-right .mm-anchor:not(.sub-anchor) .mm-chip-label 
 .mm-effort { flex: none; margin-top: 6px; padding: 8px 0 2px; border-top: var(--hairline) solid var(--edge-subtle); }
 .mm-effort-h { padding: 4px 12px 8px; font-size: var(--fs-sm); color: var(--ink-4); }
 .mm-seg { display: flex; gap: 2px; margin: 0 4px; padding: 3px; border-radius: var(--r-lg); background: var(--layer-hover); }
-.mm-seg > button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 0 4px; border-radius: var(--r-md); font-size: var(--fs-base); color: var(--ink-3); white-space: nowrap; }
+.mm-seg > button { flex: 1 1 0; justify-content: center; min-width: 0; min-height: 44px; padding: 0 4px; border-radius: var(--r-md); font-size: var(--fs-base); color: var(--ink-3); white-space: nowrap; text-align: center; }
 .mm-seg > button.on { background: var(--surface-elev); color: var(--ink-1); box-shadow: 0 0 0 var(--hairline) var(--edge-default), var(--elev-1); font-weight: var(--fw-strong, 600); }
 .mm-effort .mm-ultra-row { width: 100%; }
 
@@ -111,7 +111,7 @@ html .composer-under.cb.cb .cb-right .mm-anchor:not(.sub-anchor) .mm-chip-label 
 .app.mobile .composer-under .dirpick { position: relative; max-width: 46vw; }
 .app.mobile .composer-under .dirpick::after { content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
 .app.mobile .composer-box.one-line { padding: 6px; }
-.app.mobile .composer-box.one-line > textarea { min-height: 40px; padding: 8px 6px; }
+.app.mobile .composer-box.one-line > textarea { min-height: 44px; padding: 10px 6px; }
 .app.mobile .composer-box.one-line .cb .plus { width: 40px; height: 40px; }
 
 /* the start page on a phone: the mark and the greeting on top, then the starters (one per row), the box at the bottom
@@ -123,7 +123,7 @@ html .composer-under.cb.cb .cb-right .mm-anchor:not(.sub-anchor) .mm-chip-label 
 .app.mobile .welcome .home-col > .starters > .chip.starter { justify-content: flex-start; min-height: 48px; padding: 0 16px; gap: 10px; border-radius: var(--r-xl); font-size: var(--fs-base); }
 .app.mobile .welcome .home-col > .home-notice, .app.mobile .welcome .home-col > .guide { order: 2; }
 .app.mobile .welcome .home-col > .composer { order: 3; margin-top: auto; padding: var(--sp-4) 0 max(var(--sp-2), env(safe-area-inset-bottom, 0px)); }
-.app.mobile .welcome .composer textarea { min-height: 40px; }
+.app.mobile .welcome .composer textarea { min-height: 44px; }
 
 /* ============================================================ the right panel's picker ============================================================
    `.dock.simple > .dock-tabs.picked > .dock-picker > .dock-pick`: the panel in front, named at the top-left. Its menu
@@ -199,6 +199,9 @@ html .composer-under.cb.cb .cb-right .mm-anchor:not(.sub-anchor) .mm-chip-label 
 /* the bottom panel: pulled to the top it is the whole screen (minus the status bar); its picker names the panel in full */
 @media (max-width: 760px) {
   .app.mobile .rpanel[data-detent='full'] { --sheet-share: 1; border-radius: 0; }
+  /* the handle is a tap target too (a tap: half ⇄ full height): a 44px strip, the pill near its top */
+  .app.mobile .rpanel > .sheet-grip { height: 44px; }
+  .app.mobile .rpanel .dock.simple .dock-tabs.picked { min-height: 48px; }
 }
 .app.mobile .dock.simple .dock-tabs.picked { min-height: 52px; padding: 0 4px 0 6px; }
 .app.mobile .dock-pick { height: 44px; padding: 0 12px; font-size: var(--fs-lg); }
@@ -207,3 +210,16 @@ html .composer-under.cb.cb .cb-right .mm-anchor:not(.sub-anchor) .mm-chip-label 
 .app.mobile .code-head { min-height: 44px; padding-top: 0; gap: 0; }
 .app.mobile .code-head .code-btn { width: 44px; height: 44px; border-radius: var(--r-md); }
 .app.mobile .code-head .code-btn > svg { width: 16px; height: 16px; }
+/* …the box (44px tall, one line), 「添加来源」 over it, a tag's × in it (a 44px target around the small ×) */
+.app.mobile .composer-box.one-line > textarea, .app.mobile .welcome .composer textarea { min-height: 44px; padding-block: 10px; }
+.app.mobile .cmp-add-source .link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; }
+.app.mobile .cap-tag > button { position: relative; }
+.app.mobile .cap-tag > button::after { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+/* …the start page's notice (接一个模型 / 用 Claude 账号登录 / 重新检查) */
+.app.mobile .home-notice :is(.btn, .link) { min-height: 44px; }
+/* …the model sheet's search box */
+.as-sheet .mm-search input { align-self: stretch; height: auto; min-height: 44px; }
+/* …the bottom panel: its 收起, 改动's 全部还原 / 全部暂存, 任务's 定时任务 line */
+.app.mobile .rpanel .dock-ctl .icon-btn { width: 44px; height: 44px; }
+.app.mobile .rv-main > .rv-bar > .btn { min-height: 44px; }
+.app.mobile .tasks-link { min-height: 44px; }

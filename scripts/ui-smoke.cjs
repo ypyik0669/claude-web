@@ -597,12 +597,18 @@ function driver() {
       // ---- welcome composer: a click in the text box types, nothing opens over it
       phase = 'welcome';
       check('welcome composer present', await waitFor('!!document.querySelector(".welcome .composer textarea")'));
-      // redesign phase 7 (spec §5.8, mock-home.png): 「今天想做点什么？」 · four starters that only fill the box · the
-      // login notice only when something is wrong · 入门清单 · 最近任务 / 定时任务 / 已归档
+      // redesign 2026-11 stage 4 (#pages 首页): Claude Web's own mark, 「今天想做点什么？」 and the box with its row —
+      // nothing stacked under it: three starters only while the project in the box has no conversation yet, the
+      // 入门清单 only the first time (no conversation on this computer), the login notice only when something is
+      // wrong. No 最近任务 / 定时任务 / 已归档 (the sidebar has them), no 「把 Codex 等工具里的对话也列在这里？」
       {
-        const home = await js(`(() => { const w = document.querySelector('.welcome'); if (!w) return null; return { title: w.querySelector('h1.greet')?.textContent ?? '', starters: [...w.querySelectorAll('.starters .starter')].map((b) => b.dataset.starter), tabs: [...w.querySelectorAll('.home-tabs [role="tab"]')].map((t) => t.dataset.tab), rows: w.querySelectorAll('.home-list .home-row').length, greetWords: /早上好|下午好|晚上好/.test(w.innerText) }; })()`);
-        check('home: 「今天想做点什么？」, 4 starters, 最近任务 / 已归档 with the seeded conversation, no time-of-day greeting', home && home.title === '今天想做点什么？' && home.starters.length === 4 && home.tabs.includes('recent') && home.tabs.includes('archived') && (!E.SMOKE_SID || home.rows >= 1) && !home.greetWords, JSON.stringify(home));
+        const home = await js(`(() => { const w = document.querySelector('.welcome'); if (!w) return null; return { title: w.querySelector('h1.greet')?.textContent ?? '', mark: !!w.querySelector('.home-mark svg'), spark: !!w.querySelector('.greet .spark'), starters: w.querySelectorAll('.starters .starter').length, lists: !!w.querySelector('.home-tabs, .home-list'), hint: !!w.querySelector('.home-hint'), guide: !!w.querySelector('.guide'), greetWords: /早上好|下午好|晚上好/.test(w.innerText), sessions: window.__store.getState().sessions.length }; })()`);
+        check('home: Claude Web\'s mark over 「今天想做点什么？」 and the box — no lists, no import hint; with conversations here (the seeded one, in this project) no starters and no 入门清单', home && home.title === '今天想做点什么？' && home.mark && !home.spark && !home.lists && !home.hint && !home.greetWords && (home.sessions === 0 || (!home.guide && (!E.SMOKE_REPO || home.starters === 0))), JSON.stringify(home));
         if (E.SMOKE_READONLY !== '1') {
+          // the first time (as if no conversation were here yet): the three starters under the box, the 入门清单
+          await js('window.__store.setState({ sessions: [] })');
+          const firstUp = await waitFor('document.querySelectorAll(".welcome .starters .starter").length === 3 && !!document.querySelector(".welcome .guide")', 3000);
+          const first = await js(`({ starters: [...document.querySelectorAll('.welcome .starters .starter')].map((b) => b.dataset.starter).join(','), order: [...document.querySelectorAll('.welcome .home-col > *')].map((e) => e.classList[0]).join(' ') })`);
           const layoutBefore = await js('JSON.stringify(window.__store.getState().layout.groups.map((g) => Object.values(g.panes).map((p) => p.tiles.map((t) => t.kind + ":" + (t.sessionId || "")))))');
           await click('.welcome .starters [data-starter="explain"]');
           await sleep(250);
@@ -610,14 +616,17 @@ function driver() {
           check('a starter fills the box (focused) and sends nothing', filled.text.length > 4 && filled.focused && filled.layout === layoutBefore, JSON.stringify({ ...filled, layoutBefore }));
           wc.selectAll(); wc.delete();
           await sleep(200);
+          // the 入门清单: one row (入门 d/4 · next step · its button · ×) that unfolds into the four steps
+          const guide = await js(`(() => { const g = document.querySelector('.welcome .guide'); if (!g) return null; return { count: g.querySelector('.guide-count .n')?.textContent ?? '', next: g.querySelector('.guide-next')?.textContent ?? '' }; })()`);
+          await click('.welcome .guide .guide-count');
+          const steps = await js(`[...document.querySelectorAll('.welcome .guide .guide-steps li')].map((l) => l.dataset.step + (l.classList.contains('done') ? ':done' : ''))`);
+          check('入门清单 (the first time): 入门 d/4 with the next step, unfolding into 选项目 / 发任务 / 审阅 / Ctrl K (the project done by the wizard)', guide && /^入门 \d\/4$/.test(guide.count) && /下一步/.test(guide.next) && steps.length === 4 && (!E.SMOKE_REPO || steps.includes('project:done')), JSON.stringify({ guide, steps }));
+          await shot('home-checklist');
+          await click('.welcome .guide .guide-count');
+          await js('window.__store.getState().refreshSessions()');
+          const gone = await waitFor('window.__store.getState().sessions.length > 0 && !document.querySelector(".welcome .starters") && !document.querySelector(".welcome .guide")', 6000);
+          check('the first time: three starters under the box (讲讲这个项目的结构 / 找一个 bug / 补测试) and the 入门清单 — both go once this computer has conversations', firstUp && first.starters === 'explain,bug,tests' && /composer.*starters/.test(first.order) && gone, JSON.stringify({ firstUp, first, gone }));
         }
-        // the 入门清单: one row (入门 d/4 · next step · its button · ×) that unfolds into the four steps
-        const guide = await js(`(() => { const g = document.querySelector('.welcome .guide'); if (!g) return null; return { count: g.querySelector('.guide-count .n')?.textContent ?? '', next: g.querySelector('.guide-next')?.textContent ?? '' }; })()`);
-        await click('.welcome .guide .guide-count');
-        const steps = await js(`[...document.querySelectorAll('.welcome .guide .guide-steps li')].map((l) => l.dataset.step + (l.classList.contains('done') ? ':done' : ''))`);
-        check('入门清单: 入门 d/4 with the next step, unfolding into 选项目 / 发任务 / 审阅 / Ctrl K (the project done by the wizard)', guide && /^入门 \d\/4$/.test(guide.count) && /下一步/.test(guide.next) && steps.length === 4 && (E.SMOKE_READONLY === '1' || !E.SMOKE_REPO || steps.includes('project:done')), JSON.stringify({ guide, steps }));
-        await shot('home-checklist');
-        await click('.welcome .guide .guide-count');
         // the login notice: exactly when the auth check says 「not logged in」 and no provider is set up
         await waitFor('window.__store.getState().auth !== null', 20_000);
         const notice = await js(`({ auth: window.__store.getState().auth?.loggedIn ?? null, providers: window.__store.getState().providers.length, text: document.querySelector('.welcome .home-notice')?.textContent ?? null })`);
@@ -657,7 +666,7 @@ function driver() {
         const inside = '(() => { const m = document.querySelector(".menu.dirmenu"); if (!m) return "closed"; const r = m.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth - 8 && r.bottom <= innerHeight ? true : JSON.stringify({ left: r.left, right: r.right, vw: innerWidth }); })()';
         check('directory menu stays inside the window', (await js(inside)) === true);
         await shot('dirmenu');
-        win.setSize(620, 860); // narrower window while the menu is open: its width must follow
+        win.setSize(800, 860); // narrower window while the menu is open: it must follow (still a desktop width — at a phone's the chips move under the box and the menu closes)
         await sleep(700);
         const narrow = await js(inside);
         check('directory menu stays inside a window narrowed while it is open', narrow === true, String(narrow));
@@ -812,7 +821,12 @@ function driver() {
         const inField = await js('document.activeElement?.closest?.(\'[data-id="channels"]\') ? "channels" : document.activeElement?.tagName');
         wc.insertText('server:smoke');
         await sleep(100);
-        await click('.welcome .composer textarea');
+        // a click outside: the box's right end (the menu, opened up from the +, may cover the box's middle — the start page
+        // has nothing under the box now, so the box sits in the middle of the window)
+        const outside = await js(`(() => { const r = document.querySelector('.welcome .composer textarea').getBoundingClientRect(); return { x: Math.round(r.right - 24), y: Math.round(r.top + r.height / 2) }; })()`);
+        wc.sendInputEvent({ type: 'mouseDown', x: outside.x, y: outside.y, button: 'left', clickCount: 1 });
+        wc.sendInputEvent({ type: 'mouseUp', x: outside.x, y: outside.y, button: 'left', clickCount: 1 });
+        await sleep(200);
         const saved = await waitFor('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"]?.channels) === \'["server:smoke"]\'', 3000);
         check('+ → Brief / 频道 in 2 clicks (rows under 进阶, no 「Brief、频道…」 expander); ↓ from Brief reaches the field; typing survives a click outside', rows.join() === 'files,folder,reference,slash,chatOnly,chrome,computerUse,goal,coordinator,proactive,brief,channels' && inField === 'channels' && saved && (await waitFor('!document.querySelector(".menu.plus-menu")', 2000)), JSON.stringify({ rows, inField, saved }));
         check('频道 shows as a removable tag', await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000));
@@ -1303,7 +1317,8 @@ function driver() {
         if (E.SMOKE_READONLY === '1' && p.id === 'terminal') continue; // would start a pty on that server
         phase = `panel:${p.id}`;
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: ${JSON.stringify(p.id)} })`);
-        const shown = await waitFor(`(document.querySelector('.dock .dock-tabs .tab.active .t') ?? document.querySelector('.dock .dock-foldhead .t'))?.textContent === ${JSON.stringify(p.title)}`, 5000);
+        // (redesign 2026-11 stage 4: the default look names the panel in its picker; the workbench look keeps tabs)
+        const shown = await waitFor(`(document.querySelector('.dock .dock-pick .t') ?? document.querySelector('.dock .dock-tabs .tab.active .t'))?.textContent === ${JSON.stringify(p.title)}`, 5000);
         await sleep(1500);
         const err = await noBoundary('.dock');
         check(`panel · ${p.title}`, shown && !err, err || (shown ? '' : 'panel did not open'));
@@ -1412,16 +1427,16 @@ function driver() {
         }
 
         // final review §9 #1: a conversation that is not running (every one after a restart) still shows its model and
-        // permission chips with 「发送后继续」; a pick there is what the send resumes with. Nothing picked (re-review I-1 /
-        // M-2): the chips show what the resume really gets — the default model by name, 每步询问 — and the transcript's
-        // model is only the tooltip's 「上次回答用的是 …」
+        // permission chips; a pick there is what the send resumes with (no 「发送后继续」 any more: redesign 2026-11 stage 4).
+        // Nothing picked (re-review I-1 / M-2): the chips show what the resume really gets — the default model by name,
+        // 每步询问 — and the transcript's model is only the tooltip's 「上次回答用的是 …」
         {
           phase = 'session-resume-chips';
           const sidR = JSON.stringify(E.SMOKE_SID);
           const bar = '.pane.focused .composer';
           const look = () => js(`(() => { const b = document.querySelector('${bar}'); if (!b) return null; const c = b.querySelector('.mm-anchor > button.chip'); return { state: window.__store.getState().open[${sidR}]?.state, model: c?.textContent ?? null, title: c?.title ?? null, perm: b.querySelector('.perm-chip')?.textContent ?? null, status: b.querySelector('.cb-status')?.textContent ?? null, resume: window.__store.getState().open[${sidR}]?.resume ?? null }; })()`);
           const r0 = await look();
-          check('a conversation not running shows the default it will resume on (not the transcript\'s claude-smoke, which is in the tooltip) and 每步询问, with 「发送后继续」', !!r0 && r0.state === 'history' && !!r0.model && !/claude-smoke|默认模型/.test(r0.model) && /（默认）/.test(r0.title ?? '') && /上次回答用的是 claude-smoke/.test(r0.title ?? '') && /每步询问/.test(r0.perm ?? '') && r0.status === '发送后继续', JSON.stringify(r0));
+          check('a conversation not running shows the default it will resume on (not the transcript\'s claude-smoke, which is in the tooltip) and 每步询问, no 「发送后继续」', !!r0 && r0.state === 'history' && !!r0.model && !/claude-smoke|默认模型/.test(r0.model) && /（默认）/.test(r0.title ?? '') && /上次回答用的是 claude-smoke/.test(r0.title ?? '') && /每步询问/.test(r0.perm ?? '') && !r0.status, JSON.stringify(r0));
           await click(`${bar} .perm-chip`);
           await waitFor(`!!document.querySelector('.menu.perm-menu [data-mode="plan"]')`, 3000);
           await click('.menu.perm-menu [data-mode="plan"]');
@@ -1436,7 +1451,7 @@ function driver() {
           const r2 = await look();
           const menuClosed = await js(`!document.querySelector('.menu.mm')`);
           if (!menuClosed) await key('Escape');
-          check('picking 只做计划 and another model there changes the chips and what the send resumes with — nothing is sent, it stays not running', !!r1 && /只做计划/.test(r1.perm ?? '') && r1.resume?.permissionMode === 'plan' && !!r2 && r2.state === 'history' && !!r2.resume?.model && r2.resume.model !== 'claude-smoke' && !/claude-smoke/.test(r2.model ?? '') && r2.status === '发送后继续', JSON.stringify({ r1, picked, r2 }));
+          check('picking 只做计划 and another model there changes the chips and what the send resumes with — nothing is sent, it stays not running', !!r1 && /只做计划/.test(r1.perm ?? '') && r1.resume?.permissionMode === 'plan' && !!r2 && r2.state === 'history' && !!r2.resume?.model && r2.resume.model !== 'claude-smoke' && !/claude-smoke/.test(r2.model ?? '') && !r2.status, JSON.stringify({ r1, picked, r2 }));
           await js(`window.__store.setState((s) => { const o = s.open[${sidR}]; if (!o) return {}; const { resume, ...rest } = o; return { open: { ...s.open, [${sidR}]: { ...rest, version: o.version + 1 } } }; })`);
         }
 
@@ -1444,20 +1459,28 @@ function driver() {
         phase = 'session-composer';
         check('no stats bar under the composer', !(await js('!!document.querySelector(".pane .composer .statusbar")')));
         const sidJs = JSON.stringify(E.SMOKE_SID);
-        // no ring without an occupancy; below 60 % a quiet ring without the number (2026-10-15: users asked why some
-        // conversations had a ring and others none) — and the numbers of the old stats bar are one menu away: ··· 本对话用量
+        // no ring without an occupancy; with one, always its number (redesign 2026-11 stage 4: it used to wait for 60 %),
+        // quiet below 60 % — and the card is also one menu away: ⋯ › 更多 › 本对话用量
         const setCu = (cu) => js(`(() => { const st = window.__store; const o = st.getState().open[${sidJs}]; st.setState({ open: { ...st.getState().open, [${sidJs}]: { ...o, conv: { ...o.conv, contextUsage: ${JSON.stringify(cu)} }, version: o.version + 1 } } }); })()`);
         await setCu({ percentage: 40, totalTokens: 80_000, maxTokens: 200_000 });
         await sleep(200);
-        const quiet40 = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); return m ? { cls: m.className, pct: !!m.querySelector('.pct') } : null; })()`);
+        const quiet40 = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); return m ? { cls: m.className, pct: m.querySelector('.pct')?.textContent ?? null, weight: getComputedStyle(m).fontWeight } : null; })()`);
         await click('.pane.focused .sess-head .sh-more > button');
+        await waitFor(`!!document.querySelector('.menu.sess-menu [data-act="more"]')`, 3000);
+        await click('.menu.sess-menu [data-act="more"]');
         await waitFor(`!!document.querySelector('.menu.sess-menu [data-act="usage"]')`, 3000);
         await click('.menu.sess-menu [data-act="usage"]');
         await waitFor(`!!document.querySelector('.ctx-card')`, 3000);
         const usageCard = await js(`(() => { const c = document.querySelector('.ctx-card'); if (!c) return null; const r = c.getBoundingClientRect(); const m = document.querySelector('.pane.focused .composer .ctx-meter')?.getBoundingClientRect(); return { text: c.innerText, above: !!m && r.bottom <= m.top + 1, byRing: !!m && Math.abs(r.right - m.right) < 2 }; })()`);
         await key('Escape');
         const cardGone = await waitFor(`!document.querySelector('.ctx-card')`, 2000);
-        check('40 %: a quiet ring without the number; ··· 本对话用量 opens the old stats (轮数 / 输入 / 上下文) above the composer at the ring, Esc closes it', !!quiet40 && /quiet/.test(quiet40.cls) && !quiet40.pct && !!usageCard && /轮数/.test(usageCard.text) && /输入/.test(usageCard.text) && /40%/.test(usageCard.text) && usageCard.above && usageCard.byRing && cardGone, JSON.stringify({ quiet40, usageCard, cardGone }));
+        // the card (the mockup's): 上下文 n% with used / window and a bar, 输入 / 输出, 缓存命中, 速度, 轮数 · 步数, 费用, 上一轮用时
+        check('40 %: a quiet ring with its number (not bold); ⋯ › 更多 › 本对话用量 opens the card (上下文 40% · 输入 / 输出 · 轮数 · 步数) above the composer at the ring, Esc closes it', !!quiet40 && /quiet/.test(quiet40.cls) && quiet40.pct === '40%' && Number(quiet40.weight) < 600 && !!usageCard && /上下文 40%/.test(usageCard.text) && /输入 \/ 输出/.test(usageCard.text) && /轮数 · 步数/.test(usageCard.text) && usageCard.above && usageCard.byRing && cardGone, JSON.stringify({ quiet40, usageCard, cardGone }));
+        // 60 %: darker, still not bold
+        await setCu({ percentage: 64, totalTokens: 128_000, maxTokens: 200_000 });
+        await sleep(200);
+        const note64 = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); return m ? { cls: m.className, pct: m.querySelector('.pct')?.textContent ?? null, weight: getComputedStyle(m).fontWeight, color: getComputedStyle(m).color, quiet: (() => { m.style.transition = 'none'; m.classList.replace('note', 'quiet'); const c = getComputedStyle(m).color; m.classList.replace('quiet', 'note'); m.style.transition = ''; return c; })() } : null; })()`);
+        check('64 %: the ring darker than below 60 % (its number shown, not bold)', !!note64 && /note/.test(note64.cls) && note64.pct === '64%' && Number(note64.weight) < 600 && note64.color !== note64.quiet, JSON.stringify(note64));
         await setCu({ percentage: 83, totalTokens: 166_000, maxTokens: 200_000 });
         const ring = await waitFor('!!document.querySelector(".pane .composer .ctx-meter circle")', 2000);
         const ringLook = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); if (!m) return null; const cs = getComputedStyle(m); return { cls: m.className, pct: m.textContent, weight: cs.fontWeight, chip: !!document.querySelector('.pane .status-strip .ctx-full') }; })()`);
@@ -1500,8 +1523,8 @@ function driver() {
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
           win.setSize(1440, 900);
           await sleep(700);
-          const info = await js(`(() => { const p = document.querySelector('.pane.focused'); const c = p?.querySelector('.info-col'); const m = p?.querySelector('.chat-main'); if (!c) return { col: false, w: Math.round(p?.getBoundingClientRect().width ?? 0) }; return { col: true, cards: [...c.querySelectorAll('.info-card')].map((x) => x.dataset.card), width: Math.round(c.getBoundingClientRect().width), beside: Math.round(c.getBoundingClientRect().left) >= Math.round(m.getBoundingClientRect().right) - 1, on: p.querySelector('.sess-head button[aria-label="对话信息"]')?.getAttribute('aria-pressed') }; })()`);
-          check('信息栏: a column beside the conversation with 环境 / 上下文 / 连接器 / 改动 / 后台任务, the header ⓘ pressed', info.col && JSON.stringify(info.cards) === JSON.stringify(['env', 'context', 'connectors', 'changes', 'background']) && info.width >= 280 && info.width <= 296 && info.beside && info.on === 'true', JSON.stringify(info));
+          const info = await js(`(() => { const p = document.querySelector('.pane.focused'); const c = p?.querySelector('.info-col'); const m = p?.querySelector('.chat-main'); if (!c) return { col: false, w: Math.round(p?.getBoundingClientRect().width ?? 0) }; return { col: true, cards: [...c.querySelectorAll('.info-card')].map((x) => x.dataset.card), width: Math.round(c.getBoundingClientRect().width), beside: Math.round(c.getBoundingClientRect().left) >= Math.round(m.getBoundingClientRect().right) - 1, on: String(window.__store.getState().settings['ui.infoPanel'] !== false) }; })()`);
+          check('信息栏: a column beside the conversation with 环境 / 上下文 / 连接器 / 改动 / 后台任务 (ui.infoPanel on)', info.col && JSON.stringify(info.cards) === JSON.stringify(['env', 'context', 'connectors', 'changes', 'background']) && info.width >= 280 && info.width <= 296 && info.beside && info.on === 'true', JSON.stringify(info));
           await click('.pane.focused .info-card[data-card="context"] .ic-title');
           await sleep(300);
           const unfolded = await js(`(() => { const c = document.querySelector('.pane.focused .info-card[data-card="context"]'); return { open: c?.querySelector('.ic-title')?.getAttribute('aria-expanded'), body: !!c?.querySelector('.ic-body'), stored: JSON.stringify(window.__store.getState().settings['ui.infoCards'] ?? null) }; })()`);
@@ -1554,26 +1577,36 @@ function driver() {
           }
           phase = 'recording-ux';
           await shot('info-column');
-          await click('.pane.focused .sess-head button[aria-label="对话信息"]');
+          // redesign 2026-11 stage 4: no ⓘ and no panel toggle in the header — the column's switch is ⋯ › 对话信息栏 (Ctrl I)
+          const ctrlI = async () => { wc.sendInputEvent({ type: 'keyDown', keyCode: 'I', modifiers: ['control'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'I', modifiers: ['control'] }); await sleep(300); };
+          const headBtns = await js(`({ info: !!document.querySelector('.pane.focused .sess-head button[aria-label="对话信息"]'), panel: !!document.querySelector('.pane.focused .sess-head button[aria-label="右侧面板"], .pane.focused .sess-head button[aria-label="展开右侧面板"]') })`);
+          await click('.pane.focused .sess-head .sh-more > button');
+          await waitFor(`!!document.querySelector('.menu.sess-menu [data-act="info"]')`, 3000);
+          const infoRow = await js(`(() => { const b = document.querySelector('.menu.sess-menu [data-act="info"]'); return b ? { checked: b.getAttribute('aria-checked'), kbd: b.querySelector('.kbd')?.textContent ?? null } : null; })()`);
+          await click('.menu.sess-menu [data-act="info"]');
           const off = await waitFor(`!document.querySelector('.pane.focused .info-col') && window.__store.getState().settings['ui.infoPanel'] === false`, 3000);
           const diffBack = await js(`!!document.querySelector('.pane.focused .sess-head .sh-diff') || !document.querySelector('.pane.focused .info-col')`);
-          await click('.pane.focused .sess-head button[aria-label="对话信息"]');
-          const onAgain = await waitFor(`!!document.querySelector('.pane.focused .info-col')`, 3000);
-          check('the header ⓘ turns the column off and on (ui.infoPanel)', off && diffBack && onAgain, JSON.stringify({ off, onAgain }));
-          // 审阅 / 浏览器 / 文件 in the header: each opens its right-panel tab, a second click closes the panel
-          const tools = await js(`[...document.querySelectorAll('.pane.focused .sess-head [data-tool]')].map((b) => b.dataset.tool)`);
+          await ctrlI();
+          const onAgain = await waitFor(`!!document.querySelector('.pane.focused .info-col') && window.__store.getState().settings['ui.infoPanel'] !== false`, 3000);
+          check('no ⓘ / panel toggle in the header; ⋯ › 对话信息栏 (ticked, Ctrl I) turns the column off, Ctrl+I on again (ui.infoPanel)', !headBtns.info && !headBtns.panel && infoRow?.checked === 'true' && /I$/.test(infoRow?.kbd ?? '') && off && diffBack && onAgain, JSON.stringify({ headBtns, infoRow, off, onAgain }));
+          // the five tools in the header (任务 · 终端 · 改动 · 浏览器 · 文件): each opens its panel, the lit one closes it
+          const tools = await js(`[...document.querySelectorAll('.pane.focused .sess-head .sh-tools [data-tool]')].map((b) => b.dataset.tool + ':' + b.getAttribute('aria-label'))`);
           await click('.pane.focused .sess-head [data-tool="browser"]');
           const opened = await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && d.active === 'browser'; })()`, 3000);
           const pressed = await js(`document.querySelector('.pane.focused .sess-head [data-tool="browser"]')?.getAttribute('aria-pressed')`);
-          await click('.pane.focused .sess-head [data-tool="browser"]');
+          await click('.pane.focused .sess-head [data-tool="tasks"]');
+          const switched = await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && d.active === 'tasks' && document.querySelector('.pane.focused .sess-head [data-tool="tasks"]')?.getAttribute('aria-pressed') === 'true' && document.querySelector('.pane.focused .sess-head [data-tool="browser"]')?.getAttribute('aria-pressed') === 'false'; })()`, 3000);
+          await click('.pane.focused .sess-head [data-tool="tasks"]');
           const closed = await waitFor(`!window.__store.getState().layout.dock.open`, 3000);
-          check('header tools 审阅 / 浏览器 / 文件: one opens its panel (pressed), again closes it', JSON.stringify(tools) === JSON.stringify(['files', 'browser', 'explorer']) && opened && pressed === 'true' && closed, JSON.stringify({ tools, opened, pressed, closed }));
-          // ⋮: 旁聊 and 后台任务 on top
+          check('header tools 任务 · 终端 · 改动 · 浏览器 · 文件: one opens its panel (pressed), another switches, the lit one closes it', tools.join(',') === 'tasks:任务,terminal:终端,files:改动,browser:浏览器,explorer:文件' && opened && pressed === 'true' && switched && closed, JSON.stringify({ tools, opened, pressed, switched, closed }));
+          // ⋯: 重命名 · 分叉 · 导出… · 步骤视图 · 更多 | 对话信息栏 · Issue 与 PR · Android 屏幕 | 交给其它 Agent… · 归档 · 删除
           await click('.pane.focused .sess-head .sh-more > button');
           await waitFor(`!!document.querySelector('.menu.sess-menu')`, 3000);
-          const top = await js(`[...document.querySelectorAll('.menu.sess-menu [data-act]')].slice(0, 2).map((b) => b.dataset.act)`);
+          const rowsTop = await js(`[...document.querySelectorAll('.menu.sess-menu > [data-act]')].map((b) => b.dataset.act).join(',')`);
+          await click('.menu.sess-menu [data-act="more"]');
+          const moreRows = await js(`[...document.querySelectorAll('.menu.sess-menu .cm-more [data-act]')].map((b) => b.dataset.act).join(',')`);
           await key('Escape');
-          check('⋮ starts with 旁聊 and 后台任务', JSON.stringify(top) === JSON.stringify(['side', 'background']), JSON.stringify(top));
+          check('⋯: 重命名 · 分叉 · 导出… · 步骤视图 · 更多 | 对话信息栏 · Issue 与 PR · Android 屏幕 | 交给其它 Agent… · 归档 · 删除; 更多 holds 旁聊 · 本对话用量 · 后台任务 …', rowsTop === 'rename,fork,export,steps,more,info,board,android,handoff,archive,delete' && /^side,/.test(moreRows) && /usage/.test(moreRows) && /background/.test(moreRows), JSON.stringify({ rowsTop, moreRows }));
           // the box is one line; permission left and model / effort / ring right on the line under it
           const under = await js(`(() => { const c = document.querySelector('.pane.focused .composer'); const box = c.querySelector('.composer-box').getBoundingClientRect(); const u = c.querySelector('.composer-under'); if (!u) return null; const r = u.getBoundingClientRect(); const ta = c.querySelector('textarea').getBoundingClientRect(); const plus = c.querySelector('.cb .plus').getBoundingClientRect(); const perm = u.querySelector('.perm-chip')?.getBoundingClientRect(); const model = u.querySelector('.mm-anchor')?.getBoundingClientRect(); return { below: r.top >= box.bottom - 1, h: Math.round(r.height), oneLine: Math.abs((plus.top + plus.bottom) / 2 - (ta.top + ta.bottom) / 2) < 6, permLeft: !!perm && !!model && perm.right < model.left, inBox: !!c.querySelector('.composer-box .mm-anchor, .composer-box .perm-chip'), placeholder: c.querySelector('textarea').placeholder }; })()`);
           check('composer: + and the words on one line in the box; permission left, model right on the line under it', !!under && under.below && under.h <= 36 && under.oneLine && under.permLeft && !under.inBox, JSON.stringify(under));
@@ -1663,17 +1696,29 @@ function driver() {
           await js(`window.__store.getState().setSetting('ui.sidebarFolded', false)`);
           await sleep(300);
           check('侧栏 folds projects and folders by default, the current conversation\'s open (issue #3)', fold.groups >= 1 && fold.activeOpen && (fold.groups === 1 || fold.folded >= 1), JSON.stringify(fold));
-          // the new-conversation page the official way: 代码 / 聊天, the folder… under a one-line box; the backdrop; ← back
+          // the new-conversation page the official way (redesign 2026-11 stage 4, the default layout): under a one-line box
+          // 文件夹 · 分支 · 权限 on the left, 模型 · 子代理 · 思考强度 on the right; 代码 / 聊天 is the + menu's 只聊天; the
+          // background is still unless 外观 › 背景动画 is on; ← back
           await js(`window.__store.getState().setSetting('ui.welcomeLayout', 'under')`);
           await js(`window.__store.getState().openInPane(null, 'replace')`);
           const welcomeUp = await waitFor(`!!document.querySelector('.pane.focused .welcome .composer') && window.__store.getState().activeId == null`, 5000);
           await sleep(500);
-          // the moving backdrop: 字流 on the page, or 放完留作背景 (her loop / 火星) showing through it instead (features/opening)
-          const wl = await js(`(() => { const c = document.querySelector('.pane.focused .welcome .composer'); const u = c?.querySelector('.composer-under'); const opening = document.documentElement.classList.contains('obd-on') && !!document.querySelector('.obd > video, .obd > canvas') && document.querySelector('.pane.focused')?.hasAttribute('data-home'); return { under: !!u, mode: !!u?.querySelector('.cmp-mode [data-mode="chat"]'), folder: !!u?.querySelector('.dirpick'), boxChips: !!c?.querySelector('.composer-box .dirpick'), backdrop: !!document.querySelector('.pane.focused .welcome-tile > canvas.ascii-field') || !!opening }; })()`);
-          await click('.pane.focused .composer-under .cmp-mode [data-mode="chat"]');
+          const motionWas = await js(`JSON.stringify(window.__store.getState().settings['ui.backdropMotion'] ?? null)`);
+          await js(`window.__store.getState().setSetting('ui.backdropMotion', null)`);
+          await waitFor('!!document.querySelector(".pane.focused .welcome .composer-under .branch-chip")', 4000);
+          await sleep(400);
+          const wl = await js(`(() => { const c = document.querySelector('.pane.focused .welcome .composer'); const u = c?.querySelector('.composer-under'); const kind = (e) => e.matches('.dirpick, .cb-where') ? 'folder' : e.matches('.branch-chip') ? 'branch' : e.matches('.perm-chip') ? 'perm' : e.matches('.sub-anchor') ? 'sub' : e.matches('.mm-anchor') ? 'model' : e.matches('.depth-chip, .effort-chip, [data-id="effort"]') || e.querySelector('.depth-chip') ? 'effort' : e.className; const side = (sel) => [...(u?.querySelectorAll(sel + ' > *') ?? [])].filter((e) => e.getBoundingClientRect().width > 0).map(kind); return { under: !!u, left: side('.cb-left'), right: side('.cb-right'), mode: !!u?.querySelector('.cmp-mode'), boxChips: !!c?.querySelector('.composer-box .dirpick, .composer-box .perm-chip'), still: !document.querySelector('.pane.focused .welcome-tile > canvas.ascii-field'), mark: !!document.querySelector('.pane.focused .welcome .home-mark svg'), spark: !!document.querySelector('.pane.focused .welcome .greet .spark') }; })()`);
+          // 外观 › 背景动画 on: the page moves (字流 on the classic theme; 放完留作背景 may show through instead)
+          await js(`window.__store.getState().setSetting('ui.backdropMotion', true)`);
+          const moving = await waitFor(`!!document.querySelector('.pane.focused .welcome-tile > canvas.ascii-field') || (document.documentElement.classList.contains('obd-on') && !!document.querySelector('.obd > video, .obd > canvas'))`, 3000);
+          await js(`window.__store.getState().setSetting('ui.backdropMotion', ${motionWas})`);
+          await click('.pane.focused .welcome .composer .cb .plus');
+          await waitFor(`!!document.querySelector('.menu.plus-menu [data-id="chatOnly"]')`, 3000);
+          await click('.menu.plus-menu [data-id="chatOnly"]');
+          await key('Escape');
           const chatOnly = await waitFor(`!!document.querySelector('.pane.focused .welcome .cap-tag[data-cap="chatOnly"]')`, 2000);
-          await click('.pane.focused .composer-under .cmp-mode [data-mode="code"]');
-          check('新对话页: the chips under a one-line box (代码 / 聊天 → 只聊天), the moving backdrop behind it', wl.under && wl.mode && wl.folder && !wl.boxChips && wl.backdrop && chatOnly, JSON.stringify({ wl, chatOnly }));
+          if (chatOnly) await click('.pane.focused .welcome .cap-tag[data-cap="chatOnly"] button');
+          check('新对话页: 文件夹 · 分支 · 权限 … 模型 · 子代理 · 思考强度 under a one-line box (no 代码 / 聊天 there: + → 只聊天 tags the box), the app\'s mark over the greeting, a still background unless 背景动画 is on', wl.under && wl.left.join(',') === 'folder,branch,perm' && wl.right.join(',') === 'model,sub,effort' && !wl.mode && !wl.boxChips && wl.still && wl.mark && !wl.spark && moving && chatOnly, JSON.stringify({ wl, moving, chatOnly }));
           await click('[data-id="back"]');
           const backTo = await waitFor(`window.__store.getState().activeId === ${sidJs}`, 4000);
           await js(`window.__store.getState().setSetting('ui.welcomeLayout', 'inbox')`);
@@ -1687,20 +1732,30 @@ function driver() {
         phase = 'session-chrome';
         const head = await js(`(() => { const p = document.querySelector('.pane.focused') || document.querySelector('.pane'); const h = p && p.querySelector('.sess-head'); const c = p && p.querySelector('.chat'); if (!h || !c) return null; const pr = p.getBoundingClientRect(); return { h: Math.round(h.getBoundingClientRect().height), above: Math.round(c.getBoundingClientRect().top - pr.top), strips: p.querySelectorAll('.tabstrip').length, wbTabs: !!document.querySelector('.wb-tabs') }; })()`);
         check('one header row above the conversation (≤ 52px, no tab strip, no workbench tab row)', head && head.h <= 52 && head.above <= 53 && !head.strips && !head.wbTabs, JSON.stringify(head));
+        // the old workbench row's views: the header's five tools and the palette (redesign 2026-11 stage 4: the ⋯ no longer
+        // lists them — panel-entries.test.ts keeps each one ≤ 2 clicks away)
         await click('.sess-head .sh-more > button');
-        const views = await js(`[...document.querySelectorAll('.menu.sess-menu [data-view]')].map((b) => b.dataset.view)`);
-        check('··· lists every workbench view', ['changes', 'git', 'files', 'search', 'schedules', 'artifacts', 'board'].every((v) => views.includes(v)), JSON.stringify(views));
+        await waitFor('!!document.querySelector(".menu.sess-menu")', 3000);
+        const views = await js(`document.querySelectorAll('.menu.sess-menu [data-view]').length`);
         await shot('session-menu');
+        await key('Escape');
+        await js('window.__store.setState({ paletteOpen: true })');
+        await waitFor('!!document.querySelector(".cmdk input")', 3000);
+        await js('document.querySelector(".cmdk input").focus()');
+        wc.insertText('>定时任务');
+        await sleep(300);
+        const schedItem = await js(`(() => { const it = [...document.querySelectorAll('.cmdk .it')].find((x) => x.querySelector('.t')?.textContent === '查看这个对话的定时任务'); if (it) it.dataset.smokePick = 'sched'; return !!it; })()`);
+        if (schedItem) await click('.cmdk .it[data-smoke-pick="sched"]');
+        else await js('window.__store.setState({ paletteOpen: false })');
         // 定时任务 are this machine's, not the conversation's: the automation page (phase 7) over the main area; the
         // conversation underneath stays mounted (inert), × brings it back
-        await click('.menu.sess-menu [data-view="schedules"]');
         const autoShown = '(() => { const p = document.querySelector(".auto-page"); return !!p && !p.hidden && p.dataset.tab === "schedules" && !!p.querySelector(".auto-body[data-body=schedules]:not([hidden]) .sched-view") && !!document.querySelector(".pane-layer[inert]"); })()';
-        const inView = await waitFor(autoShown, 4000);
+        const inView = schedItem && await waitFor(autoShown, 4000);
         const noPill = await js('!document.querySelector(".pane.focused .sh-view") && !!document.querySelector(".pane.focused .chat")');
         await shot('automation-from-header');
-        await click('.over-page:not([hidden]) .over-close');
-        const back = await waitFor('document.querySelector(".auto-page")?.hidden === true && !document.querySelector(".pane-layer[inert]") && !!document.querySelector(".pane.focused .chat")', 4000);
-        check('··· 定时任务 opens the automation page over the conversation (kept mounted underneath); × returns to it', inView && noPill && back, JSON.stringify({ inView, noPill, back }));
+        if (inView) await click('.over-page:not([hidden]) .over-close');
+        const back = await waitFor('document.querySelector(".auto-page")?.hidden !== false && !document.querySelector(".pane-layer[inert]") && !!document.querySelector(".pane.focused .chat")', 4000);
+        check('the ⋯ lists no views; the palette\'s 查看这个对话的定时任务 opens the automation page over the conversation (kept mounted underneath); × returns to it', views === 0 && schedItem && inView && noPill && back, JSON.stringify({ views, schedItem, inView, noPill, back }));
 
         // collapsed sidebar: the centre takes the whole width and the header's first button brings the sidebar back
         await js('window.__store.setState({ sidebarOpen: false })');
@@ -1760,19 +1815,21 @@ function driver() {
         // ---- review fixes (phase 0–1)
         phase = 'session-review';
         const paneTiles = `(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); const p = g.panes[g.focusedPaneId]; return p.tiles.map((t) => t.kind === 'chat' ? 'chat:' + (t.sessionId || 'new') : t.kind + ':' + t.id).join(',') + '|' + p.activeTileId; })()`;
-        // header ··· hands over straight away: the agents (or the note that there are none) are in the menu itself
+        // header ⋯: 交给其它 Agent… opens the agents (or the note that there are none) in place — the same menu, no fly-out
         await click('.sess-head .sh-more > button');
-        const handoff = await js(`(() => { const m = document.querySelector('.menu.sess-menu'); if (!m) return null; return { label: [...m.querySelectorAll('.menu-label')].some((l) => l.textContent.includes('交给')), nested: !!m.querySelector('button[aria-expanded]:not([data-act="thinking-language"])') }; })()`);
-        check('header ··· lists the hand-over agents directly (no sub-menu)', handoff && handoff.label && !handoff.nested, JSON.stringify(handoff));
+        await waitFor(`!!document.querySelector('.menu.sess-menu [data-act="handoff"]')`, 3000);
+        await click('.menu.sess-menu [data-act="handoff"]');
+        const handoff = await js(`(() => { const m = document.querySelector('.menu.sess-menu'); if (!m) return null; const sub = m.querySelector('[data-act="handoff"] + .sub-menu'); return { menus: document.querySelectorAll('.menu.sess-menu').length, open: m.querySelector('[data-act="handoff"]')?.getAttribute('aria-expanded') ?? null, agents: sub ? sub.querySelectorAll('[data-agent]').length : -1, note: !!sub?.querySelector('.menu-note') }; })()`);
+        check('header ⋯ › 交给其它 Agent… opens the agents (or 没有其它可用的 agent) in the same menu', !!handoff && handoff.menus === 1 && handoff.open === 'true' && (handoff.agents > 0 || handoff.note), JSON.stringify(handoff));
         await js('document.body.click()');
         await sleep(200);
-        // right panel minimized to its icon strip: the header button brings it back
+        // right panel minimized to its icon strip: its header tool is not lit, a click brings the panel back
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'tasks' }); window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { minimized: true } })`);
         await sleep(300);
-        const expandBtn = await js(`!!document.querySelector('.sess-head button[aria-label="展开右侧面板"]')`);
-        await click('.sess-head button[aria-label="展开右侧面板"]');
-        const expanded = await waitFor('window.__store.getState().layout.dock.open && !window.__store.getState().layout.dock.minimized', 3000);
-        check('minimized right panel: the header button says 展开 and expands it', expandBtn && expanded, JSON.stringify({ expandBtn, expanded }));
+        const litWhileMin = await js(`document.querySelector('.sess-head [data-tool="tasks"]')?.getAttribute('aria-pressed') ?? null`);
+        await click('.sess-head [data-tool="tasks"]');
+        const expanded = await waitFor('window.__store.getState().layout.dock.open && !window.__store.getState().layout.dock.minimized && window.__store.getState().layout.dock.active === "tasks"', 3000);
+        check('minimized right panel: its header tool (任务) is not lit, a click expands the panel on it', litWhileMin === 'false' && expanded, JSON.stringify({ litWhileMin, expanded }));
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
         if (E.SMOKE_READONLY !== '1') {
           // 新对话 (Alt+N) with a terminal in front: a new tab next to it, the terminal tile is untouched
@@ -1793,8 +1850,9 @@ function driver() {
           await js('window.__store.getState().setSetting("ui.workbench", true)');
           win.setContentSize(740, 860);
           const phone = await waitFor('document.querySelector(".app").classList.contains("mobile") && !document.querySelector(".groupbar") && !document.querySelector(".pane .tabstrip")', 4000);
-          const phoneHead = await js(`(() => { const h = document.querySelector('.pane .sess-head'); if (!h) return null; return { reveal: !!h.querySelector('.sb-reveal'), diff: !!h.querySelector('.sh-diff'), term: !!h.querySelector('button[aria-label="终端"]'), panel: !!h.querySelector('button[aria-label="右侧面板"], button[aria-label="展开右侧面板"]'), more: !!h.querySelector('.sh-more > button') }; })()`);
-          check('phone + workbench tools: no group bar / tab strip; header has 展开侧栏 and ··· (and +N −M when there are changes) but no 终端 / 右侧面板', phone && phoneHead && phoneHead.reveal && phoneHead.more && !phoneHead.term && !phoneHead.panel, JSON.stringify({ phone, phoneHead }));
+          const phoneHead = await js(`(() => { const h = document.querySelector('.pane .sess-head'); if (!h) return null; const vis = (e) => !!e && e.getBoundingClientRect().width > 0; return { reveal: !!h.querySelector('.sb-reveal'), diff: vis(h.querySelector('.sh-diff')), tools: vis(h.querySelector('.sh-tools')), term: vis(h.querySelector('button[aria-label="终端"]')), panel: !!h.querySelector('button[aria-label="右侧面板"], button[aria-label="展开右侧面板"]'), more: !!h.querySelector('.sh-more > button') }; })()`);
+          // (redesign 2026-11 stage 4, the phone rules: ☰ · the title · ⋯ — the changes and the panels are in ⋯'s grid)
+          check('phone + workbench tools: no group bar / tab strip; the header is 展开侧栏 · the title · ⋯ (no +N −M, no tools, no 终端 / 右侧面板)', phone && phoneHead && phoneHead.reveal && phoneHead.more && !phoneHead.diff && !phoneHead.tools && !phoneHead.term && !phoneHead.panel, JSON.stringify({ phone, phoneHead }));
           await shot('phone-workbench');
           const phoneBar = await js(`(() => { const bar = document.querySelector('.pane .composer-bar'); if (!bar) return null; const b = bar.getBoundingClientRect(); return { h: Math.round(b.height), overflow: bar.scrollWidth > bar.clientWidth + 1, mic: !!bar.querySelector('[data-id="mic"]') }; })()`);
           check('phone: the composer row is one line (the 40px send button high), no mic (spec §5.11, UI refresh §8)', phoneBar && phoneBar.h <= 40 && !phoneBar.overflow && !phoneBar.mic, JSON.stringify(phoneBar));
@@ -1863,18 +1921,31 @@ function driver() {
             await sleep(350);
           };
           const phoneMenu = async () => { await click('.pane .sess-head .sh-more > button'); await waitFor('!!document.querySelector(".menu.sess-menu [data-view]")', 3000); await sleep(200); };
-          const phoneViews = await (async () => { await phoneMenu(); const v = await js(`[...document.querySelectorAll('.menu.sess-menu [data-view]')].map((b) => b.dataset.view)`); await key('Escape'); return v; })();
-          check('phone ···: the views plus 终端 / 任务 (the header has no buttons for them)', ['changes', 'files', 'schedules', 'terminal', 'tasks'].every((v) => phoneViews.includes(v)), JSON.stringify(phoneViews));
+          // the ⋯ sheet (redesign 2026-11 stage 4): the title, the six-grid 改动 · 任务 · 终端 · 文件 · 浏览器 · Artifacts, five
+          // rows (重命名 · 分叉 · 导出… · 查看模式 › · 更多 ›), 思考语言 / 旁聊 / Issue 与 PR under 更多
+          const phoneSheet = await (async () => {
+            await phoneMenu();
+            const v = await js(`(() => { const m = document.querySelector('.menu.sess-menu.conv-menu.phone'); if (!m) return null; return { grid: [...m.querySelectorAll('.cm-tiles [data-view]')].map((b) => b.dataset.view).join(','), rows: [...m.querySelectorAll(':scope > button[data-act]')].map((b) => b.dataset.act).join(','), title: !!m.querySelector('.cm-title b'), sheet: !!m.closest('.as-sheet') }; })()`);
+            await click('.menu.sess-menu [data-act="more"]');
+            await sleep(250);
+            const more = await js(`[...document.querySelectorAll('.menu.sess-menu.conv-menu.phone [data-act]')].map((b) => b.dataset.act).join(',')`);
+            await click('.menu.sess-menu [data-act="back"]');
+            await sleep(250);
+            const back = await js(`!!document.querySelector('.menu.sess-menu.conv-menu.phone .cm-tiles')`);
+            await key('Escape');
+            return { ...v, more, back };
+          })();
+          check('phone ⋯: a sheet — the title, the six-grid 改动 · 任务 · 终端 · 文件 · 浏览器 · Artifacts, five rows; 更多 holds 思考语言 / 旁聊 / Issue 与 PR and goes back', !!phoneSheet && phoneSheet.sheet && phoneSheet.title && phoneSheet.grid === 'files,tasks,terminal,explorer,browser,artifacts' && phoneSheet.rows === 'rename,fork,export,view-mode,more' && /side/.test(phoneSheet.more) && /board/.test(phoneSheet.more) && /last-reply/.test(phoneSheet.more) && phoneSheet.back, JSON.stringify(phoneSheet));
           await phoneMenu();
-          await click('.menu.sess-menu [data-view="changes"]');
+          await click('.menu.sess-menu [data-view="files"]');
           await waitFor(`(${drawerUp.toString()})(${sheet}, 'files')`, 4000);
           const sChanges = await js(sheet);
           await sleep(300);
           await shot('phone-sheet-review');
-          check('phone: ··· 改动 slides 审阅 up from the bottom (full width, over a backdrop), no toast', drawerUp(sChanges, 'files'), JSON.stringify(sChanges));
+          check('phone: ⋯ › 改动 slides the changes up from the bottom (full width, over a backdrop), no toast', drawerUp(sChanges, 'files'), JSON.stringify(sChanges));
           await tapAbove();
           const down = await waitFor(`!document.querySelector('.app').classList.contains('sheet-open') && !!document.querySelector('.dock-panel[data-panel="files"]')`, 3000);
-          check('phone: the backdrop puts the drawer away, 审阅 stays mounted', down);
+          check('phone: the backdrop puts the drawer away, 改动 stays mounted', down);
           await phoneMenu();
           await click('.menu.sess-menu [data-view="terminal"]');
           const termUp = await waitFor(`(${drawerUp.toString()})(${sheet}, 'terminal') && !!document.querySelector('.dock-panel[data-panel="terminal"] .xterm')`, 8000);
@@ -1919,7 +1990,7 @@ function driver() {
           // where the drawer is) lands on them, never on the drawer underneath; the drawer is back when they close
           const hitAt = (fy) => js(`(() => { const e = document.elementFromPoint(Math.round(innerWidth / 2), Math.round(innerHeight * ${fy})); return e ? (e.closest('.modal.settings') ? 'settings' : e.closest('.palette-bg') ? 'palette' : e.closest('.rpanel') ? 'drawer' : e.className || e.tagName) : null; })()`);
           await phoneMenu();
-          await click('.menu.sess-menu [data-view="changes"]');
+          await click('.menu.sess-menu [data-view="files"]');
           await waitFor(`(${drawerUp.toString()})(${sheet}, 'files')`, 4000);
           await js(`window.__store.getState().openSettings({ section: 'general' })`);
           await waitFor('!!document.querySelector(".modal.settings")', 3000);
@@ -1957,7 +2028,7 @@ function driver() {
           await shot('phone-remote-in-place');
           await click('.pane.focused .sh-view');
           const pillBack = await waitFor('!!document.querySelector(".pane.focused .chat-tile .composer textarea") && !document.querySelector(".pane.focused .wb-body") && !document.querySelector(".pane.focused .sh-view")', 3000);
-          check('phone, a remote conversation: ··· lists only its views, a view opens in place (not the drawer), the header pill returns', remoteViews.length >= 1 && !remoteViews.includes('terminal') && inPlace && pillBack, JSON.stringify({ remoteViews, inPlace, pillBack }));
+          check('phone, a remote conversation: ⋯\'s grid has only 任务 and Artifacts, Artifacts opens in place (not the drawer), the header pill returns', remoteViews.join(',') === 'tasks,artifacts' && inPlace && pillBack, JSON.stringify({ remoteViews, inPlace, pillBack }));
           await js(`(() => { const st = window.__store.getState(); st.openInPane(${sidJs}, 'replace'); const open = { ...st.open }; delete open[${JSON.stringify(RID)}]; window.__store.setState({ open, sessions: st.sessions.filter((x) => x.sessionId !== ${JSON.stringify(RID)}) }); })()`);
           await sleep(300);
           // the disconnect banner with the phone's drawer shut
@@ -1970,10 +2041,12 @@ function driver() {
           check('phone: the disconnect banner shows over the conversation with the drawer shut', downPhone && downPhone.inCenter && downPhone.visible && downPhone.top < 120, JSON.stringify(downPhone));
 
           // ---- redesign 2026-11 stage 1: the phone check (scripts/lib/phone-audit.cjs) at 390 × 844, 360 × 780 and
-          // 430 × 932, light and dark. This stage's screens — the drawer, the account sheet, 自动化's head and tab row on
-          // each of its five tabs, 自定义's, Artifacts — get every rule: tap targets 44 × 44, text boxes 16px, nothing
-          // scrolls sideways or sticks out, nothing covered. The conversation, the new-conversation page and the pages'
-          // bodies get all but the 44 rule (stage 4 does those; 运行中's 3D cafe is the background page as it was)
+          // 430 × 932, light and dark. Every rule — tap targets 44 × 44, text boxes 16px, nothing scrolls sideways or
+          // sticks out, nothing covered — on the drawer, the account sheet, 自动化's head and tab row on each of its five
+          // tabs, 自定义's, Artifacts, and (stage 4) the conversation, its ⋯ sheet, the model sheet, the bottom panel
+          // (改动, 任务), the new-conversation page; at 390 also a message's long-press sheet and the ring's sheet. The
+          // pages' bodies get all but the 44 rule (运行中's 3D cafe is the background page as it was). Nowhere on a phone
+          // a keyboard hint (Ctrl / Alt / Tab / Enter / 键盘快捷键: problem 4)
           phase = 'phone-audit';
           {
             const { auditJs, problems } = require(path.join(ROOT, 'scripts', 'lib', 'phone-audit.cjs'));
@@ -1996,6 +2069,25 @@ function driver() {
               await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
               await sleep(350);
             };
+            // keyboard hints in view (problem 4): text on screen naming a key — not inside a message, a code block, a
+            // terminal or a text box (what someone wrote may say Enter)
+            const kbdSeen = (where) => js(`(() => {
+              const KEY = /(?:\\b(?:Ctrl|Cmd|Alt|Option|Shift|Tab|Enter|Esc|Escape|PgUp|PgDn)\\b|⌘|⌥|⇧|↵|⏎|键盘快捷键)/;
+              const out = [];
+              const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+              for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+                const t = n.textContent;
+                if (!t.trim() || !KEY.test(t)) continue;
+                const e = n.parentElement;
+                if (!e || e.closest('script, style, textarea, .xterm, .code, pre, .msg, .assistant-wrap, .tool-card, .md')) continue;
+                const r = e.getBoundingClientRect();
+                if (!r.width || !r.height || r.right <= 0 || r.left >= innerWidth || r.bottom <= 0 || r.top >= innerHeight) continue;
+                let vis = true;
+                for (let p = e; p && p.nodeType === 1; p = p.parentElement) { const s = getComputedStyle(p); if (s.display === 'none' || s.visibility === 'hidden' || +s.opacity === 0) { vis = false; break; } }
+                if (vis) out.push(t.trim().slice(0, 40));
+              }
+              return out;
+            })()`).then((seen) => { if (seen.length) faults.push(`${where}: keyboard hints on a phone: ${seen.slice(0, 4).join(' | ')}`); });
             let screens = 0;
             for (const theme of ['light', 'dark']) {
               await js(`window.__store.getState().setSetting('ui.theme', '${theme}')`);
@@ -2004,11 +2096,72 @@ function driver() {
                 win.setContentSize(w, h);
                 await waitFor(`innerWidth === ${w} && window.__store.getState().mobile === true`, 4000);
                 await putAway();
-                // the conversation
+                // the conversation (stage 4: every rule)
                 await js(`(() => { window.__store.setState({ sidebarOpen: false }); window.__store.getState().openInPane(${sidJs}, 'replace'); })()`);
                 await waitFor('!!document.querySelector(".pane.focused .composer textarea")', 4000);
                 await sleep(400);
-                await audit(`${tag} · conversation`, '.workbench', { tapTargets: false });
+                await audit(`${tag} · conversation`, '.workbench');
+                if (w === 390) { await shot(`phone-check-${theme}-conversation`); await kbdSeen(`${tag} · conversation`); }
+                // its ⋯: a sheet (the title, the six-grid, five rows)
+                await click('.pane.focused .sess-head .sh-more > button');
+                await waitFor('!!document.querySelector(".as-sheet .menu.conv-menu .cm-tiles")', 3000);
+                await sleep(450);
+                await audit(`${tag} · ⋯ sheet`, '.as-sheet');
+                if (w === 390) { await shot(`phone-check-${theme}-more`); await kbdSeen(`${tag} · ⋯ sheet`); }
+                await putAway();
+                // 「模型 · 强度」 under the box: the model sheet with the five levels and the 子代理 row
+                await click('.pane.focused .composer-under .mm-anchor:not(.sub-anchor) > button.chip');
+                await waitFor('!!document.querySelector(".as-sheet .menu.mm")', 3000);
+                await sleep(450);
+                const mmSheet = await js(`(() => { const m = document.querySelector('.as-sheet .menu.mm'); if (!m) return null; return { levels: m.querySelectorAll('.mm-seg [data-level]').length, sub: !!m.querySelector('[data-id="subagent-open"]'), effortRow: !!m.querySelector('[data-id="model-effort"]') }; })()`);
+                if (!mmSheet || mmSheet.levels < 3 || !mmSheet.sub || mmSheet.effortRow) faults.push(`${tag} · model sheet: ${JSON.stringify(mmSheet)}`);
+                // (problem 2: nothing in it under 12px)
+                const mmR = await audit(`${tag} · model sheet`, '.as-sheet');
+                if (mmR.tiny) faults.push(`${tag} · model sheet: text under 12px: ${mmR.tinySamples.join(' | ')}`);
+                if (w === 390) { await shot(`phone-check-${theme}-model`); await kbdSeen(`${tag} · model sheet`); }
+                await putAway();
+                // the bottom panel: 改动 (its commit button at the foot) and 任务; the picker names the panel in full
+                for (const panel of ['files', 'tasks']) {
+                  await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: '${panel}' })`);
+                  await waitFor(`document.querySelector('.app').classList.contains('sheet-open') && !!document.querySelector('.dock-panel[data-panel="${panel}"]:not([hidden])')`, 4000);
+                  await sleep(600);
+                  const pick = await js(`document.querySelector('.rpanel .dock-pick .t')?.textContent ?? null`);
+                  if (pick !== { files: '改动', tasks: '任务' }[panel]) faults.push(`${tag} · bottom panel picker: ${pick}`);
+                  await audit(`${tag} · bottom panel › ${panel}`, '.app.mobile .rpanel');
+                  if (w === 390 && panel === 'files') await shot(`phone-check-${theme}-panel`);
+                }
+                await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+                await waitFor(`!document.querySelector('.app').classList.contains('sheet-open')`, 3000);
+                await sleep(300);
+                if (w === 390) {
+                  // a message's long press: its sheet (复制 · 编辑 · 重跑 · 分叉 · 朗读), no row of icons under it
+                  const at = await js(`(() => { const m = [...document.querySelectorAll('.pane.focused .msg.user[data-item-id] .bubble, .pane.focused .msg.user[data-item-id]')].find((e) => { const r = e.getBoundingClientRect(); return r.height > 0 && r.top > 80 && r.bottom < innerHeight - 160; }); if (!m) return null; const r = m.getBoundingClientRect(); return { x: Math.round(r.left + Math.min(20, r.width / 2)), y: Math.round(r.top + r.height / 2), icons: [...document.querySelectorAll('.pane.focused .msg-actions')].filter((a) => a.getBoundingClientRect().width > 2).length }; })()`);
+                  if (at) {
+                    wc.sendInputEvent({ type: 'mouseDown', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+                    await sleep(750);
+                    wc.sendInputEvent({ type: 'mouseUp', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+                  }
+                  const msgSheet = at && await waitFor('!!document.querySelector(".as-sheet .menu.msg-sheet")', 2000);
+                  const acts = msgSheet ? await js(`[...document.querySelectorAll('.as-sheet .menu.msg-sheet [data-act]')].map((b) => b.dataset.act).join(',')`) : '';
+                  if (!at || at.icons || !msgSheet || !/^copy,edit,rerun,fork/.test(acts)) faults.push(`${tag} · long press: ${JSON.stringify({ at, msgSheet, acts })}`);
+                  if (msgSheet) { await audit(`${tag} · message sheet`, '.as-sheet'); await shot(`phone-check-${theme}-message`); }
+                  await putAway();
+                  // the ring's sheet: a tap opens the numbers
+                  await js(`(() => { const st = window.__store; const o = st.getState().open[${sidJs}]; st.setState({ open: { ...st.getState().open, [${sidJs}]: { ...o, conv: { ...o.conv, contextUsage: { percentage: 42, totalTokens: 84000, maxTokens: 200000 } }, version: o.version + 1 } } }); })()`);
+                  await waitFor('!!document.querySelector(".pane.focused .composer-under .ctx-meter")', 2000);
+                  await click('.pane.focused .composer-under .ctx-meter');
+                  const ctxSheet = await waitFor('!!document.querySelector(".as-sheet .ctx-sheet .ctx-rows")', 2000);
+                  if (!ctxSheet) faults.push(`${tag} · the ring's sheet did not open`);
+                  else { await audit(`${tag} · ring sheet`, '.as-sheet'); await shot(`phone-check-${theme}-ring`); }
+                  await putAway();
+                  await js(`(() => { const st = window.__store; const o = st.getState().open[${sidJs}]; st.setState({ open: { ...st.getState().open, [${sidJs}]: { ...o, conv: { ...o.conv, contextUsage: undefined }, version: o.version + 1 } } }); })()`);
+                  // the palette: no key hints, no 键盘快捷键
+                  await js('window.__store.setState({ paletteOpen: true })');
+                  await waitFor('!!document.querySelector(".cmdk")', 3000);
+                  await sleep(300);
+                  await kbdSeen(`${tag} · palette`);
+                  await putAway();
+                }
                 // the drawer: a search box and four rows on top
                 await drawerIn();
                 const top = await js(`({ search: !!document.querySelector('.sidebar .sb-search'), nav: [...document.querySelectorAll('.sidebar .sb-nav > [data-id]')].map((b) => b.dataset.id).join(' ') })`);
@@ -2055,7 +2208,20 @@ function driver() {
                 await js(`(() => { window.__store.setState({ sidebarOpen: false }); window.__store.getState().openInPane(null, 'replace'); })()`);
                 await waitFor('!!document.querySelector(".pane.focused .welcome .composer")', 4000);
                 await sleep(400);
-                await audit(`${tag} · new conversation`, '.workbench', { tapTargets: false });
+                await audit(`${tag} · new conversation`, '.workbench');
+                if (w === 390) {
+                  await shot(`phone-check-${theme}-new`);
+                  await kbdSeen(`${tag} · new conversation`);
+                  // the box: 16px, a one-line placeholder; under it 项目 · 权限 · 「模型 · 强度」
+                  const box = await js(`(() => { const t = document.querySelector('.pane.focused .welcome .composer textarea'); const u = document.querySelector('.pane.focused .welcome .composer-under'); return { fs: t ? getComputedStyle(t).fontSize : null, ph: t?.placeholder ?? null, model: u?.querySelector('.mm-anchor:not(.sub-anchor) > button.chip')?.textContent ?? null, perm: !!u?.querySelector('.perm-chip'), folder: !!u?.querySelector('.dirpick'), sub: [...(u?.querySelectorAll('.sub-anchor') ?? [])].filter((e) => e.getBoundingClientRect().width > 0).length }; })()`);
+                  if (!box || box.fs !== '16px' || box.ph !== '想做点什么？' || !/ · /.test(box.model ?? '') || !box.perm || !box.folder || box.sub) faults.push(`${tag} · new conversation box: ${JSON.stringify(box)}`);
+                  // + menu on a phone: no key hints in its rows
+                  await click('.pane.focused .welcome .composer .cb .plus');
+                  await waitFor('!!document.querySelector(".as-sheet .menu.plus-menu")', 3000);
+                  await sleep(300);
+                  await kbdSeen(`${tag} · + menu`);
+                  await putAway();
+                }
                 screens += 1;
               }
             }
@@ -2064,7 +2230,9 @@ function driver() {
             win.setContentSize(740, 860);
             await waitFor('innerWidth === 740', 4000);
             await sleep(300);
-            check('phone check (390 / 360 / 430 × light / dark): this stage\'s screens with 44 × 44 targets, no text box under 16px, nothing sideways or covered; the others but the 44 rule', screens === 6 && !faults.length, faults.slice(0, 12).join(' | ') + (faults.length > 12 ? ` … (${faults.length})` : ''));
+            // each problem once (the same one at every size and theme is one line), with the first size it was seen at
+            const distinct = [...new Map(faults.flatMap((f) => { const m = /^(\S+ \S+) · ([^:]+): ([\s\S]*)$/.exec(f); return m ? m[3].split('; ').map((x) => [`${m[2]}: ${x.replace(/\d+×\d+/g, '#')}`, `${m[2]} (${m[1]}): ${x}`]) : [[f, f]]; })).values()];
+            check('phone check (390 / 360 / 430 × light / dark): the conversation, its sheets, the bottom panel, the new-conversation page and stage 1\'s screens with 44 × 44 targets, no text box under 16px, nothing sideways or covered, no keyboard hints; the pages\' bodies but the 44 rule', screens === 6 && !faults.length, distinct.slice(0, 40).join(' | ') + (distinct.length > 40 ? ` … (${distinct.length} problems)` : ''));
           }
           await js('window.__store.getState().setSetting("ui.workbench", true)');
           win.setContentSize(1360, 860);
@@ -2075,33 +2243,85 @@ function driver() {
         const err2 = await noBoundary('body');
         check('session chrome checks without error boundary', !err2, err2);
 
-        // ---- redesign phase 2: the right panel — 审阅 · 文件 · 终端 · 任务 + temporary tabs, nothing unmounts
+        // ---- the right panel (redesign 2026-11 stage 4): one thing at a time. A picker at its top-left switches 任务 ·
+        // 终端 · 改动 · 浏览器 · 文件 (Ctrl 1–5 — Ctrl+Shift in a browser; the header's five tools), this conversation's
+        // Artifacts, what else is open (each with its ×) and the other panels. Nothing unmounts
         phase = 'right-panel';
         const dockState = 'JSON.stringify(window.__store.getState().layout.dock)';
-        // the header ··· toggles: an earlier step may have left it open (a synthetic body click does not close it)
-        const openHeaderMenu = async () => { if (!(await js('!!document.querySelector(".menu.sess-menu")'))) await click('.sess-head .sh-more > button'); await waitFor('!!document.querySelector(".menu.sess-menu [data-view]")', 3000); await sleep(250); };
+        const activeTab = '(document.querySelector(".dock:not([hidden]) .dock-pick") ?? document.querySelector(".dock:not([hidden]) .dock-tabs .tab.active"))?.dataset.panel';
+        const openPicker = async () => { if (!(await js('!!document.querySelector(".dock-pick-menu")'))) await click('.dock .dock-pick'); await waitFor('!!document.querySelector(".dock-pick-menu button[data-panel]")', 3000); await sleep(200); };
+        const pickPanel = async (id) => { await openPicker(); await click(`.dock-pick-menu button[data-panel="${id}"]`); await sleep(300); };
+        // the palette's 「查看这个对话的…」: a view of the old workbench row (viewTarget says where it lands)
+        const runView = async (label) => {
+          await js('window.__store.setState({ paletteOpen: true })');
+          await waitFor('!!document.querySelector(".cmdk input")', 3000);
+          await js('document.querySelector(".cmdk input").focus()');
+          wc.insertText(`>${label}`);
+          await sleep(300);
+          const name = `查看这个对话的${label}`;
+          const ok = await js(`(() => { document.querySelectorAll('[data-smoke-pick]').forEach((e) => e.removeAttribute('data-smoke-pick')); const it = [...document.querySelectorAll('.cmdk .it')].find((x) => x.querySelector('.t')?.textContent === ${JSON.stringify(name)}); if (!it) return false; it.setAttribute('data-smoke-pick', 'view'); return true; })()`);
+          if (ok) await click('.cmdk .it[data-smoke-pick="view"]');
+          else await js('window.__store.setState({ paletteOpen: false })');
+          return ok;
+        };
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false, minimized: false } })`);
         await sleep(300);
-        await click('.sess-head button[aria-label="右侧面板"]');
+        // Ctrl+J, as before
+        wc.focus();
+        wc.sendInputEvent({ type: 'keyDown', keyCode: 'J', modifiers: ['control'] });
+        wc.sendInputEvent({ type: 'keyUp', keyCode: 'J', modifiers: ['control'] });
         // (the columns animate for --dur-3: let them settle, or the next clicks land where the buttons were)
         const rp = await waitFor('!!document.querySelector(".dock.simple:not([hidden])") && document.querySelector(".rpanel").offsetWidth >= 430', 4000);
         await sleep(400);
-        const fixedTabs = await js(`[...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => t.dataset.panel + (t.querySelector('.x') ? '×' : '')).join(',')`);
-        check('right panel: the five fixed tabs 审阅 · 文件 · 终端 · 浏览器 · 任务, none closable', rp && fixedTabs === 'files,explorer,terminal,browser,tasks', `${rp} ${fixedTabs}`);
-        // ··· 改动 → 审阅 on this conversation's files; the scope menu lists the scopes and recent commits
-        await openHeaderMenu();
-        await click('.menu.sess-menu [data-view="changes"]');
-        const review = await waitFor('document.querySelector(".dock .dock-tabs .tab.active")?.dataset.panel === "files" && document.querySelector(".dock .rv-scope .t")?.textContent === "本次对话改动"', 5000);
-        check('··· 改动 opens 审阅 on 本次对话改动 (the conversation stays in place)', review && !(await js('!!document.querySelector(".pane.focused .sh-view")')), await js(`JSON.stringify({ dock: window.__store.getState().layout.dock.active, tab: document.querySelector(".dock .dock-tabs .tab.active")?.dataset.panel, scope: document.querySelector(".dock .rv-scope .t")?.textContent, menu: !!document.querySelector(".menu.sess-menu"), toasts: [...document.querySelectorAll(".toast")].map((t) => t.textContent) })`));
+        const rowNow = await js(`({ tabs: document.querySelectorAll('.dock .dock-tabs .tab').length, more: !!document.querySelector('.dock button.dock-more'), pick: document.querySelector('.dock .dock-pick')?.dataset.panel ?? null, name: document.querySelector('.dock .dock-pick .t')?.textContent ?? null })`);
+        await openPicker();
+        const pmenu = await js(`(() => { const m = document.querySelector('.dock-pick-menu'); if (!m) return null; const rows = [...m.querySelectorAll('.dock-more-open > button[data-panel]')]; const r = m.getBoundingClientRect(); return { five: rows.slice(0, 5).map((b) => b.dataset.panel + ':' + (b.querySelector('.kbd')?.textContent ?? '')), all: rows.map((b) => b.dataset.panel), ticked: rows.filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.dataset.panel), inside: r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight }; })()`);
+        await shot('right-panel-picker');
+        await key('Escape');
+        await sleep(200);
+        const pickFocus = await js(`!!document.activeElement?.classList.contains('dock-pick')`);
+        check('right panel (Ctrl+J): no tab row — a picker at the top-left names the panel in front; its menu: 任务 · 终端 · 改动 · 浏览器 · 文件 with their keys, Artifacts, the other panels (目标 / 编排 / 用量 / 详情 / Issue 与 PR), the one in front ticked, inside the window; Esc gives the focus back', rp && rowNow.tabs === 0 && !rowNow.more && !!rowNow.pick && !!rowNow.name && !!pmenu && pmenu.five.map((x) => x.split(':')[0]).join(',') === 'tasks,terminal,files,browser,explorer' && pmenu.five.every((x, i) => x.endsWith(String(i + 1))) && pmenu.all.includes('artifacts') && ['goals', 'orchestra', 'usage', 'inspector', 'board'].every((p) => pmenu.all.includes(p)) && pmenu.ticked.length === 1 && pmenu.ticked[0] === rowNow.pick && pmenu.inside && pickFocus, JSON.stringify({ rp, rowNow, pmenu, pickFocus }));
+        // the keys: Ctrl+Shift+1 → 任务, Ctrl+Shift+3 → 改动 (the desktop app's menu gives plain Ctrl 1–5 the same). As a
+        // browser sends them on a US layout: Shift turns 1 into 「!」, the physical key says Digit1
+        const ctrlShift = async (digit, shifted) => { await js(`document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(shifted)}, code: 'Digit${digit}', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))`); await sleep(350); };
+        await ctrlShift(3, '#');
+        const k3 = await waitFor(`${activeTab} === 'files' && window.__store.getState().layout.dock.open`, 3000);
+        await ctrlShift(1, '!');
+        const k1 = await waitFor(`${activeTab} === 'tasks' && window.__store.getState().layout.dock.open`, 3000);
+        // the one in front again: the panel closes (as the lit header tool does)
+        await ctrlShift(1, '!');
+        const k1off = await waitFor(`!window.__store.getState().layout.dock.open`, 3000);
+        check('Ctrl+Shift+3 → 改动, Ctrl+Shift+1 → 任务, again → the panel closes (plain Ctrl 1–5 in the desktop app)', k3 && k1 && k1off, JSON.stringify({ k3, k1, k1off, dock: await js(dockState) }));
+        // the header's tools land on their panels; ⋯ › Issue 与 PR on its own
+        const headerMiss = [];
+        for (const want of ['tasks', 'files', 'browser', 'explorer']) {
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          await sleep(350);
+          await click(`.pane.focused .sess-head [data-tool="${want}"]`);
+          if (!(await waitFor(`${activeTab} === "${want}" && window.__store.getState().layout.dock.open`, 4000))) headerMiss.push(want);
+        }
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        await sleep(350);
+        await click('.pane.focused .sess-head .sh-more > button');
+        await waitFor(`!!document.querySelector('.menu.sess-menu [data-act="board"]')`, 3000);
+        await click('.menu.sess-menu [data-act="board"]');
+        if (!(await waitFor(`${activeTab} === "board" && window.__store.getState().layout.dock.open`, 4000))) headerMiss.push('board');
+        check('the header\'s tools land on their panels (任务 / 改动 / 浏览器 / 文件), ⋯ › Issue 与 PR on its own', !headerMiss.length, headerMiss.join(', '));
+        // 查看这个对话的改动 (the palette) → 改动 on this conversation's files; the scope menu lists the scopes and recent commits
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        await sleep(350);
+        const viaPalette = await runView('改动');
+        const review = viaPalette && await waitFor(`${activeTab} === "files" && document.querySelector(".dock .rv-scope .t")?.textContent === "本次对话改动"`, 5000);
+        check('查看这个对话的改动 opens 改动 on 本次对话改动 (the conversation stays in place)', review && !(await js('!!document.querySelector(".pane.focused .sh-view")')), await js(`JSON.stringify({ via: ${viaPalette}, dock: window.__store.getState().layout.dock.active, scope: document.querySelector(".dock .rv-scope .t")?.textContent, toasts: [...document.querySelectorAll(".toast")].map((t) => t.textContent) })`));
         await click('.dock .rv-scope');
         const scopes = await waitFor('document.querySelectorAll(".rv-scope-menu .rv-commit-item").length > 0', 5000);
         const scopeItems = await js(`[...document.querySelectorAll('.rv-scope-menu [role=menuitemradio]')].map((b) => b.textContent)`);
-        check('审阅 scope menu: 未提交 / 已暂存 / 本次对话 + commits', scopes && ['未提交的改动', '已暂存', '本次对话改动'].every((l) => scopeItems.some((t) => t.includes(l))), JSON.stringify(scopeItems));
+        check('改动 scope menu: 未提交 / 已暂存 / 本次对话 + commits', scopes && ['未提交的改动', '已暂存', '本次对话改动'].every((l) => scopeItems.some((t) => t.includes(l))), JSON.stringify(scopeItems));
         await js(`[...document.querySelectorAll('.rv-scope-menu button')].find((b) => b.textContent.includes('未提交'))?.click()`);
         const readme = await waitFor('[...document.querySelectorAll(".dock .rv-file")].some((f) => f.textContent.includes("README.md") && f.querySelector(".rv-body .diff"))', 8000);
         check('未提交的改动 lists the modified README.md with its diff; 提交 box at the bottom', readme && (await js('!!document.querySelector(".dock .rv-foot textarea")')));
         await shot('right-panel-review');
-        // ---- 审阅: comments on diff lines (spec 2026-10-16 review-pr §1)
+        // ---- 改动: comments on diff lines (spec 2026-10-16 review-pr §1)
         if (E.SMOKE_READONLY !== '1') {
           const lineFound = await js(`(() => { const l = [...document.querySelectorAll('.dock .rv-file .rv-body .dl.commentable')].find((x) => x.classList.contains('add')); if (l) l.dataset.smokeLine = '1'; return !!l; })()`);
           if (lineFound) await click('.dock .dl[data-smoke-line="1"]');
@@ -2111,35 +2331,38 @@ function driver() {
           const added = await waitFor('document.querySelectorAll(".dock .dl-note").length === 1 && /1 条评论/.test(document.querySelector(".dock .rv-comments")?.textContent ?? "")', 3000);
           await js('document.querySelector(".dock .rv-comments .btn.ghost")?.click()');
           const cleared = await waitFor('!document.querySelector(".dock .rv-comments") && !document.querySelector(".dock .dl-note")', 3000);
-          check('审阅: a click on a diff line opens a comment box, Enter adds it (the bar says 1 条评论), 清空 clears them', lineFound && box && added && cleared, JSON.stringify({ lineFound, box, added, cleared }));
+          check('改动: a click on a diff line opens a comment box, Enter adds it (the bar says 1 条评论), 清空 clears them', lineFound && box && added && cleared, JSON.stringify({ lineFound, box, added, cleared }));
         }
         await js('document.querySelector(\'.dock .rv-bar button[aria-label="更多审阅操作"]\')?.click()');
         await sleep(300);
         await js(`[...document.querySelectorAll('.rv-more-menu button')].find((b) => b.textContent.includes('Git'))?.click()`);
         const gitView = await waitFor('!!document.querySelector(".dock .rv-git:not([hidden]) .git-view .git-head")', 6000);
-        check('审阅 ··· → Git: the full Git view (branches, pull / push, stash, worktrees, history)', gitView);
+        check('改动 ··· → Git: the full Git view (branches, pull / push, stash, worktrees, history)', gitView);
         await js('document.querySelector(".dock .rv-git .rv-bar .btn")?.click()');
         await sleep(300);
-        // ··· 搜索 → 文件 in search mode
-        await openHeaderMenu();
-        await click('.menu.sess-menu [data-view="search"]');
-        const search = await waitFor('document.querySelector(".dock .dock-tabs .tab.active")?.dataset.panel === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .search-view")', 5000);
-        check('··· 搜索 opens 文件 in search mode', search);
-        // 「更多」: the extra tier as temporary tabs with a ×
-        await click('.dock button.dock-more');
-        const more = await js(`[...document.querySelectorAll('.dock-more-menu [data-panel]')].map((b) => b.dataset.panel)`);
-        check('「更多」 lists the extra panels (目标 / 编排 / 用量 / 详情 / Issue 与 PR)', ['goals', 'orchestra', 'usage', 'inspector', 'board'].every((p) => more.includes(p)) && !more.includes('files'), JSON.stringify(more));
-        await js(`document.querySelector('.dock-more-menu [data-panel="goals"]')?.click()`);
-        const temp = await waitFor('!!document.querySelector(".dock .dock-tabs .tab.active:not(.fixed)[data-panel=goals] .x, .dock .dock-foldhead[data-panel=goals] button")', 3000);
-        await click((await js('!!document.querySelector(".dock .dock-tabs .tab[data-panel=goals] .x")')) ? '.dock .dock-tabs .tab[data-panel="goals"] .x' : '.dock .dock-foldhead[data-panel="goals"] button');
-        const closed = await waitFor('!window.__store.getState().layout.dock.tabs.includes("goals") && !document.querySelector(".dock .dock-tabs .tab[data-panel=goals]") && !document.querySelector(".dock .dock-foldhead[data-panel=goals]")', 3000);
-        check('a temporary tab opens from 「更多」 and its × closes it', temp && closed, JSON.stringify({ temp, closed }));
+        // 查看这个对话的搜索 → 文件 in search mode
+        const viaSearch = await runView('搜索');
+        const search = viaSearch && await waitFor(`${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .search-view")`, 5000);
+        check('查看这个对话的搜索 opens 文件 in search mode', search, JSON.stringify({ viaSearch }));
+        // the picker puts another panel (目标) in front; it is listed under 已打开 with a ×, which closes it — the panel
+        // stays open, on one of the five (only the five open before: with others open the front would move to the next one)
+        await js(`(() => { const d = window.__store.getState().layout.dock; window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { tabs: d.tabs.filter((x) => ['tasks', 'terminal', 'files', 'browser', 'explorer'].includes(x)), active: 'explorer' } }); })()`);
+        await sleep(200);
+        await pickPanel('goals');
+        const temp = await waitFor(`${activeTab} === 'goals' && !!document.querySelector('.dock-panel[data-panel="goals"]:not([hidden])')`, 3000);
+        await openPicker();
+        const listedOpen = await js(`!!document.querySelector('.dock-pick-menu .dock-more-open[data-open="goals"] button.x')`);
+        if (listedOpen) await click('.dock-pick-menu .dock-more-open[data-open="goals"] button.x');
+        const closedTemp = await waitFor('!window.__store.getState().layout.dock.tabs.includes("goals") && window.__store.getState().layout.dock.open', 3000);
+        const landedCore = await js(`['tasks', 'terminal', 'files', 'browser', 'explorer'].includes(${activeTab})`);
+        if (await js('!!document.querySelector(".dock-pick-menu")')) await key('Escape');
+        check('picker: 目标 comes to the front and is listed under 已打开 with a ×; the × closes it and the panel stays open on one of the five', temp && listedOpen && closedTemp && landedCore, JSON.stringify({ temp, listedOpen, closedTemp, landedCore }));
         if (E.SMOKE_READONLY !== '1') {
-          // the terminal is never remounted: switching tabs, hiding the panel, flipping the workbench tools
-          await click('.dock .dock-tabs .tab[data-panel="terminal"]');
+          // the terminal is never remounted: switching panels, hiding the panel, flipping the workbench tools
+          await pickPanel('terminal');
           const xt = await waitFor('!!document.querySelector(".dock .xterm")', 8000);
           await js('document.querySelector(".dock .xterm").dataset.smokeMark = "1"');
-          await click('.dock .dock-tabs .tab[data-panel="files"]');
+          await pickPanel('files');
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
           await sleep(300);
           await js('window.__store.getState().setSetting("ui.workbench", true)');
@@ -2148,16 +2371,16 @@ function driver() {
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: true } })`);
           await sleep(500);
           const kept = await js('document.querySelector(".dock .xterm")?.dataset.smokeMark === "1" && document.querySelector(".dock .rv-scope .t")?.textContent === "未提交的改动"');
-          check('switching tabs / hiding / the workbench setting keep the terminal (same xterm) and the review’s scope', xt && kept, await js(dockState));
-          // default mode: toggling a fixed tab hides the panel, the tab stays mounted
+          check('switching panels / hiding / the workbench setting keep the terminal (same xterm) and the changes’ scope', xt && kept, await js(dockState));
+          // toggling the panel in front hides the right panel; it stays mounted
           await js(`window.__store.getState().togglePanel('files')`);
           await sleep(300);
           const hid = await js('(() => { const d = window.__store.getState().layout.dock; return !d.open && d.tabs.includes("files"); })()');
-          check('toggling 审阅 in view hides the right panel and keeps its tab', hid, await js(dockState));
+          check('toggling 改动 in front hides the right panel and keeps it mounted', hid, await js(dockState));
         }
 
         // ---- redesign phase 2 review fixes
-        // I1: a window whose right panel was never opened mounts no 审阅 and never asks the server to watch the repo
+        // I1: a window whose right panel was never opened mounts no 改动 and never asks the server to watch the repo
         // (a watch = a file watcher + a background `git fetch` every 5 minutes). A second window with a fresh layout
         // (?win=) records every WebSocket frame it sends: a preload in the page's own world (no context isolation,
         // this window only) wraps WebSocket#send before any page script runs.
@@ -2183,11 +2406,11 @@ function driver() {
             const opened = await cwait('!!document.querySelector(".sess-head") && !document.querySelector(".welcome")', 10_000);
             await sleep(2500);
             const st = await cjs(`({ review: !!document.querySelector('.dock-panel[data-panel="files"]'), panels: document.querySelectorAll('.dock-panel').length, tabs: window.__store.getState().layout.dock.tabs, watch: window.__cwSent.filter((m) => m.includes('"git.watch"')).length, sent: window.__cwSent.length })`);
-            check('cold start, right panel never opened: no 审阅 mounted, no git.watch sent', opened && st.sent > 0 && !st.review && !st.panels && st.watch === 0, JSON.stringify(st));
-            // …and the other way round: opening it mounts 审阅, which watches the repo once it is on screen
-            await cjs(`document.querySelector('.sess-head button[aria-label="右侧面板"]').click()`);
+            check('cold start, right panel never opened: no 改动 mounted, no git.watch sent', opened && st.sent > 0 && !st.review && !st.panels && st.watch === 0, JSON.stringify(st));
+            // …and the other way round: the header's 改动 tool mounts it, which watches the repo once it is on screen
+            await cjs(`document.querySelector('.sess-head [data-tool="files"]').click()`);
             const watched = await cwait(`!!document.querySelector('.dock-panel[data-panel="files"]:not([hidden]) .review') && window.__cwSent.some((m) => m.includes('"git.watch"'))`, 8000);
-            check('opening the right panel mounts 审阅 on screen, and only then is the repo watched', watched);
+            check('opening 改动 mounts it on screen, and only then is the repo watched', watched);
           } catch (e) {
             check('cold-start window', false, String(e && e.message || e));
           }
@@ -2212,7 +2435,7 @@ function driver() {
           wc.insertText(`>${p.title}`);
           await sleep(250);
           const listed = await pickItem(`打开${p.title}面板`);
-          const shown = listed && await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && (document.querySelector('.dock .dock-tabs .tab.active') ?? document.querySelector('.dock .dock-foldhead'))?.dataset.panel === ${JSON.stringify(p.id)} && !!document.querySelector('.dock-panel[data-panel="${p.id}"]:not([hidden])'); })()`, 4000);
+          const shown = listed && await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && ${activeTab} === ${JSON.stringify(p.id)} && !!document.querySelector('.dock-panel[data-panel="${p.id}"]:not([hidden])'); })()`, 4000);
           if (!shown) { paletteMiss.push(`${p.id}${listed ? '' : ' (not listed)'}`); await js('window.__store.setState({ paletteOpen: false })'); }
         }
         check('palette: every panel is listed as 「打开…面板」 and opens in the right panel', !paletteMiss.length, paletteMiss.join(', '));
@@ -2231,43 +2454,41 @@ function driver() {
         await js(`(() => { const d = JSON.parse(${JSON.stringify(dockBefore)}); window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { tabs: d.tabs, active: d.active, open: false, minimized: false } }); })()`);
         await sleep(300);
 
-        // I5: every view in the header ··· lands where viewTarget (panel-entries.ts) sends it — the same table
-        // panel-entries.test.ts pins: 改动 / Git → 审阅, 文件 / 搜索 / 生成的文件 → 文件, Issue 与 PR → a tab, 定时任务 →
-        // the automation page (phase 7)
-        const activeTab = '(document.querySelector(".dock:not([hidden]) .dock-tabs .tab.active") ?? document.querySelector(".dock:not([hidden]) .dock-foldhead"))?.dataset.panel';
+        // I5: every view of the old workbench row (the palette's 查看这个对话的…) lands where viewTarget (panel-entries.ts)
+        // sends it — the same table panel-entries.test.ts pins: 改动 / Git → 改动, 文件 / 搜索 / 生成的文件 → 文件, Issue 与
+        // PR → its panel, 定时任务 → the automation page (phase 7)
         const landing = {
-          changes: `${activeTab} === "files" && document.querySelector(".dock .rv-main:not([hidden]) .rv-scope .t")?.textContent === "本次对话改动"`,
-          git: `${activeTab} === "files" && !!document.querySelector(".dock .rv-git:not([hidden])")`,
-          files: `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .filetree")`,
-          search: `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .search-view")`,
-          artifacts: `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .fv-group.open")`,
-          board: `${activeTab} === "board"`,
-          schedules: '(() => { const p = document.querySelector(".auto-page"); return !!p && !p.hidden && p.dataset.tab === "schedules"; })()',
+          changes: ['改动', `${activeTab} === "files" && document.querySelector(".dock .rv-main:not([hidden]) .rv-scope .t")?.textContent === "本次对话改动"`],
+          git: ['Git', `${activeTab} === "files" && !!document.querySelector(".dock .rv-git:not([hidden])")`],
+          files: ['文件', `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .filetree")`],
+          search: ['搜索', `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .search-view")`],
+          artifacts: ['生成的文件', `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .fv-group.open")`],
+          board: ['Issue 与 PR', `${activeTab} === "board"`],
+          schedules: ['定时任务', '(() => { const p = document.querySelector(".auto-page"); return !!p && !p.hidden && p.dataset.tab === "schedules"; })()'],
         };
         const viewMiss = [];
-        for (const [view, expect] of Object.entries(landing)) {
+        for (const [view, [label, expect]] of Object.entries(landing)) {
           if (E.SMOKE_READONLY === '1' && view !== 'schedules' && view !== 'artifacts') continue;
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
           await sleep(350); // the columns animate
-          await openHeaderMenu();
-          await click(`.menu.sess-menu [data-view="${view}"]`);
-          const ok = await waitFor(`!!(${expect})`, 6000);
+          const listed = await runView(label);
+          const ok = listed && await waitFor(`!!(${expect})`, 6000);
           const inPlace = await js('!!document.querySelector(".pane.focused .sh-view")');
-          if (!ok || inPlace) viewMiss.push(`${view}: ${await js(`JSON.stringify({ tab: ${activeTab}, open: window.__store.getState().layout.dock.open, inPlace: ${inPlace}, auto: !document.querySelector('.auto-page')?.hidden })`)}`);
+          if (!ok || inPlace) viewMiss.push(`${view}: ${await js(`JSON.stringify({ listed: ${listed}, tab: ${activeTab}, open: window.__store.getState().layout.dock.open, inPlace: ${inPlace}, auto: !document.querySelector('.auto-page')?.hidden })`)}`);
           if (inPlace) { await click('.pane.focused .sh-view'); await sleep(250); }
           if (view === 'schedules') { await js('document.querySelector(".auto-page .auto-head button[aria-label=关闭自动化]")?.click()'); await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000); }
           if (view === 'git') await js('document.querySelector(".dock .rv-git .rv-bar .btn")?.click()');
         }
-        check('every header ··· view lands where viewTarget says (审阅 / 文件 / Issue 与 PR tab / 定时任务 → 自动化)', !viewMiss.length, viewMiss.join(' | '));
+        check('every view of the old workbench row (the palette) lands where viewTarget says (改动 / 文件 / Issue 与 PR / 定时任务 → 自动化)', !viewMiss.length, viewMiss.join(' | '));
 
         if (E.SMOKE_READONLY !== '1') {
-          // I5: the header's terminal button → 终端
+          // I5: the header's 终端 tool → 终端
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
           await sleep(350);
-          await click('.sess-head button[aria-label="终端"]');
-          check('the header terminal button opens 终端', await waitFor(`${activeTab} === "terminal" && !!document.querySelector(".dock .xterm")`, 8000));
+          await click('.pane.focused .sess-head [data-tool="terminal"]');
+          check('the header\'s 终端 tool opens 终端', await waitFor(`${activeTab} === "terminal" && !!document.querySelector(".dock .xterm")`, 8000));
 
-          // I5: a tool row's 详情 → 详情; closing it (M12) keeps the default panel open on a fixed tab
+          // I5: a tool row's 详情 → 详情; closing it (M12) keeps the panel open, on the one of the five last in front
           const t = new Date().toISOString();
           const base = { isSidechain: false, userType: 'external', cwd: E.SMOKE_REPO, sessionId: E.SMOKE_SID, version: '2.1.281', gitBranch: 'master' };
           const lines = [
@@ -2275,7 +2496,7 @@ function driver() {
             { ...base, parentUuid: '00000000-0000-4000-8000-000000000003', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_smoke_read', content: '# smoke repo' }] }, uuid: '00000000-0000-4000-8000-000000000004', timestamp: t },
           ];
           fs.appendFileSync(E.SMOKE_TRANSCRIPT, lines.map((x) => JSON.stringify(x)).join('\n') + '\n');
-          // only the fixed tabs open (the palette walk above opened every panel): 详情 is the one temporary tab
+          // only some of the five open (the palette walk above opened every panel): 详情 is the one other panel
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { tabs: ['files', 'explorer', 'terminal', 'tasks'], active: 'terminal' } })`);
           await js(`window.__store.getState().loadHistory(${JSON.stringify(E.SMOKE_SID)})`);
           // (phase 5: a finished turn folds its steps into one line — open it to reach the row)
@@ -2287,13 +2508,14 @@ function driver() {
           await click('.pane.focused .tool-head button[aria-label="详情"]');
           const detail = row && await waitFor(`${activeTab} === "inspector" && !!document.querySelector('.dock-panel[data-panel="inspector"]:not([hidden])')`, 4000);
           check('a tool row’s 详情 opens 详情 in the right panel', detail, JSON.stringify({ row }));
-          await click((await js('!!document.querySelector(".dock .dock-tabs .tab[data-panel=inspector] .x")')) ? '.dock .dock-tabs .tab[data-panel="inspector"] .x' : '.dock .dock-foldhead[data-panel="inspector"] button');
-          // N7: back on the fixed tab that was in front before (终端), not the first one (审阅)
-          const landed = await waitFor(`window.__store.getState().layout.dock.open && !document.querySelector('.dock .dock-tabs .tab[data-panel="inspector"]') && !!document.querySelector('.dock .dock-tabs .tab.fixed.active[data-panel="terminal"]')`, 3000);
-          check('closing the last temporary tab keeps the right panel open, on the fixed tab last in front (终端)', landed, await js(dockState));
+          await openPicker();
+          await click('.dock-pick-menu .dock-more-open[data-open="inspector"] button.x');
+          // N7: back on the one of the five that was in front before (终端), not the first one
+          const landed = await waitFor(`window.__store.getState().layout.dock.open && !window.__store.getState().layout.dock.tabs.includes('inspector') && ${activeTab} === 'terminal'`, 3000);
+          check('closing 详情 from the picker keeps the right panel open, on the panel last in front (终端)', landed, await js(dockState));
+          if (await js('!!document.querySelector(".dock-pick-menu")')) await key('Escape');
 
-          // I2: the desktop app on Windows at 1024 wide — the caption buttons take the top-right 150px of the tab
-          // row: the four fixed tabs stay whole (never scrolled away), the 「更多」 menu stays inside the window
+          // I2: the desktop app on Windows — the caption buttons take the top-right 150px of the panel's top row
           phase = 'right-panel-desktop';
           win.setContentSize(1080, 860);
           await waitFor('innerWidth === 1080', 4000);
@@ -2313,119 +2535,62 @@ function driver() {
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'files' })`);
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'goals' })`);
           await sleep(900);
-          const fit = await js(`(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const tabs = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); const whole = r.width > 0 && r.left >= rp.left - 0.5 && r.right <= Math.min(rp.right, vw) + 0.5; const underCaption = r.top < 60 && r.right > vw - 150; return { id: t.dataset.panel, ok: whole && !underCaption }; }); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), tabs }; })()`);
-          check('desktop · Windows, 1080 wide, a temporary tab open: the five fixed tabs are fully visible', fit.tabs.length === 5 && fit.tabs.every((x) => x.ok), JSON.stringify(fit));
-          // the temporary tab is reachable here too: its own tab in the strip (then no title row on the panel as well),
-          // or — no room for a strip beside five fixed tabs — in 「更多」 with the panel named on top
-          const narrowTemp = await js(`({ strip: !!document.querySelector('.dock .dock-tablist .tab.active[data-panel="goals"]'), head: !!document.querySelector('.dock .dock-foldhead[data-panel="goals"]'), badge: document.querySelector('.dock .dock-more-n')?.textContent ?? null })`);
-          check('1080: the temporary tab is either a tab of the strip (no title row) or folded into 「更多」 (title row, counted)', narrowTemp.strip ? !narrowTemp.head : narrowTemp.head && narrowTemp.badge === '1', JSON.stringify(narrowTemp));
-          await click('.dock button.dock-more');
-          const menu = await js(`(() => { const m = document.querySelector('.dock-more-menu'); if (!m) return null; const r = m.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), b: Math.round(r.bottom), vw: innerWidth, vh: innerHeight }; })()`);
-          check('desktop · Windows, 1080 wide: the 「更多」 menu is inside the window', !!menu && menu.l >= 0 && menu.r <= menu.vw && menu.b <= menu.vh, JSON.stringify(menu));
+          // the row: the picker whole inside the panel, nothing under the caption buttons, 16px of air before them
+          // (忍冬 2026-10-14: the row's last button sat 4px from − and a click meant for one landed on the other)
+          const rowProbe = `(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const p = document.querySelector('.dock .dock-pick').getBoundingClientRect(); const bs = [...document.querySelectorAll('.dock .dock-tabs button')].filter((b) => b.getClientRects().length && b.getBoundingClientRect().top < 40); const right = bs.length ? Math.max(...bs.map((b) => b.getBoundingClientRect().right)) : 0; return { vw, rp: Math.round(rp.width), pickOk: p.width > 0 && p.left >= rp.left - 0.5 && p.right <= Math.min(rp.right, vw - 150) + 0.5, name: document.querySelector('.dock .dock-pick .t')?.textContent ?? null, air: Math.round(vw - 114 - right), bodyTop: Math.round(document.querySelector('.dock .dock-body').getBoundingClientRect().top) }; })()`;
+          const r1080 = await js(rowProbe);
+          check('desktop · Windows, 1080 wide, 目标 in front: the picker is whole and named (目标), at least 16px between the panel\'s last button and the caption buttons', r1080.pickOk && r1080.name === '目标' && r1080.air >= 16, JSON.stringify(r1080));
+          await openPicker();
+          const menuAt = await js(`(() => { const m = document.querySelector('.dock-pick-menu'); if (!m) return null; const r = m.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), b: Math.round(r.bottom), vw: innerWidth, vh: innerHeight }; })()`);
+          check('desktop · Windows, 1080 wide: the picker\'s menu is inside the window', !!menuAt && menuAt.l >= 0 && menuAt.r <= menuAt.vw && menuAt.b <= menuAt.vh, JSON.stringify(menuAt));
           await shot('right-panel-desktop-win');
+          // N2: the menu closes when the settings page covers the window, and when its button goes away (Ctrl+J)
+          await js('window.__store.getState().openSettings()');
+          const closedBySettings = await waitFor('!document.querySelector(".dock-pick-menu")', 3000);
+          await js('window.__store.setState({ settingsOpen: null })');
+          await sleep(300);
+          await openPicker();
+          const reopened = await waitFor('!!document.querySelector(".dock-pick-menu")', 2000);
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          const closedByHide = await waitFor('!document.querySelector(".dock-pick-menu")', 3000);
+          check('the picker\'s menu closes when settings open and when the right panel is hidden', closedBySettings && reopened && closedByHide, JSON.stringify({ closedBySettings, reopened, closedByHide }));
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: true } })`);
+          await sleep(400);
+          // two other panels open, closed from the picker's 「已打开」 with the keyboard (re-review M-b): the focus moves to
+          // the next open row, ↓ and Esc keep working, Esc hands the focus back to the picker; the last one lands on 改动
+          await js(`(() => { const d = window.__store.getState().dispatchLayout; const st = window.__store.getState(); d({ t: 'dock.set', patch: { tabs: st.layout.dock.tabs.filter((x) => ['tasks', 'terminal', 'files', 'browser', 'explorer'].includes(x)), active: 'files' } }); d({ t: 'dock.show', panel: 'usage' }); d({ t: 'dock.show', panel: 'goals' }); })()`);
+          await sleep(400);
+          await openPicker();
+          // (Enter on the focused × = its click)
+          await js(`(() => { const x = document.querySelector('.dock-pick-menu .dock-more-open[data-open="usage"] button.x'); x.focus(); document.activeElement.click(); })()`);
+          await sleep(300);
+          const kb1 = await js(`(() => { const a = document.activeElement; return { menu: !!document.querySelector('.dock-pick-menu'), on: a?.closest('.dock-more-open')?.dataset.open ?? a?.tagName, usage: window.__store.getState().layout.dock.tabs.includes('usage') }; })()`);
+          await key('Down');
+          const kb2 = await js(`!!document.activeElement?.closest('.dock-pick-menu')`);
           await key('Escape');
-          await js(`window.__store.getState().dispatchLayout({ t: 'dock.close', panel: 'goals', workbench: false })`);
           await sleep(200);
-
-          // N1: the default size — 1440 wide, the 440px panel, 审阅 listing files, one temporary tab open: the row stays
-          // beside the caption buttons (no room for a strip there: the temporary tab is in 「更多」, which says so)
+          const kb3 = await js(`({ menu: !!document.querySelector('.dock-pick-menu'), onPick: !!document.activeElement?.classList.contains('dock-pick') })`);
+          check('picker 「已打开」: closing an open panel with the keyboard moves the focus to the next open row; ↓ and Esc still work, Esc gives the focus back to the picker', !kb1.usage && kb1.menu && kb1.on === 'goals' && kb2 && !kb3.menu && kb3.onPick, JSON.stringify({ kb1, kb2, kb3 }));
+          await openPicker();
+          await js(`(() => { const x = document.querySelector('.dock-pick-menu .dock-more-open[data-open="goals"] button.x'); x.focus(); document.activeElement.click(); })()`);
+          const back2 = await waitFor(`!window.__store.getState().layout.dock.tabs.includes('goals') && ${activeTab} === 'files' && !document.querySelector('.dock-pick-menu') && !!document.activeElement?.classList.contains('dock-pick')`, 3000);
+          check('closing the last one from 「已打开」 lands on 改动 (in front before), closes the menu and gives the focus back to the picker', back2, await js(`JSON.stringify({ dock: ${dockState}, menu: !!document.querySelector('.dock-pick-menu'), focus: document.activeElement?.className })`));
+          // N1: the default size — 1440 wide, the 440px panel: the row stays beside the caption buttons, and switching
+          // conversation and back never moves the panel's top
           win.setContentSize(1440, 900);
           await waitFor('innerWidth === 1440', 4000);
           await js(`(() => { const d = window.__store.getState().dispatchLayout; d({ t: 'dock.set', patch: { width: 440 } }); d({ t: 'dock.show', panel: 'files' }); })()`);
-          const countSel = `(document.querySelector('.dock .dock-tabs .tab[data-panel="files"] .n')?.textContent || '')`;
-          // (the ··· walk above left 审阅 on 本次对话改动, which lists nothing here: back to 未提交的改动 — README.md)
-          await sleep(400);
-          await click('.dock .rv-scope');
-          await waitFor('!!document.querySelector(".rv-scope-menu")', 3000);
-          await js(`[...document.querySelectorAll('.rv-scope-menu button')].find((b) => b.textContent.includes('未提交'))?.click()`);
-          const counted = await waitFor(`${countSel} !== ''`, 8000);
-          await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'goals' })`);
           await sleep(700);
-          const rowProbe = `(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const fixed = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); return r.width > 0 && r.right <= Math.min(rp.right, vw) + 0.5 && !(r.top < 60 && r.right > vw - 150); }); const strip = document.querySelector('.dock .dock-tablist .tab[data-panel="goals"]'); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), fixedOk: fixed.length === 5 && fixed.every(Boolean), short: !!document.querySelector('.dock .dock-fixed.short'), named: [...document.querySelectorAll('.dock .dock-fixed .tab')].filter((t) => { const l = t.querySelector('.t'); return !!l && l.getClientRects().length > 0; }).map((t) => t.dataset.panel).join(','), count: ${countSel}, badge: document.querySelector('.dock .dock-more-n')?.textContent ?? null, strip: !!strip && strip.getBoundingClientRect().width > 0, moreActive: !!document.querySelector('.dock button.dock-more.active'), fixedW: Math.round(document.querySelector('.dock .dock-fixed').getBoundingClientRect().width), ctlW: Math.round(document.querySelector('.dock .dock-ctl').getBoundingClientRect().width), bodyTop: Math.round(document.querySelector('.dock .dock-body').getBoundingClientRect().top) }; })()`;
-          const r1440 = await js(rowProbe);
-          check('desktop · Windows, 1440 wide, default panel, 审阅 with files, a temporary tab open: the row is not moved below the caption buttons', counted && r1440.rp === 432 /* the 440 column less the shell gap */ && !r1440.stacked && r1440.fixedOk && r1440.bodyTop <= 61 /* 8 gap + the 52px row */, JSON.stringify(r1440));
-          check('…and the temporary tab is reachable: its own tab, or 「更多」 counting it (and marked while it is in front)', r1440.strip || (r1440.badge === '1' && r1440.moreActive), JSON.stringify(r1440));
-          // 忍冬 2026-10-14: the row's last button sat 4px from − and a click meant for one landed on the other
-          const air = await js(`(() => { const bs = [...document.querySelectorAll('.dock .dock-tabs button')].filter((b) => b.getClientRects().length && b.getBoundingClientRect().top < 40); const right = Math.max(...bs.map((b) => b.getBoundingClientRect().right)); return { right: Math.round(right), air: Math.round(innerWidth - 114 - right) }; })()`);
-          check('desktop · Windows: at least 16px between the right panel\'s last button and the caption buttons', air.air >= 16, JSON.stringify(air));
-          // five names do not fit beside the caption buttons of the default panel: only the tab in front keeps its name
-          // (a temporary panel is in front here, so none does); the others are their icons, each with its name as tooltip
-          const shortTips = await js(`[...document.querySelectorAll('.dock .dock-fixed .tab')].map((t) => t.title).join(',')`);
-          check('1440, default panel: the fixed tabs are in their short form — icons, their names in the tooltips', r1440.short && r1440.named === '' && shortTips === '审阅,文件,终端,浏览器,任务', JSON.stringify({ short: r1440.short, named: r1440.named, shortTips }));
-          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { active: 'files' } })`);
-          await sleep(250);
-          const namedFront = await js(`({ named: [...document.querySelectorAll('.dock .dock-fixed .tab')].filter((t) => { const l = t.querySelector('.t'); return !!l && l.getClientRects().length > 0; }).map((t) => t.dataset.panel).join(','), stacked: !!document.querySelector('.dock-tabs.stacked'), bodyTop: Math.round(document.querySelector('.dock .dock-body').getBoundingClientRect().top) })`);
-          check('…the one in front is named (审阅), and switching does not move the row', namedFront.named === 'files' && !namedFront.stacked && namedFront.bodyTop === r1440.bodyTop, JSON.stringify(namedFront));
-          // a wider panel has room for all five names and a strip: the temporary tab gets its own tab and no title row
-          await js(`(() => { const d = window.__store.getState().dispatchLayout; d({ t: 'dock.set', patch: { width: 620 } }); d({ t: 'dock.show', panel: 'goals' }); })()`);
-          await sleep(700);
-          const wide = await js(`({ short: !!document.querySelector('.dock .dock-fixed.short'), stacked: !!document.querySelector('.dock-tabs.stacked'), strip: !!document.querySelector('.dock .dock-tablist .tab.active[data-panel="goals"]'), head: !!document.querySelector('.dock .dock-foldhead') })`);
-          check('a 620px panel names all five; the temporary tab is in the strip and gets no extra title row on its panel', !wide.short && !wide.stacked && wide.strip && !wide.head, JSON.stringify(wide));
-          await js(`(() => { const d = window.__store.getState().dispatchLayout; d({ t: 'dock.set', patch: { width: 440 } }); d({ t: 'dock.show', panel: 'goals' }); })()`);
-          await sleep(700);
-          // folded into 「更多」 and in front: the panel says what it is (目标) and has its ×; no fixed tab is lit
-          const headProbe = `(() => { const h = document.querySelector('.dock .dock-foldhead'); const p = document.querySelector('.dock .dock-panel[data-panel="goals"]'); if (!h) return null; const hr = h.getBoundingClientRect(); return { text: h.querySelector('.t')?.textContent, x: !!h.querySelector('button[aria-label="关闭目标"]'), h: Math.round(hr.height), headTop: Math.round(hr.top), panelTop: p ? Math.round(p.getBoundingClientRect().top) : null, lit: document.querySelectorAll('.dock .dock-tabs .tab.fixed.active').length }; })()`;
-          const head = await js(headProbe);
-          check('1440: the folded temporary panel in front gets a title row — 目标 and a close ×, inside the panel (tab row unmoved), no fixed tab lit', r1440.strip ? !head : !!head && head.text === '目标' && head.x && head.h >= 32 && head.h <= 36 && head.headTop === r1440.bodyTop && head.panelTop >= head.headTop + head.h && head.lit === 0, JSON.stringify({ head, bodyTop: r1440.bodyTop }));
-          await shot('right-panel-desktop-win-1440');
-          await click('.dock button.dock-more');
-          const openRow = await js(`(() => { const b = document.querySelector('.dock-more-menu .dock-more-open[data-open="goals"] button[data-panel="goals"]'); return b ? b.getAttribute('aria-checked') : null; })()`);
-          check('1440: 「更多」 lists the open temporary tab on top, checked while it is in front', r1440.strip || openRow === 'true', String(openRow));
-          // N2: the menu closes when the settings page covers the window, and when its button goes away (Ctrl+J)
-          await js('window.__store.getState().openSettings()');
-          const closedBySettings = await waitFor('!document.querySelector(".dock-more-menu")', 3000);
-          await js('window.__store.setState({ settingsOpen: null })');
-          await sleep(300);
-          await click('.dock button.dock-more');
-          const reopened = await waitFor('!!document.querySelector(".dock-more-menu")', 2000);
-          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
-          const closedByHide = await waitFor('!document.querySelector(".dock-more-menu")', 3000);
-          check('the 「更多」 menu closes when settings open and when the right panel is hidden', closedBySettings && reopened && closedByHide, JSON.stringify({ closedBySettings, reopened, closedByHide }));
-          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: true } })`);
-          await sleep(400);
-          // the title row's × closes it and goes back to the fixed tab that was in front (审阅: shown before 目标)
-          const landedOn = (id) => `!window.__store.getState().layout.dock.tabs.includes('${id}') && !!document.querySelector('.dock .dock-tabs .tab.fixed.active[data-panel="files"]') && !document.querySelector('.dock .dock-more-n') && !document.querySelector('.dock .dock-foldhead')`;
-          if (!r1440.strip) await click('.dock .dock-foldhead button[aria-label="关闭目标"]');
-          else await click('.dock .dock-tabs .tab[data-panel="goals"] .x');
-          const back = await waitFor(landedOn('goals'), 3000);
-          check('the title row’s × closes the temporary panel and lands on 审阅 (the fixed tab in front before); the count and the row go', back, await js(dockState));
-          // …and closing one from 「更多」 does the same
-          if (!r1440.strip) {
-            // two temporary panels folded into 「更多」, closed from its 「已打开」 list with the keyboard (re-review M-b):
-            // the focus moves to the next open row, ↓ and Esc keep working, Esc hands the focus back to 「更多」
-            await js(`(() => { const d = window.__store.getState().dispatchLayout; d({ t: 'dock.show', panel: 'usage' }); d({ t: 'dock.show', panel: 'goals' }); })()`);
-            await sleep(400);
-            await click('.dock button.dock-more');
-            await waitFor('!!document.querySelector(".dock-more-menu .dock-more-open")', 2000);
-            // (Enter on the focused × = its click)
-            await js(`(() => { const x = document.querySelector('.dock-more-menu .dock-more-open[data-open="usage"] button.x'); x.focus(); document.activeElement.click(); })()`);
-            await sleep(300);
-            const kb1 = await js(`(() => { const a = document.activeElement; return { menu: !!document.querySelector('.dock-more-menu'), on: a?.closest('.dock-more-open')?.dataset.open ?? a?.tagName, usage: window.__store.getState().layout.dock.tabs.includes('usage') }; })()`);
-            await key('Down');
-            const kb2 = await js(`!!document.activeElement?.closest('.dock-more-menu')`);
-            await key('Escape');
-            await sleep(200);
-            const kb3 = await js(`({ menu: !!document.querySelector('.dock-more-menu'), onMore: !!document.activeElement?.classList.contains('dock-more') })`);
-            check('「更多」: closing an open panel with the keyboard moves the focus to the next open row; ↓ and Esc still work, Esc gives the focus back to 「更多」', !kb1.usage && kb1.menu && kb1.on === 'goals' && kb2 && !kb3.menu && kb3.onMore, JSON.stringify({ kb1, kb2, kb3 }));
-            // the last one: the menu closes and the focus goes back to 「更多」
-            await click('.dock button.dock-more');
-            await waitFor('!!document.querySelector(".dock-more-menu .dock-more-open")', 2000);
-            await js(`(() => { const x = document.querySelector('.dock-more-menu .dock-more-open[data-open="goals"] button.x'); x.focus(); document.activeElement.click(); })()`);
-            const back2 = await waitFor(`${landedOn('goals')} && !document.querySelector('.dock-more-menu') && !!document.activeElement?.classList.contains('dock-more')`, 3000);
-            check('closing the last one from 「更多」 lands on 审阅, closes the menu and gives the focus back to 「更多」', back2, await js(`JSON.stringify({ dock: ${dockState}, menu: !!document.querySelector('.dock-more-menu'), focus: document.activeElement?.className })`));
-          }
-          // switching conversation (审阅 reloads: its count goes empty, then back) never moves the row or the panel
-          await js(`(() => { const r = document.querySelector('.dock .dock-tabs'); window.__cwFlips = []; window.__cwFlipObs = new MutationObserver(() => window.__cwFlips.push(r.className)); window.__cwFlipObs.observe(r, { attributes: true, attributeFilter: ['class'] }); })()`);
           const top0 = await js(rowProbe);
+          check('desktop · Windows, 1440 wide, default panel: the row is not moved below the caption buttons (the picker whole, 16px of air)', top0.rp === 432 /* the 440 column less the shell gap */ && top0.pickOk && top0.air >= 16 && top0.bodyTop <= 61 /* 8 gap + the 52px row */, JSON.stringify(top0));
+          await shot('right-panel-desktop-win-1440');
           await js(`window.__store.getState().openInPane(null, 'replace')`);
           await sleep(900);
           const topMid = await js(rowProbe);
           await js(`window.__store.getState().openInPane(${JSON.stringify(E.SMOKE_SID)}, 'replace')`);
-          const recounted = await waitFor(`${countSel} !== ''`, 8000);
-          await sleep(300);
+          await sleep(900);
           const top1 = await js(rowProbe);
-          const flips = await js('(() => { window.__cwFlipObs.disconnect(); return window.__cwFlips; })()');
-          check('switching conversation and back: the panel top stays put and the row never moves down', recounted && top0.bodyTop === topMid.bodyTop && top1.bodyTop === top0.bodyTop && !top0.stacked && !flips.some((c) => /stacked/.test(c)), JSON.stringify({ top0: top0.bodyTop, mid: [topMid.bodyTop, topMid.count], top1: [top1.bodyTop, top1.count], flips }));
+          check('switching conversation and back: the panel top stays put', top0.bodyTop === topMid.bodyTop && top1.bodyTop === top0.bodyTop, JSON.stringify({ top0: top0.bodyTop, mid: topMid.bodyTop, top1: top1.bodyTop }));
           await js(`document.documentElement.classList.remove('desktop', 'win')`);
           win.setContentSize(1360, 860);
           await waitFor('innerWidth === 1360', 4000);
@@ -2962,8 +3127,9 @@ function driver() {
             await sleep(400);
             // final review §9 #5: the discovery hint waits while the newcomer checklist is still on the home page…
             const hintEarly = await exists('.sidebar .sb-hint');
-            // …while the home page shows it under the checklist (user report: a newcomer who came for Codex found no way to it)
-            const homeEarly = await js(`(() => ({ home: !!document.querySelector('.welcome'), hint: !!document.querySelector('.welcome .home-hint .msg'), ids: document.querySelectorAll('.welcome .home-hint [data-id]').length }))()`);
+            // …and the home page never shows it (redesign 2026-11 stage 4: under the box only the greeting, the box and
+            // its row — the coordinator's list: no 「把 Codex 等工具里的对话也列在这里？」 there)
+            const homeEarly = await js(`(() => ({ home: !!document.querySelector('.welcome'), hint: !!document.querySelector('.welcome .home-hint') }))()`);
             // …but not forever (re-review M-7): 3 days after the list first showed (`since`) it comes anyway
             await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], since: Date.now() - 86400e3 }; window.__cwSmokeFakesApply(); })()`);
             await sleep(300);
@@ -2978,7 +3144,7 @@ function driver() {
             const hintNow = await js(`(() => { const m = document.querySelector('.sidebar .sb-hint .msg'); const names = window.__store.getState().librarySources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed).map((x) => x.name); return { msg: m?.textContent ?? null, title: m?.title ?? '', names }; })()`);
             const hintWant = hintNow.names.length === 1 ? `把 ${hintNow.names[0]} 里的对话也列在这里？` : `把 ${hintNow.names[0]} 等工具里的对话也列在这里？`;
             const homeLate = await exists('.welcome .home-hint');
-            check('library hint on the home page: there while the checklist holds the sidebar one back (no sidebar ids), gone once the sidebar has it', !homeEarly.home || (homeEarly.hint && homeEarly.ids === 0 && !homeLate), JSON.stringify({ homeEarly, homeLate }));
+            check('library hint: never on the home page (only the sidebar has it)', !homeEarly.hint && !homeLate, JSON.stringify({ homeEarly, homeLate }));
             check('library hint: not while the newcomer checklist is on; once it is closed, one plain question (把 Codex 里的对话也列在这里？ · 列出来 / 以后再说)', !hintEarly && hintNow.msg === hintWant && hintNow.title.includes('Codex') && await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'), JSON.stringify({ hintEarly, hintNow, hintWant }));
             // several agents' names wrap onto a second line instead of being cut off; the full text is the tooltip
             await js(`(() => { const names = { opencode: 'OpenCode', gemini: 'Gemini CLI', qwen: 'Qwen Code' }; const extra = Object.keys(names).map((k) => ({ kind: k, name: names[k], installed: true, detected: true, joined: false, dismissed: false, enabled: false })); const st = window.__store.getState(); window.__store.setState({ librarySources: [...st.librarySources.filter((x) => !names[x.kind]), ...extra] }); })()`);
@@ -3307,9 +3473,9 @@ function driver() {
         const extClosed = await waitFor(`document.querySelector('.ext-page')?.hidden === true && !document.querySelector('.sidebar .sb-nav [data-id="extensions"].on') && !!document.querySelector('.pane.focused')`, 3000);
         check('Esc leaves the page: the conversation is in front again, the 自定义 entry no longer lit', extClosed);
 
-        // 浏览器: the right panel's fifth fixed tab
+        // 浏览器: one of the right panel's five (the picker names it)
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'browser' })`);
-        const bwUp = await waitFor(`!!document.querySelector('.dock .tab.fixed.active[data-panel="browser"]') && !!document.querySelector('.dock-panel[data-panel="browser"]:not([hidden]) .bw .bw-newtab .bw-search input')`, 6000);
+        const bwUp = await waitFor(`!!document.querySelector('.dock .dock-pick[data-panel="browser"]') && !!document.querySelector('.dock-panel[data-panel="browser"]:not([hidden]) .bw .bw-newtab .bw-search input')`, 6000);
         check('右侧面板 → 浏览器: a new tab with its own page (a search box); one tab, so no tab row', bwUp && !(await js(`!!document.querySelector('.bw .bw-tabs')`)));
         await shot('browser-newtab');
         await js(`(() => { const i = document.querySelector('.bw .bw-addr input'); i.focus(); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'about:blank'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
@@ -3505,8 +3671,9 @@ function driver() {
         phase = 'structure';
         await js(`(() => { const d = window.__store.getState().dispatchLayout; d({ t: 'dock.set', patch: { open: true, minimized: false, width: 440 } }); d({ t: 'dock.show', panel: 'config' }); })()`);
         await sleep(700);
-        const cut = await js(`(() => { const tab = document.querySelector('.dock .dock-tablist .tab[data-panel="config"]'); const list = document.querySelector('.dock .dock-tablist'); const head = document.querySelector('.dock .dock-foldhead[data-panel="config"] .t'); if (!tab || !list) return { folded: true, head: head ? head.textContent : null, badge: document.querySelector('.dock .dock-more-n')?.textContent ?? null }; const a = tab.getBoundingClientRect(); const b = list.getBoundingClientRect(); return { folded: false, whole: a.left >= b.left - 1 && a.right <= b.right + 1, tab: Math.round(a.width), strip: Math.round(b.width) }; })()`);
-        check('a temporary tab is shown whole or not at all: 配置中心 is a whole tab of the strip, or folded into 「更多」 with its name on the panel', cut.folded ? cut.head === '配置中心' && cut.badge === '1' : cut.whole, JSON.stringify(cut));
+        // (redesign 2026-11 stage 4: no tab strip — the picker names the panel in front, whole or cut with an ellipsis)
+        const cut = await js(`(() => { const p = document.querySelector('.dock .dock-pick'); const rp = document.querySelector('.rpanel'); if (!p || !rp) return null; const a = p.getBoundingClientRect(), b = rp.getBoundingClientRect(); return { panel: p.dataset.panel, name: p.querySelector('.t')?.textContent ?? null, whole: a.left >= b.left - 1 && a.right <= b.right + 1 }; })()`);
+        check('another panel in front (配置中心): the picker names it, inside the panel', !!cut && cut.panel === 'config' && cut.name === '配置中心' && cut.whole, JSON.stringify(cut));
         await shot('panel-config-folded');
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.close', panel: 'config', workbench: false })`);
         await sleep(250);
@@ -4349,7 +4516,7 @@ function driver() {
           const provJ = JSON.stringify(prov.id);
           await js(`window.__store.getState().closeSession(${pj})`);
           await js(`window.__store.getState().loadHistory(${pj})`);
-          const ready = await waitFor(`window.__store.getState().open[${pj}]?.state === 'history' && !window.__store.getState().open[${pj}]?.loading && window.__store.getState().providers.some((p) => p.id === ${provJ}) && !!document.querySelector('.pane.focused .composer .cb-status')`, 10_000);
+          const ready = await waitFor(`window.__store.getState().open[${pj}]?.state === 'history' && !window.__store.getState().open[${pj}]?.loading && window.__store.getState().providers.some((p) => p.id === ${provJ}) && !!document.querySelector('.pane.focused .composer .composer-under .mm-anchor > button.chip')`, 10_000);
           await click('.pane.focused .composer .composer-under .mm-anchor > button.chip');
           const rowSel = `.menu.mm [data-sec=${provJ}] .mm-row:not(.off)`;
           const listed = await waitFor(`!!document.querySelector('${rowSel}')`, 5000);

@@ -61,23 +61,34 @@ export function ComposerUnder({ lead, permission, stats, status, model, subagent
 }) {
   const row = useRef<HTMLDivElement>(null);
   const [wrap, setWrap] = useState(false);
+  // The one-line row's least width: what the chips of the left group and of the right-hand group take (their own
+  // widths and the gaps between them — not the groups' boxes, which a wrapped row stretches to the full line), with
+  // the model's name cut to 6em. Only the model's name shrinks (every other chip is `flex: none`), so this is the same
+  // number on one line and wrapped: no flip-flop, and a row that wrapped comes back when there is room again.
+  const measure = useRef(() => {});
+  measure.current = () => {
+    const el = row.current;
+    if (!el) return;
+    const chips = (g: HTMLElement | null) => {
+      if (!g) return 0;
+      const kids = [...g.children].filter((c): c is HTMLElement => c instanceof HTMLElement && c.offsetWidth > 0);
+      const cs = getComputedStyle(g);
+      return kids.reduce((s, c) => s + c.offsetWidth, 0) + (parseFloat(cs.columnGap) || 0) * Math.max(0, kids.length - 1) + (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    };
+    const left = el.querySelector<HTMLElement>(':scope > .cb-left');
+    const right = el.querySelector<HTMLElement>(':scope > .cb-right');
+    const label = right?.querySelector<HTMLElement>('.mm-anchor:not(.sub-anchor) .mm-chip-label');
+    const em = label ? parseFloat(getComputedStyle(label).fontSize) || 13 : 13;
+    const need = chips(left) + chips(right) + (label ? Math.min(label.scrollWidth, 6 * em) - label.clientWidth : 0) + 12;
+    const fits = el.clientWidth >= need;
+    setWrap((w) => (w === !fits ? w : !fits));
+  };
+  // after every render (a chip's words changed) and whenever the row or a group is resized
+  useLayoutEffect(() => measure.current());
   useLayoutEffect(() => {
     const el = row.current;
     if (!el) return;
-    // The one-line row's least width: the left group, plus the right-hand group with the model's name cut to 6em. Only
-    // the model's name shrinks (composer.css: every other chip is `flex: none`), so the right group's natural width is
-    // its width plus what the name hides — the same number on one line and wrapped: no flip-flop, nothing changed here
-    const measure = () => {
-      const left = el.querySelector<HTMLElement>(':scope > .cb-left');
-      const right = el.querySelector<HTMLElement>(':scope > .cb-right');
-      const label = right?.querySelector<HTMLElement>('.mm-anchor:not(.sub-anchor) .mm-chip-label');
-      const em = label ? parseFloat(getComputedStyle(label).fontSize) || 13 : 13;
-      const need = (left?.offsetWidth ?? 0) + (right?.offsetWidth ?? 0) + (label ? Math.min(label.scrollWidth, 6 * em) - label.clientWidth : 0) + 12;
-      const fits = el.clientWidth >= need;
-      setWrap((w) => (w === !fits ? w : !fits));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(() => measure.current());
     ro.observe(el);
     for (const c of el.children) ro.observe(c);
     return () => ro.disconnect();
