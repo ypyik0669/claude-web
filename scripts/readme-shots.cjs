@@ -116,12 +116,14 @@ async function driver() {
     const sid = JSON.stringify(E.SHOTS_SID);
     const scene = (nowOffsets) => `(() => { const now = Date.now(); const A = (key, color, label, phase, phaseTitle, state, o) => Object.assign({ key, color, label, phase, phaseTitle, state, model: 'claude-haiku-4-5', beats: state === 'running' ? [now - 30000, now - 9000, now - 2000] : [], agentId: state === 'queued' ? undefined : 'a' + key + '00000' }, o || {}); window.__cwBackground.inject({ sessionId: ${sid}, updatedAt: now, tasks: [ { id: 'wf1', toolUseId: 'tu-wf', kind: 'workflow', description: ${JSON.stringify(E.SHOTS_WF_DESC)}, name: ${JSON.stringify(E.SHOTS_WF_NAME)}, status: 'running', startedAt: now - 8 * 60000, phases: [{ index: 1, title: ${JSON.stringify(E.SHOTS_PH1)} }, { index: 2, title: ${JSON.stringify(E.SHOTS_PH2)} }], agents: [ A('w1', 1, 'api', 1, ${JSON.stringify(E.SHOTS_PH1)}, 'running', { lastSummary: ${JSON.stringify(E.SHOTS_S1)}, tokens: 41200 }), A('w2', 2, 'tests', 1, ${JSON.stringify(E.SHOTS_PH1)}, 'done', { lastSummary: ${JSON.stringify(E.SHOTS_S2)}, tokens: 18800 }), A('w3', 3, 'docs', 2, ${JSON.stringify(E.SHOTS_PH2)}, 'running', { lastSummary: ${JSON.stringify(E.SHOTS_S3)}, tokens: 9400 }), A('w4', 4, 'lint', 2, ${JSON.stringify(E.SHOTS_PH2)}, 'queued') ] }, { id: 'ag1', kind: 'agent', description: ${JSON.stringify(E.SHOTS_AG)}, status: 'running', backgrounded: true, startedAt: now - 3 * 60000, agents: [ A('ag1', 5, ${JSON.stringify(E.SHOTS_AG)}, undefined, undefined, 'running', { agentType: 'Explore', lastSummary: ${JSON.stringify(E.SHOTS_S4)}, tokens: 22000 }) ] }, { id: 'sh1', kind: 'shell', description: 'npm run dev', status: 'running', backgrounded: true, startedAt: now - 20 * 60000, agents: [] } ], events: [ { at: now - 5000, taskId: 'wf1', agent: 'w1', who: 'api', color: 1, text: ${JSON.stringify(E.SHOTS_S1)}, tone: 'tool' }, { at: now - 22000, taskId: 'wf1', agent: 'w2', who: 'tests', color: 2, text: ${JSON.stringify(E.SHOTS_S2)}, tone: 'tool' } ] }); })()`;
     await js(scene());
-    // the composer's pill opens 自动化 › 运行中 on this conversation
+    // the composer's pill opens 自动化 › 运行中 on this conversation — on 列表 (redesign 2026-11: the groups of what each
+    // conversation runs); the cafe is 列表 / 网吧 → 网吧 (remembered: set back to 列表 at the end)
     await click('.pane.focused .composer .bg-pill'); await sleep(2500);
-    // the page must be visible for requestAnimationFrame to run (the canvas starts at 300×150 otherwise)
-    await waitFor('!!document.querySelector(".office canvas, canvas.office-canvas, .bg-stage canvas")', 8000);
-    await sleep(2500);
     if (want('background')) await png('background');
+    const toCafe = want('cafe') || want('characters');
+    if (toCafe) await click('.bg-page .bg-runview [data-view="cafe"]');
+    // the page must be visible for requestAnimationFrame to run (the canvas starts at 300×150 otherwise)
+    if (toCafe) { await waitFor('!!document.querySelector(".bg-office-wrap:not([hidden]) canvas.office-canvas")', 8000); await sleep(2500); }
     if (want('cafe')) {
       let rect = await js(`(() => { const c = document.querySelector('.office canvas, canvas.office-canvas, .bg-stage canvas'); if (!c) return null; const r = c.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }; })()`);
       if (rect) {
@@ -156,6 +158,7 @@ async function driver() {
       if (box) await png('characters', box); else console.log('characters: no library dialog');
       key('Escape'); await sleep(300);
     }
+    if (toCafe) { await click('.bg-page .bg-runview [data-view="list"]'); await sleep(300); }
     await js("document.querySelectorAll('.over-page:not([hidden]) .over-close').forEach((b) => b.click())"); await sleep(500);
   }
   if (want('mobile')) {

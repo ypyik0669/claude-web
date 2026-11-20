@@ -1972,8 +1972,9 @@ function driver() {
           // ---- redesign 2026-11 stage 1: the phone check (scripts/lib/phone-audit.cjs) at 390 × 844, 360 × 780 and
           // 430 × 932, light and dark. This stage's screens — the drawer, the account sheet, 自动化's head and tab row on
           // each of its five tabs, 自定义's, Artifacts — get every rule: tap targets 44 × 44, text boxes 16px, nothing
-          // scrolls sideways or sticks out, nothing covered. The conversation, the new-conversation page and the pages'
-          // bodies get all but the 44 rule (stage 4 does those; 运行中's 3D cafe is the background page as it was)
+          // scrolls sideways or sticks out, nothing covered. So do the automation piece's (redesign 2026-11): 运行中's
+          // list, its ⋯, the cafe and its ⋯, 跑过的 and a run of it, 定时任务's tasks and a task's ⋯. The conversation,
+          // the new-conversation page and the other pages' bodies get all but the 44 rule (stage 4 does those)
           phase = 'phone-audit';
           {
             const { auditJs, problems } = require(path.join(ROOT, 'scripts', 'lib', 'phone-audit.cjs'));
@@ -1995,6 +1996,90 @@ function driver() {
               await js('window.__store.setState({ sidebarOpen: true })');
               await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
               await sleep(350);
+            };
+            // the automation piece (redesign 2026-11): 运行中 needs something running — a workflow and a command in the
+            // seeded conversation, a sub-agent in the second — and 定时任务 two tasks (a long name, a disabled one); a
+            // phone opens 运行中 on the list even when the desktop chose the cafe
+            const bgSid = JSON.stringify(E.SMOKE_SID), bgSid2 = JSON.stringify(E.SMOKE_TOOLS_SID || E.SMOKE_SID);
+            await js(`(() => { const now = Date.now(); const A = (key, color, label, phase, phaseTitle, state, o) => Object.assign({ key, color, label, phase, phaseTitle, state, beats: [], agentId: state === 'queued' ? undefined : 'a' + key + '00000', startedAt: state === 'queued' ? undefined : now - 200000 }, o || {}); window.__cwBackground.inject({ sessionId: ${bgSid}, updatedAt: now, tasks: [ { id: 'pwf', kind: 'workflow', description: 'phone', name: '结账模块重构', status: 'running', startedAt: now - 480000, phases: [{ index: 1, title: '读代码' }, { index: 2, title: '改代码' }], agents: [A('w1', 1, 'api', 2, '改代码', 'running', { lastSummary: '改了 cart.ts', tokens: 41000 }), A('w2', 2, 'tests', 2, '改代码', 'done', { lastSummary: '补了 14 个测试', tokens: 18000 }), A('w3', 3, 'lint', 2, '改代码', 'queued')] }, { id: 'psh', kind: 'shell', description: 'npm run dev', status: 'running', backgrounded: true, startedAt: now - 1200000, agents: [] } ], events: [] }); window.__cwBackground.inject({ sessionId: ${bgSid2}, updatedAt: now - 1000, tasks: [ { id: 'pag', kind: 'agent', description: '查一下订单的数据结构', status: 'running', backgrounded: true, startedAt: now - 180000, agents: [A('pag', 4, '查一下订单的数据结构', undefined, undefined, 'running', { agentType: 'Explore', lastSummary: '读了 12 个文件', tokens: 22000 })] } ], events: [] }); })()`);
+            const viewWas = await js(`JSON.stringify(window.__store.getState().settings['background.view'] ?? null)`);
+            await js(`window.__store.getState().setSetting('background.view', 'cafe')`);
+            const schedulesWas = await js('JSON.stringify(window.__store.getState().schedules)');
+            await js(`window.__store.setState({ schedules: [{ id: 'psa', name: '每天早上把昨天的提交整理成一份简短的日报发到这个对话', cwd: ${JSON.stringify(E.SMOKE_REPO)}, prompt: 'x', everyMinutes: 60, cron: '0 9 * * 1-5', enabled: true, lastRunAt: Date.now() - 3600000, nextRunAt: Date.now() + 7200000, runs: 12, freshSession: true, sessionId: ${bgSid} }, { id: 'psb', name: '周报', cwd: ${JSON.stringify(E.SMOKE_REPO)}, prompt: 'y', everyMinutes: 60, cron: '0 18 * * 5', enabled: false }] })`);
+            // 运行中 on a phone: the list first (with ⋯), then ⋯ › 3D 网吧 (the canvas filling the body, its tools in ⋯,
+            // the counts not covered), then 跑过的 and one run of it — every rule on each, the ⋯ sheets too
+            const phoneRunning = async (tag, w, theme) => {
+              // the five tabs: one row that scrolls sideways (the plan's phone screen), never two lines
+              const row = await js(`(() => { const t = document.querySelector('.over-page:not([hidden]) .fam-tabs'); const tops = new Set([...t.querySelectorAll('.ft')].map((b) => Math.round(b.getBoundingClientRect().top))); return { lines: tops.size, x: getComputedStyle(t).overflowX }; })()`);
+              if (row.lines !== 1 || !/auto|scroll/.test(row.x)) faults.push(`${tag} · 自动化's tabs are one row that scrolls sideways: ${JSON.stringify(row)}`);
+              const listFirst =(await waitFor(`!!document.querySelector('.bg-page:not([hidden]) .bg-live-main:not([hidden]) .bg-run')`, 4000)) && await js(`(() => { const p = document.querySelector('.bg-page'); return { groups: p.querySelectorAll('.bg-live-main .bg-run').length, cafe: !!p.querySelector('.bg-office-wrap:not([hidden])'), seg: !!p.querySelector('.bg-runview'), more: !!p.querySelector('.over-head .bg-more [data-act="more"]'), stops: p.querySelectorAll('.bg-run [data-act="stop"]').length, opens: p.querySelectorAll('.bg-run [data-act="open"]').length }; })()`);
+              if (!listFirst || listFirst.groups !== 3 || listFirst.cafe || listFirst.seg || !listFirst.more || listFirst.stops !== 3 || listFirst.opens !== 3) faults.push(`${tag} · 运行中 opens on the list (3 groups, 停止 and › each, ⋯ in the head) though the desktop chose the cafe: ${JSON.stringify(listFirst)}`);
+              await sleep(300);
+              await audit(`${tag} · 运行中 · 列表`, '.bg-page:not([hidden])');
+              if (w === 390) await shot(`phone-check-${theme}-running`);
+              await click('.bg-page .bg-more [data-act="more"]');
+              await waitFor(`!!document.querySelector('.as-sheet .bg-more-menu')`, 2000);
+              await sleep(350);
+              await audit(`${tag} · 运行中 ⋯`, '.as-sheet');
+              await click('.as-sheet .bg-more-menu [data-id="cafe"]');
+              const cafeUp = await waitFor(`!!document.querySelector('.bg-page .bg-office-wrap:not([hidden]) .office-canvas') && (window.__cwCafe?.frames ?? 0) > 2`, 15000);
+              await sleep(900);
+              const cafe = await js(`(() => { const p = document.querySelector('.bg-page'); const b = p.querySelector('.bg-body').getBoundingClientRect(); const c = p.querySelector('.office-canvas').getBoundingClientRect(); const pill = p.querySelector('.office-pill'); const r = pill && pill.getBoundingClientRect(); const at = r && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { fill: Math.abs(c.top - b.top) <= 2 && Math.abs(c.bottom - b.bottom) <= 2 && Math.abs(c.left - b.left) <= 2 && Math.abs(c.right - b.right) <= 2, tools: !!p.querySelector('.office-tools, .office-bottom'), pill: !!at && pill.contains(at), pillIn: !!r && r.left >= 0 && r.right <= innerWidth }; })()`);
+              if (!cafeUp || !cafe.fill || cafe.tools || !cafe.pill || !cafe.pillIn) faults.push(`${tag} · ⋯ › 网吧: the canvas fills the body, no tools over it, the counts not covered: ${JSON.stringify({ cafeUp, cafe })}`);
+              await audit(`${tag} · 运行中 · 网吧`, '.bg-page:not([hidden])');
+              if (w === 390) await shot(`phone-check-${theme}-cafe`);
+              await click('.bg-page .bg-more [data-act="more"]');
+              await waitFor(`!!document.querySelector('.as-sheet .bg-more-menu [data-id="zoom-in"]')`, 2000);
+              await sleep(350);
+              const tools = await js(`[...document.querySelectorAll('.as-sheet .bg-more-menu [data-id]')].map((b) => b.dataset.id).join(' ')`);
+              if (tools !== 'list cafe light-auto light-day light-night zoom-in zoom-out whole library') faults.push(`${tag} · the cafe's tools in ⋯: ${tools}`);
+              await audit(`${tag} · 运行中 · 网吧 ⋯`, '.as-sheet');
+              if (w === 390) await shot(`phone-check-${theme}-cafe-more`);
+              await click('.as-sheet .bg-more-menu [data-id="list"]');
+              await waitFor(`!!document.querySelector('.bg-page .bg-live-main:not([hidden]) .bg-run')`, 3000);
+              await click('.bg-page .bg-views [data-view="history"]');
+              await waitFor(`!!document.querySelector('.bg-page .hx-body:not([hidden]) .hx-row')`, 8000);
+              await sleep(300);
+              await audit(`${tag} · 运行中 · 跑过的`, '.bg-page:not([hidden])');
+              await click('.bg-page .hx-body .hx-row');
+              await waitFor(`!!document.querySelector('.bg-page .hx-detail .hx-tag')`, 8000);
+              await sleep(300);
+              await audit(`${tag} · 运行中 · 跑过的 › 一次`, '.bg-page:not([hidden])');
+              if (w === 390) await shot(`phone-check-${theme}-history`);
+              await js(`document.querySelector('.bg-page .hx-back')?.click()`);
+              await click('.bg-page .bg-views [data-view="live"]');
+              await waitFor(`!!document.querySelector('.bg-page .bg-live-main:not([hidden])')`, 3000);
+              if (w === 390 && theme === 'light') {
+                // the cafe was for that visit: away from 运行中 and back, the list again
+                await click('.bg-page .bg-more [data-act="more"]');
+                await waitFor(`!!document.querySelector('.as-sheet .bg-more-menu')`, 2000);
+                await click('.as-sheet .bg-more-menu [data-id="cafe"]');
+                await waitFor(`!!document.querySelector('.bg-page .bg-office-wrap:not([hidden])')`, 4000);
+                await click(`.over-page:not([hidden]) .fam-tabs [data-id="schedules"]`);
+                await waitFor(`!!document.querySelector('.auto-page:not([hidden])')`, 3000);
+                await click(`.over-page:not([hidden]) .fam-tabs [data-id="running"]`);
+                const again = await waitFor(`!!document.querySelector('.bg-page:not([hidden]) .bg-live-main:not([hidden]) .bg-run') && !!document.querySelector('.bg-page .bg-office-wrap[hidden]')`, 3000);
+                if (!again) faults.push(`${tag} · a phone's cafe is for one visit: back on 运行中 it is the list again`);
+              }
+            };
+            // 定时任务 on a phone: each task's name on a line of its own, the switch and the actions behind one ⋯
+            const phoneSchedules = async (tag, w, theme) => {
+              await waitFor(`document.querySelectorAll('.auto-page .auto-body[data-body="schedules"] .row.sched').length === 2`, 4000);
+              await sleep(300);
+              const rows = await js(`[...document.querySelectorAll('.auto-page .auto-body[data-body="schedules"] .row.sched')].map((r) => { const n = r.querySelector('.sched-name'); return { phone: r.classList.contains('phone'), name: n ? Math.round(n.getBoundingClientRect().width) : 0, row: Math.round(r.getBoundingClientRect().width), buttons: r.querySelectorAll('button').length, sw: !!r.querySelector('[role="switch"], button.toggle') }; })`);
+              if (rows.length !== 2 || rows.some((r) => !r.phone || r.name < r.row * 0.7 || r.buttons !== 1 || r.sw)) faults.push(`${tag} · 定时任务: each name a full row, one ⋯ and no switch on the row: ${JSON.stringify(rows)}`);
+              await audit(`${tag} · 定时任务 · 任务`, '.auto-page:not([hidden]) .auto-body[data-body="schedules"] .list');
+              await audit(`${tag} · 自动化 › schedules (page)`, '.over-page:not([hidden])', { tapTargets: false });
+              if (w === 390) await shot(`phone-check-${theme}-automation`);
+              await click('.auto-page .auto-body[data-body="schedules"] .row.sched [data-act="more"]');
+              await waitFor(`!!document.querySelector('.as-sheet .sched-menu')`, 2000);
+              await sleep(350);
+              const acts = await js(`[...document.querySelectorAll('.as-sheet .sched-menu [data-id]')].map((b) => b.dataset.id).join(' ')`);
+              if (acts !== 'enabled run chat runs edit delete') faults.push(`${tag} · a task's ⋯: ${acts}`);
+              await audit(`${tag} · 定时任务 ⋯`, '.as-sheet');
+              if (w === 390) await shot(`phone-check-${theme}-schedule-more`);
+              await js(`document.querySelector('.as-sheet .as-cancel')?.click()`);
+              await waitFor(`!document.querySelector('.as-sheet')`, 2000);
             };
             let screens = 0;
             for (const theme of ['light', 'dark']) {
@@ -2022,7 +2107,9 @@ function driver() {
                 await audit(`${tag} · account`, '.action-sheet, .as-sheet');
                 if (w === 390) await shot(`phone-check-${theme}-account`);
                 await putAway();
-                // 自动化: its head and tab row on each tab; the bodies (but 运行中's cafe) without the 44 rule
+                // 自动化: its head and tab row on each tab, every rule; 运行中 (its list, its ⋯, the cafe and its ⋯, 跑过的
+                // and one run of it) and 定时任务's rows (and a row's ⋯) every rule too — with the background of two
+                // conversations and two tasks put in above; the other tabs' bodies all but the 44 rule
                 await drawerIn();
                 await click('.sidebar .sb-nav [data-id="automation"]');
                 await waitFor(`!!document.querySelector('.over-page.in-family:not([hidden]) .fam-tabs')`, 3000);
@@ -2031,8 +2118,9 @@ function driver() {
                   await waitFor(`document.querySelector('.over-page:not([hidden]) .fam-tabs [data-id="${tab}"]')?.getAttribute('aria-selected') === 'true'`, 3000);
                   await sleep(500);
                   await audit(`${tag} · 自动化 › ${tab}`, '.over-page:not([hidden]) :is(.over-head, .fam-tabs)');
-                  if (tab !== 'running') await audit(`${tag} · 自动化 › ${tab} (page)`, '.over-page:not([hidden])', { tapTargets: false });
-                  if (w === 390 && tab === 'schedules') await shot(`phone-check-${theme}-automation`);
+                  if (tab === 'running') await phoneRunning(tag, w, theme);
+                  else if (tab === 'schedules') await phoneSchedules(tag, w, theme);
+                  else await audit(`${tag} · 自动化 › ${tab} (page)`, '.over-page:not([hidden])', { tapTargets: false });
                 }
                 await putAway();
                 // 自定义
@@ -2060,11 +2148,14 @@ function driver() {
               }
             }
             await js(`window.__store.getState().setSetting('ui.theme', ${themeWas} ?? 'system')`);
+            // what the automation piece put in goes again
+            await js(`(() => { for (const sid of [${bgSid}, ${bgSid2}]) window.__cwBackground.inject({ sessionId: sid, updatedAt: Date.now(), tasks: [], events: [] }); window.__store.setState({ schedules: ${schedulesWas} }); })()`);
+            await js(`window.__store.getState().setSetting('background.view', ${viewWas})`);
             await js(`window.__store.getState().openInPane(${sidJs}, 'replace')`);
             win.setContentSize(740, 860);
             await waitFor('innerWidth === 740', 4000);
             await sleep(300);
-            check('phone check (390 / 360 / 430 × light / dark): this stage\'s screens with 44 × 44 targets, no text box under 16px, nothing sideways or covered; the others but the 44 rule', screens === 6 && !faults.length, faults.slice(0, 12).join(' | ') + (faults.length > 12 ? ` … (${faults.length})` : ''));
+            check('phone check (390 / 360 / 430 × light / dark): stage 1\'s screens and the automation piece\'s (运行中: the list, ⋯, the cafe and its ⋯, 跑过的 and a run; 定时任务\'s tasks and their ⋯) with 44 × 44 targets, no text box under 16px, nothing sideways or covered; the others but the 44 rule', screens === 6 && !faults.length, faults.slice(0, 12).join(' | ') + (faults.length > 12 ? ` … (${faults.length})` : ''));
           }
           await js('window.__store.getState().setSetting("ui.workbench", true)');
           win.setContentSize(1360, 860);
@@ -3329,12 +3420,16 @@ function driver() {
         check('浏览器 without error boundary', !bwErr, bwErr);
       }
 
-      // ---- 后台 (spec 2026-10-12-background-office-design.md): a conversation's background put in through the debug
-      // hook (no CLI here; phase 25 drives the real thing) — the composer's pill, the page (cards, office, graph, feed),
-      // an agent's drawer, the task panel
+      // ---- 后台 = 自动化 › 运行中 (spec 2026-10-12-background-office-design.md; redesign 2026-11, the automation piece): a
+      // conversation's background put in through the debug hook (no CLI here; phase 25 drives the real thing) — the
+      // composer's pill; the page on 列表 (a group per workflow / sub-agent / command, each with 停止 and 打开对话; a
+      // workflow's graph and 动态 folding out; an agent's drawer beside the list); 列表 / 网吧 remembered in meta.json; the
+      // cafe filling the body (its people, its card, its wheel, its library); the task panel and the right panel's cafe
       if (E.SMOKE_READONLY !== '1' && E.SMOKE_SID) {
         phase = 'background';
         const bsid = JSON.stringify(E.SMOKE_SID);
+        const metaView = async () => { for (let i = 0; i < 20; i++) { try { const v = JSON.parse(fs.readFileSync(path.join(E.SMOKE_DATA, 'meta.json'), 'utf8')).settings?.['background.view']; if (v) return v; } catch { /* mid-write */ } await sleep(150); } return null; };
+        const metaViewIs = async (want) => { for (let i = 0; i < 20; i++) { try { if (JSON.parse(fs.readFileSync(path.join(E.SMOKE_DATA, 'meta.json'), 'utf8')).settings?.['background.view'] === want) return want; } catch { /* mid-write */ } await sleep(150); } return metaView(); };
         await js(`(() => { window.__store.setState({ sidebarOpen: true }); window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } }); })()`);
         await js(`window.__store.getState().loadHistory(${bsid})`);
         await waitFor(`!!document.querySelector('.pane.focused .composer textarea')`, 8000);
@@ -3343,80 +3438,99 @@ function driver() {
         check('后台: the composer\'s pill says what runs besides the turn', pill === '后台 · 1 个工作流 · 1 个子代理 · 1 条命令 · 2 个在跑', JSON.stringify(pill));
         await shot('background-pill');
         await click('.pane.focused .composer .bg-pill');
-        const up = await waitFor(`!!document.querySelector('.bg-page:not([hidden]) .office-canvas') && document.querySelectorAll('.bg-page .office-bot').length >= 6 && (window.__cwCafe?.frames ?? 0) > 2`, 15000);
-        await sleep(600);
-        await waitFor(`document.querySelectorAll('.bg-page .bg-graph .ng-card').length >= 9`, 8000);   // the node graph is its own chunk (spec D2)
-        // (the cafe was mounted earlier in this run — 自动化 › 运行中 from the palette and the phone check — and then it
-        // follows the pill's conversation into its zone, Office.tsx `follow`; the floor tags are the whole cafe's: back to it)
-        await js(`(() => { const b = document.querySelector('.bg-page .office-bread button'); if (b && !b.classList.contains('on')) b.click(); })()`);
-        await sleep(500);
-        const sidSel = JSON.stringify(JSON.stringify(E.SMOKE_SID));
-        const page = await js(`(() => { const p = document.querySelector('.bg-page'); return { fam: p.querySelector('.over-title h2')?.textContent, sub: p.querySelector('.fam-sub')?.textContent ?? '', cards: p.querySelectorAll('.bg-card:not(.bg-card-more)').length, chars: p.querySelectorAll('.office-bot').length, admin: !!p.querySelector('.office-bot[aria-label^="前台网管"]'), floor: p.querySelector('.office-ftag')?.textContent ?? '', zoneTag: p.querySelector('.office-ftag[data-anchor="zone:0"]')?.getAttribute('aria-label') ?? '', lit: (() => { const c = p.querySelector('.office-canvas'); const t = document.createElement('canvas'); t.width = c.width; t.height = c.height; const g = t.getContext('2d'); g.drawImage(c, 0, 0); const d = g.getImageData(0, 0, t.width, t.height).data; const r0 = d[0], g0 = d[1], b0 = d[2]; let n = 0, k = 0; for (let i = 0; i < d.length; i += 4 * 97) { k++; if (Math.abs(d[i] - r0) + Math.abs(d[i + 1] - g0) + Math.abs(d[i + 2] - b0) > 40) n++; } return Math.round((n / k) * 100); })(), nodes: p.querySelectorAll('.bg-graph .ng-card').length, edges: p.querySelectorAll('.bg-graph .ng-edge').length, strong: p.querySelector('.bg-graph .ng-edge[data-edge="wf|wf1|p1>wf1|w1"]')?.dataset.style, feed: p.querySelector('.bg-feed')?.textContent ?? '', chips: p.querySelectorAll('.bg-chips .bg-chip').length, entry: !!document.querySelector('.sidebar .sb-nav [data-id="automation"].on'), side: !!document.querySelector('.bg-page .over-side .bg-side .bg-srow.active[data-sid=' + ${sidSel} + ']') }; })()`);
-        check('the pill opens 自动化 › 运行中 on this conversation (its name under the tabs, the conversations in the page\'s own column, the sidebar\'s 自动化 lit): five cards (three of a workflow, a sub-agent, a command), A区 with its 网管 and five people in the 3D cafe (the picture drawn), a node each in the graph, the feed, a chip per task', up && page.fam === '自动化' && !!page.sub && !page.sub.startsWith('后台') && /运行中/.test(page.sub) && page.cards === 5 && page.chars >= 6 && page.admin && /^A/.test(page.floor) && /^A区 · /.test(page.zoneTag) && page.lit > 3 && page.nodes === 9 && page.edges === 8 && page.strong === 'strong' && /alpha/.test(page.feed) && page.chips === 4 && page.entry && page.side, JSON.stringify(page));
+        // 列表 first (nothing chosen yet in this HOME): one group per thing the conversation runs
+        const listUp = await waitFor(`document.querySelectorAll('.bg-page:not([hidden]) .bg-live-main:not([hidden]) .bg-run').length === 3`, 8000);
+        const list = await js(`(() => { const p = document.querySelector('.bg-page'); const g = (k) => p.querySelector('.bg-run[data-kind="' + k + '"]'); const wf = g('workflow'), ag = g('agent'), sh = g('shell'); return {
+          fam: p.querySelector('.over-title h2')?.textContent, sub: p.querySelector('.fam-sub')?.textContent ?? '',
+          seg: p.querySelector('.fam-line .bg-runview [aria-checked="true"]')?.dataset.view ?? null,
+          headBtns: p.querySelectorAll('.over-head .btn').length, side: !!p.querySelector('.over-side'), cafe: !!p.querySelector('.bg-office-wrap:not([hidden])'),
+          order: [...p.querySelectorAll('.bg-run')].map((x) => x.dataset.kind).join(' '),
+          wf: wf && { title: wf.querySelector('.bg-run-h b')?.textContent, meta: wf.querySelector('.bg-run-h small')?.textContent, phase: wf.querySelector('.bg-run-phase')?.textContent, rows: [...wf.querySelectorAll('.bg-run-a')].map((r) => r.querySelector('.who').textContent + ':' + r.querySelector('.say').textContent).join(' | '), stop: !!wf.querySelector('[data-act="stop"]'), open: wf.querySelector('[data-act="open"]')?.getAttribute('aria-label') ?? '' },
+          ag: ag && { meta: ag.querySelector('.bg-run-h small')?.textContent, rows: ag.querySelectorAll('.bg-run-a').length, stop: !!ag.querySelector('[data-act="stop"]'), open: !!ag.querySelector('[data-act="open"]') },
+          sh: sh && { title: sh.querySelector('.bg-run-h b')?.textContent, rows: sh.querySelectorAll('.bg-run-a').length, stop: !!sh.querySelector('[data-act="stop"]'), open: !!sh.querySelector('[data-act="open"]') },
+          sids: new Set([...p.querySelectorAll('.bg-run')].map((x) => x.dataset.sid)).size,
+          entry: !!document.querySelector('.sidebar .sb-nav [data-id="automation"].on') }; })()`);
+        check('the pill opens 自动化 › 运行中 on 列表 (no column of its own, nothing to stop in the head): a group per thing the conversation runs — the sub-agent, the workflow with its three agents and its phase, the command — each with 停止 and 打开对话', listUp && list.fam === '自动化' && /3 个在跑/.test(list.sub) && list.seg === 'list' && !list.headBtns && !list.side && !list.cafe && list.order === 'agent workflow shell' && !!list.wf && list.wf.title === 'smoke-flow' && /工作流/.test(list.wf.meta ?? '') && list.wf.phase === '一 1/2' && list.wf.rows === 'alpha:改了 a.ts | beta:完成 | gamma:排队中' && list.wf.stop && /打开对话/.test(list.wf.open) && !!list.ag && /子代理 Explore/.test(list.ag.meta ?? '') && list.ag.rows === 1 && list.ag.stop && list.ag.open && !!list.sh && list.sh.title === 'npm run dev' && list.sh.rows === 0 && list.sh.stop && list.sh.open && list.sids === 1 && list.entry, JSON.stringify(list));
         const bgErr = await noBoundary('.bg-page');
         check('后台 without error boundary', !bgErr, bgErr);
         await shot('background-page');
-        // ---- stage A of 2026-10-24 (spec desktop-parity): the office wheel (A3, the cafe's before 2026-11-05) — here, while the page is up
+        // a workflow's graph and its 动态 fold out under it (the node graph is its own chunk, spec D2)
+        await click('.bg-page .bg-run[data-kind="workflow"] [data-act="graph"]');
+        await waitFor(`document.querySelectorAll('.bg-page .bg-run[data-kind="workflow"] .bg-graph .ng-card').length >= 7`, 8000);
+        await sleep(400);
+        const graph = await js(`(() => { const g = document.querySelector('.bg-page .bg-run[data-kind="workflow"]'); return { open: g.querySelector('[data-act="graph"]')?.getAttribute('aria-expanded'), nodes: g.querySelectorAll('.bg-graph .ng-card').length, edges: g.querySelectorAll('.bg-graph .ng-edge').length, strong: g.querySelector('.bg-graph .ng-edge[data-edge="wf|wf1|p1>wf1|w1"]')?.dataset.style, feed: g.querySelector('.bg-feed')?.textContent ?? '' }; })()`);
+        check('关系图和动态: the workflow\'s graph (main → workflow → two phases → three agents, the one at work on a strong line) and its 动态 fold out under it', graph.open === 'true' && graph.nodes === 7 && graph.edges === 6 && graph.strong === 'strong' && /alpha/.test(graph.feed), JSON.stringify(graph));
+        await shot('background-graph');
+        // spec D2: an agent card in the graph opens that agent's conversation beside the list (pointerdown / up, no drag)
+        await js(`(() => { const c = document.querySelector('.bg-page .bg-graph .ng-card[data-node="wf1|w1"]'); const r = c.getBoundingClientRect(); const o = { bubbles: true, button: 0, pointerId: 7, clientX: r.left + 10, clientY: r.top + 10 }; c.dispatchEvent(new PointerEvent('pointerdown', o)); c.dispatchEvent(new PointerEvent('pointerup', o)); })()`);
+        const cardDrawer = await waitFor(`/alpha/.test(document.querySelector('.bg-page .bg-drawer .bg-drawer-title .n')?.textContent ?? '')`, 4000);
+        check('关系图: an agent card opens its conversation in the drawer', cardDrawer);
+        await js(`document.querySelector('.bg-page').focus()`);
+        await key('Escape');
+        await waitFor(`!document.querySelector('.bg-page .bg-drawer')`, 3000);
+        await click('.bg-page .bg-run[data-kind="workflow"] [data-act="graph"]');
+        // an agent's row does too, beside the list (the list narrows, nothing covered)
+        await click('.bg-page .bg-run[data-kind="agent"] .bg-run-a');
+        const rowDrawer = await waitFor(`/查一下/.test(document.querySelector('.bg-page .bg-drawer .bg-drawer-title .n')?.textContent ?? '')`, 4000);
+        const rowBeside = rowDrawer && await js(`(() => { const d = document.querySelector('.bg-page .bg-drawer').getBoundingClientRect(); const l = document.querySelector('.bg-page .bg-live-main').getBoundingClientRect(); return d.left >= l.right - 1; })()`);
+        check('an agent\'s row opens its own conversation beside the list', rowDrawer && rowBeside, JSON.stringify({ rowDrawer, rowBeside }));
+        await shot('background-drawer-list');
+        await js(`document.querySelector('.bg-page').focus()`);
+        await key('Escape');
+        await waitFor(`!document.querySelector('.bg-page .bg-drawer')`, 3000);
+        // 网吧: the other way to look at the same snapshot, remembered in meta.json
+        await click('.bg-page .bg-runview [data-view="cafe"]');
+        const up = await waitFor(`!!document.querySelector('.bg-page .bg-office-wrap:not([hidden]) .office-canvas') && document.querySelectorAll('.bg-page .office-bot').length >= 6 && (window.__cwCafe?.frames ?? 0) > 2`, 15000);
+        await sleep(600);
+        const savedCafe = await metaViewIs('cafe');
+        // (the cafe was mounted earlier in this run — the phone check showed it — and then it follows the pill's
+        // conversation into its zone, Office.tsx `follow`; the floor tags are the whole cafe's: back to it)
+        await js(`(() => { const b = document.querySelector('.bg-page .office-bread button'); if (b && !b.classList.contains('on')) b.click(); })()`);
+        await sleep(500);
+        const page = await js(`(() => { const p = document.querySelector('.bg-page'); const body = p.querySelector('.bg-body'); const br = body.getBoundingClientRect(); const pad = parseFloat(getComputedStyle(body).paddingBottom) || 0; const wr = p.querySelector('.bg-office-wrap').getBoundingClientRect(); return { fill: Math.abs(wr.bottom - (br.bottom - pad)) <= 2 && body.scrollHeight <= body.clientHeight + 1, list: !!p.querySelector('.bg-live-main:not([hidden])'), seg: p.querySelector('.fam-line .bg-runview [aria-checked="true"]')?.dataset.view ?? null, chars: p.querySelectorAll('.office-bot').length, admin: !!p.querySelector('.office-bot[aria-label^="前台网管"]'), floor: p.querySelector('.office-ftag')?.textContent ?? '', zoneTag: p.querySelector('.office-ftag[data-anchor="zone:0"]')?.getAttribute('aria-label') ?? '', tools: !!p.querySelector('.office-tools') && !!p.querySelector('.office-bottom'), lit: (() => { const c = p.querySelector('.office-canvas'); const t = document.createElement('canvas'); t.width = c.width; t.height = c.height; const g = t.getContext('2d'); g.drawImage(c, 0, 0); const d = g.getImageData(0, 0, t.width, t.height).data; const r0 = d[0], g0 = d[1], b0 = d[2]; let n = 0, k = 0; for (let i = 0; i < d.length; i += 4 * 97) { k++; if (Math.abs(d[i] - r0) + Math.abs(d[i + 1] - g0) + Math.abs(d[i + 2] - b0) > 40) n++; } return Math.round((n / k) * 100); })() }; })()`);
+        check('列表 / 网吧 → 网吧: the 3D cafe of the same snapshot fills the page\'s body (A区 with its 网管 and five people, the picture drawn, its own tools over it) — and meta.json remembers it', up && savedCafe === 'cafe' && page.fill && !page.list && page.seg === 'cafe' && page.chars >= 6 && page.admin && /^A/.test(page.floor) && /^A区 · /.test(page.zoneTag) && page.tools && page.lit > 3, JSON.stringify({ savedCafe, page }));
+        await shot('background-cafe');
+        // ---- stage A of 2026-10-24 (spec desktop-parity): the cafe's wheel (A3) — the cafe fills the page now (redesign
+        // 2026-11), nothing around it scrolls: the wheel over it zooms it (each wheel taken, the zoom changes), Shift +
+        // wheel is left to the page
         phase = 'parity-a';
         {
-          // a shorter window gives the page room to scroll; it starts a little down, so a wheel either way would move it
-          win.setContentSize(1360, 700);
-          await sleep(500);
-          const bodySel = `'.bg-page .over-body.bg-body'`;
-          const room = await js(`(() => { const p = document.querySelector(${bodySel}); if (!p) return -1; p.scrollTop = 40; return p.scrollHeight - p.clientHeight; })()`);
-          await sleep(200);
-          // every wheel event the page sees, after the cafe had its say (a passive listener on window: bubble phase)
           await js(`(() => { window.__smokeWheel = []; window.__smokeWheelOn = (e) => window.__smokeWheel.push({ prevented: e.defaultPrevented, shift: e.shiftKey, dy: e.deltaY, cafe: !!e.target.closest?.('.office-canvas') }); addEventListener('wheel', window.__smokeWheelOn, { passive: true }); })()`);
           // a point on the canvas itself (not on a guest's button over it), nearest its middle and on screen
-          const pos = () => js(`(() => { const c = document.querySelector('.bg-page .office-canvas'); const b = c.getBoundingClientRect(); let best = null; for (let i = 1; i < 12; i++) for (let j = 1; j < 8; j++) { const x = Math.round(b.left + (b.width * i) / 12), y = Math.round(b.top + (b.height * j) / 8); if (y < 0 || y > innerHeight - 4 || document.elementFromPoint(x, y) !== c) continue; const d = Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2)); if (!best || d < best.d) best = { x, y, d: Math.round(d) }; } const s = document.querySelector(${bodySel}).getBoundingClientRect(); let other = null; for (let y = Math.max(s.top, 0) + 10; !other && y < Math.min(s.bottom, innerHeight) - 4; y += 24) for (const x of [s.left + 12, s.left + s.width / 2, s.right - 30]) { const el = document.elementFromPoint(Math.round(x), Math.round(y)); if (el && document.querySelector(${bodySel}).contains(el) && !el.closest('.office, .cafe-lib')) { other = { x: Math.round(x), y: Math.round(y), el: el.className?.baseVal ?? el.className }; break; } } return { ...(best || { x: -1, y: -1 }), below: other }; })()`);
-          const scrollTop = () => js(`document.querySelector(${bodySel}).scrollTop`);
+          const p = await js(`(() => { const c = document.querySelector('.bg-page .office-canvas'); const b = c.getBoundingClientRect(); let best = null; for (let i = 1; i < 12; i++) for (let j = 1; j < 8; j++) { const x = Math.round(b.left + (b.width * i) / 12), y = Math.round(b.top + (b.height * j) / 8); if (y < 0 || y > innerHeight - 4 || document.elementFromPoint(x, y) !== c) continue; const d = Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2)); if (!best || d < best.d) best = { x, y, d: Math.round(d) }; } return best || { x: -1, y: -1 }; })()`);
+          const zoom = () => js('window.__cwCafe ? window.__cwCafe.zoom() : null');
+          const bodyTop = () => js(`document.querySelector('.bg-page .over-body.bg-body').scrollTop`);
           const wheelAt = async (x, y, deltaY, modifiers) => { wc.sendInputEvent({ type: 'mouseMove', x, y }); wc.sendInputEvent({ type: 'mouseWheel', x, y, deltaX: 0, deltaY, ...(modifiers ? { modifiers } : {}) }); await sleep(120); };
-          const p = await pos();
           await sleep(200);
-          const before = await scrollTop();
-          // in and out by turns: the fitted view sits a step or two above the zoom floor, where the page would scroll
-          for (const dy of [120, -120, 120, -120]) await wheelAt(p.x, p.y, dy);
+          // which way is in: one wheel first (the page reports its sign), then two the zooming-in way (the fitted view
+          // sits a step or two above the floor — out could stop at it)
+          await wheelAt(p.x, p.y, 120);
+          await sleep(200);
+          const probe = await js('window.__smokeWheel.splice(0)');
+          const inward = probe[0] && probe[0].dy > 0 ? -120 : 120;
+          const z0 = await zoom(), t0 = await bodyTop();
+          for (let i = 0; i < 2; i++) await wheelAt(p.x, p.y, inward);
           await sleep(300);
-          const after = await scrollTop();
+          const z1 = await zoom(), t1 = await bodyTop();
           const plain = await js('window.__smokeWheel.splice(0)');
-          check('A3: the wheel over the cafe zooms it (each wheel taken by the cafe) and the page stays where it was', room >= 40 && p.x > 0 && before === after && plain.length >= 4 && plain.every((w) => w.cafe && w.prevented), JSON.stringify({ room, at: p, before, after, wheels: plain }));
-          // Shift + wheel: the cafe leaves it alone (no zoom, not prevented). Chromium on Windows turns it into a
-          // sideways scroll, so the page does not move down either — that is the platform, not asserted
+          check('A3: the wheel over the cafe zooms it (each wheel taken by the cafe, the zoom changed) and the page stays where it was', p.x > 0 && plain.length >= 2 && plain.every((w) => w.cafe && w.prevented) && typeof z0 === 'number' && typeof z1 === 'number' && Math.abs(z1 - z0) > 0.01 && t0 === t1, JSON.stringify({ at: p, probe, z0, z1, t0, t1, wheels: plain }));
+          // Shift + wheel: the cafe leaves it alone (no zoom, not prevented)
           for (const dy of [-120, 120]) await wheelAt(p.x, p.y, dy, ['shift']);
           await sleep(300);
           const shifted = await js('window.__smokeWheel.splice(0)');
           check('A3: Shift + wheel over the cafe is not taken by it (no zoom, not prevented)', shifted.length >= 2 && shifted.every((w) => w.cafe && w.shift && !w.prevented), JSON.stringify(shifted));
-          // the control: the same wheel on the page outside the cafe scrolls it (so the input above did reach the page)
-          let control = null;
-          if (p.below) {
-            const t0 = await scrollTop();
-            for (const dy of [120, -120]) {
-              await wheelAt(p.below.x, p.below.y, dy);
-              await sleep(400);
-              control = { from: t0, to: await scrollTop(), wheels: [...(control?.wheels ?? []), ...(await js('window.__smokeWheel.splice(0)'))] };
-              if (control.to !== t0) break;
-            }
-          }
-          check('A3 (control): the same wheel on the page outside the cafe scrolls it', p.x > 0 && !!control && control.to !== control.from && control.wheels.every((w) => !w.cafe && !w.prevented), JSON.stringify({ control, at: p }));
-          await js(`(() => { removeEventListener('wheel', window.__smokeWheelOn, { passive: true }); delete window.__smokeWheel; delete window.__smokeWheelOn; document.querySelector('.bg-page .office-canvas').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); document.querySelector(${bodySel}).scrollTop = 0; })()`);
-          win.setContentSize(1360, 860);
-          await sleep(500);
+          await js(`(() => { removeEventListener('wheel', window.__smokeWheelOn, { passive: true }); delete window.__smokeWheel; delete window.__smokeWheelOn; document.querySelector('.bg-page .office-canvas').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); })()`);
+          await sleep(300);
         }
         phase = 'background';
-        // spec D2: an agent card in the 指挥台 opens that agent's conversation beside the board (pointerdown / up, no drag)
-        await js(`(() => { const c = document.querySelector('.bg-page .bg-graph .ng-card[data-node="wf1|w1"]'); const r = c.getBoundingClientRect(); const o = { bubbles: true, button: 0, pointerId: 7, clientX: r.left + 10, clientY: r.top + 10 }; c.dispatchEvent(new PointerEvent('pointerdown', o)); c.dispatchEvent(new PointerEvent('pointerup', o)); })()`);
-        const cardDrawer = await waitFor(`/alpha/.test(document.querySelector('.bg-page .bg-drawer .bg-drawer-title .n')?.textContent ?? '')`, 4000);
-        check('指挥台: an agent card opens its conversation in the drawer', cardDrawer);
-        await js(`document.querySelector('.bg-page').focus()`);
-        await key('Escape');
-        await waitFor(`!document.querySelector('.bg-page .bg-drawer')`, 3000);
         await js(`document.querySelector('.bg-page .office-bot[aria-label^="alpha"]').click()`);
         const botCard = await waitFor(`!!document.querySelector('.bg-page .office-card[aria-label="alpha"]') && /改了 a.ts/.test(document.querySelector('.bg-page .office-card').textContent)`, 4000);
         check('a customer in the cafe opens its card (status, task, what it did last)', botCard);
         await shot('office-bot-card');
         await js(`document.querySelector('.bg-page .office-card .oc-acts .btn.primary').click()`);
         const drawer = await waitFor(`/alpha/.test(document.querySelector('.bg-page .bg-drawer .bg-drawer-title .n')?.textContent ?? '')`, 4000);
-        check('… and its 打开对话 opens its own conversation beside the board', drawer);
+        const cafeBeside = drawer && await js(`(() => { const d = document.querySelector('.bg-page .bg-drawer').getBoundingClientRect(); const c = document.querySelector('.bg-page .bg-office-wrap').getBoundingClientRect(); return d.left >= c.right - 1 && c.width > 300; })()`);
+        check('… and its 打开对话 opens its own conversation beside the cafe (the cafe narrows, nothing covered)', drawer && cafeBeside, JSON.stringify({ drawer, cafeBeside }));
         await shot('background-drawer');
         await click('.bg-page .office-tools .office-lib');
         const lib = (await waitFor(`!!document.querySelector('.cafe-lib')`, 3000)) && await js(`[...document.querySelectorAll('.cafe-lib .cafe-card')].map((c) => c.dataset.character).join(',')`);
@@ -3427,6 +3541,18 @@ function driver() {
         await js(`document.querySelector('.bg-page').focus()`);
         await key('Escape');
         const drawerGone = await waitFor(`!document.querySelector('.bg-page .bg-drawer') && !document.querySelector('.bg-page').hidden`, 3000);
+        // back to 列表: remembered too
+        await click('.bg-page .bg-runview [data-view="list"]');
+        const backToList = await waitFor(`!!document.querySelector('.bg-page .bg-live-main:not([hidden]) .bg-run') && !!document.querySelector('.bg-page .bg-office-wrap[hidden]')`, 3000);
+        const savedList = await metaViewIs('list');
+        check('列表 / 网吧 → 列表: the list again (the cafe kept, hidden), meta.json says 列表', backToList && savedList === 'list', JSON.stringify({ backToList, savedList }));
+        // a group's 打开对话: the conversation, the page out of the way
+        await click('.bg-page .bg-run[data-kind="shell"] [data-act="open"]');
+        const opened = await waitFor(`document.querySelector('.bg-page').hidden === true && !!document.querySelector('.pane.focused .composer textarea')`, 4000);
+        check('a group\'s 打开对话 opens its conversation (the page closes)', opened);
+        await click('.pane.focused .composer .bg-pill');
+        await waitFor(`!document.querySelector('.bg-page').hidden`, 3000);
+        await js(`document.querySelector('.bg-page').focus()`);
         await key('Escape');
         const pageGone = await waitFor(`document.querySelector('.bg-page').hidden === true && !document.querySelector('.sidebar .sb-nav [data-id="automation"].on')`, 3000);
         check('Esc closes the drawer first, then the page', drawerGone && pageGone, JSON.stringify({ drawerGone, pageGone }));
@@ -3443,16 +3569,32 @@ function driver() {
         const pillGone = await waitFor(`!document.querySelector('.pane.focused .composer .bg-pill')`, 3000);
         check('nothing running: no pill', pillGone);
         // ---- 跑过的 (2026-11-19): every conversation's finished work, read from disk (the run the seed put beside the
-        // second conversation) — the empty cafe's 刚跑完的, the list by day, the run opened beside it (its graph, its
-        // replay by the run's own times), 在跑 again
+        // second conversation) — the empty list's 刚跑完的, the list by day, the run opened beside it (its graph, its
+        // replay by the run's own times), replayed in the cafe, 在跑 again
         phase = 'background-history';
         await js(`window.__cwBackground.open()`);
-        const recent = await waitFor(`!document.querySelector('.bg-page').hidden && [...document.querySelectorAll('.bg-page .hx-recent .rr')].some((r) => /smoke-run/.test(r.textContent))`, 10000);
-        check('跑过的: the empty cafe lists what just finished (刚跑完的)', recent, await js(`document.querySelector('.bg-page .hx-recent')?.textContent ?? '(no list)'`));
+        const recent = await waitFor(`!document.querySelector('.bg-page').hidden && [...document.querySelectorAll('.bg-page .bg-live-main:not([hidden]) .hx-recent .rr')].some((r) => /smoke-run/.test(r.textContent))`, 10000);
+        check('跑过的: the empty list lists what just finished (刚跑完的)', recent, await js(`document.querySelector('.bg-page .hx-recent')?.textContent ?? '(no list)'`));
+        await shot('background-empty-list');
+        // the empty cafe's sentence: one line when it fits, else even lines — never 「里。」 alone on the second
+        const sentence = `(() => { const t = document.querySelector('.bg-page .office-empty .es-text'); if (!t || !t.getClientRects().length) return null; const r = document.createRange(); r.selectNodeContents(t); const lines = []; for (const q of r.getClientRects()) { const l = lines.find((x) => Math.abs(x.top - q.top) < 4); if (l) l.w += q.width; else lines.push({ top: q.top, w: q.width }); } lines.sort((a, b) => a.top - b.top); return { n: lines.length, first: Math.round(lines[0]?.w ?? 0), last: Math.round(lines[lines.length - 1]?.w ?? 0) }; })()`;
+        await click('.bg-page .bg-runview [data-view="cafe"]');
+        await waitFor(`!!document.querySelector('.bg-page .office-empty .es-text')`, 8000);
+        await sleep(400);
+        const wide = await js(sentence);
+        await shot('background-empty-cafe');
+        // a narrower cafe (the card held to 440px, as in a window with the sidebar and the right panel open): it wraps
+        await js(`document.querySelector('.bg-page .office-empty').style.maxWidth = '440px'`);
+        await sleep(300);
+        const narrow = await js(sentence);
+        await js(`document.querySelector('.bg-page .office-empty').style.maxWidth = ''`);
+        check('the empty cafe\'s sentence: one line where it fits, even lines where it wraps (not 「里。」 alone)', !!wide && !!narrow && wide.n === 1 && narrow.n >= 2 && narrow.last >= narrow.first * 0.4, JSON.stringify({ wide, narrow }));
+        await click('.bg-page .bg-runview [data-view="list"]');
+        await waitFor(`!!document.querySelector('.bg-page .bg-live-main:not([hidden])')`, 3000);
         await click('.bg-page .bg-views [data-view="history"]');
         const listed = await waitFor(`!!document.querySelector('.bg-page .hx-body:not([hidden]) .hx-row[data-kind="workflow"].on') && document.querySelectorAll('.bg-page .hx-detail .bg-graph .ng-card').length >= 6`, 10000);
-        const hx = await js(`(() => { const p = document.querySelector('.bg-page'); const row = p.querySelector('.hx-row[data-kind="workflow"]'); return { live: p.querySelector('.over-body.bg-body')?.hidden, day: p.querySelector('.hx-day')?.textContent, title: row?.querySelector('b')?.textContent, chip: row?.querySelector('.hx-st')?.textContent, head: p.querySelector('.hx-detail .hx-dh b')?.textContent, stats: p.querySelector('.hx-detail .hx-stats')?.textContent ?? '', cards: p.querySelectorAll('.hx-detail .bg-graph .ng-card').length, failed: p.querySelectorAll('.hx-detail .bg-graph .ng-card[data-state="failed"]').length }; })()`);
-        check('跑过的: the list by day (今天), the run with its title and 1 个失败, opened beside it (how long, its agents, the failed one in its graph)', listed && hx.live === true && hx.day === '今天' && hx.title === 'smoke-run' && hx.chip === '1 个失败' && hx.head === 'smoke-run' && /2:30/.test(hx.stats) && /3 个子代理/.test(hx.stats) && hx.failed >= 1, JSON.stringify(hx));
+        const hx = await js(`(() => { const p = document.querySelector('.bg-page'); const row = p.querySelector('.hx-row[data-kind="workflow"]'); const body = p.querySelector('.hx-body').getBoundingClientRect(); const tabs = p.querySelector('.fam-tabs').getBoundingClientRect(); return { live: p.querySelector('.over-body.bg-body')?.hidden, side: !!p.querySelector('.over-side'), seg: !!p.querySelector('.bg-runview'), edge: Math.round(body.left - tabs.left), day: p.querySelector('.hx-day')?.textContent, title: row?.querySelector('b')?.textContent, chip: row?.querySelector('.hx-st')?.textContent, head: p.querySelector('.hx-detail .hx-dh b')?.textContent, stats: p.querySelector('.hx-detail .hx-stats')?.textContent ?? '', cards: p.querySelectorAll('.hx-detail .bg-graph .ng-card').length, failed: p.querySelectorAll('.hx-detail .bg-graph .ng-card[data-state="failed"]').length }; })()`);
+        check('跑过的: the whole width (no column of what runs beside it, no 列表 / 网吧), the list by day (今天), the run with its title and 1 个失败, opened beside it (how long, its agents, the failed one in its graph)', listed && hx.live === true && !hx.side && !hx.seg && Math.abs(hx.edge) <= 32 && hx.day === '今天' && hx.title === 'smoke-run' && hx.chip === '1 个失败' && hx.head === 'smoke-run' && /2:30/.test(hx.stats) && /3 个子代理/.test(hx.stats) && hx.failed >= 1, JSON.stringify(hx));
         await click('.bg-page .hx-detail .hx-play');
         await js(`window.__cwBackground.replay.pause()`);
         const moment = async (ms) => { await js(`window.__cwBackground.replay.seek(${ms})`); await sleep(400); return js(`(() => { const n = (s) => document.querySelectorAll('.bg-page .hx-detail .bg-graph .ng-card[data-state="' + s + '"]').length; return { time: document.querySelector('.bg-page .hx-detail .hx-time')?.textContent, queued: n('queued'), running: n('running'), done: n('done'), failed: n('failed') }; })()`); };
@@ -3464,7 +3606,16 @@ function driver() {
         await js(`window.__cwBackground.replay.play()`);
         await click('.bg-page .bg-views [data-view="live"]');
         const back = await waitFor(`!document.querySelector('.bg-page .over-body.bg-body').hidden && document.querySelector('.bg-page .hx-body').hidden && !window.__cwBackground.replay.state().playing`, 3000);
-        check('在跑 again: the live board back, 跑过的 kept but hidden, its replay paused', back);
+        check('在跑 again: the list back, 跑过的 kept but hidden, its replay paused', back);
+        // 在网吧里回放 shows the cafe while the run plays, whatever 列表 / 网吧 says; 结束回放 → the list again
+        await click('.bg-page .bg-views [data-view="history"]');
+        await waitFor(`!!document.querySelector('.bg-page .hx-detail .hx-dh .btn')`, 5000);
+        await js(`[...document.querySelectorAll('.bg-page .hx-detail .hx-dh .btn')].find((b) => /网吧/.test(b.textContent))?.click()`);
+        const replayCafe = await waitFor(`!document.querySelector('.bg-page .over-body.bg-body').hidden && !!document.querySelector('.bg-page .bg-office-wrap:not([hidden]) .office-replay') && document.querySelector('.bg-page .bg-runview [aria-checked="true"]')?.dataset.view === 'cafe'`, 8000);
+        const keptList = await js(`window.__store.getState().settings['background.view']`);
+        await js(`[...document.querySelectorAll('.bg-page .office-replay .btn')].find((b) => /结束回放/.test(b.textContent))?.click()`);
+        const replayEnded = await waitFor(`!!document.querySelector('.bg-page .bg-live-main:not([hidden])') && !document.querySelector('.bg-page .office-replay')`, 4000);
+        check('在网吧里回放: the cafe while the run plays (列表 / 网吧 on 网吧, the remembered 列表 untouched); 结束回放 → the list again', replayCafe && keptList === 'list' && replayEnded, JSON.stringify({ replayCafe, keptList, replayEnded }));
         await js(`document.querySelector('.bg-page').focus()`);
         await key('Escape');
         check('Esc closes 后台', await waitFor(`document.querySelector('.bg-page').hidden === true`, 3000));

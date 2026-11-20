@@ -147,6 +147,7 @@
 /* a phone (the phone check's full rules, redesign 2026-11 automation piece): every control of 跑过的 and of 刚跑完的 a
    44px target — the chips one row that scrolls sideways, each pill with a ring to 44; rows and buttons 44 tall */
 .app.mobile .hx-search { height: 44px; padding: 0 12px; }
+.app.mobile .hx-search input { align-self: stretch; }
 .app.mobile .hx-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 6px; padding: 4px 0; }
 .app.mobile .hx-chips::-webkit-scrollbar { display: none; }
 .app.mobile .hx-chips button { position: relative; flex: none; height: 36px; padding: 0 14px; font-size: var(--fs-sm); }

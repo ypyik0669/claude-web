@@ -14,7 +14,7 @@ import { tr } from '@/i18n';
 
 /** `task`: a finished run's (跑过的, or the cafe replaying one) — not in the live snapshot; `from: 'history'` is the
  *  跑过的 page's own drawer (the live list and cafe leave it alone). */
-export interface BgDrawer { sessionId: string; taskId: string; agentKey: string; runId?: string; task?: BgTask; from?: 'history' }
+export interface BgDrawer { sessionId: string; taskId: string; agentKey: string; task?: BgTask; from?: 'history' }
 
 /** 在跑 (every conversation's work now: the list or the cafe) or 跑过的 (every conversation's finished work). */
 export type BgView = 'live' | 'history';
