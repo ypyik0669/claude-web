@@ -85,6 +85,61 @@ WebSocket 消息以前每秒只消化 32 条（server 发 211 条，积压到任
 本机代理的 Node http server 默认 `keepAliveTimeout` 5 秒，CLI 复用到被关掉的 socket 会报「Request timed out」/「Connection
 error」然后卡一分钟——`scripts/lib/demo.cjs` 和 perf-busy 的假上游都设了 10 分钟。
 
+## 几个对话一起跑 + 3D 网吧（2026-11-20 用户：「并发几个会话 + 长任务 + 开着 3D 网吧会不会很卡」）
+
+perf-busy 加了 `--parallel N`（N 个对话同时跑同一个假任务）、`--cafe page`（运行中页面用网吧看法）、`--panel cafe`（网吧在右侧面板）、
+`--cafe-guests`（每个在跑的对话再塞一个三个代理的工作流 + 一个后台子代理，和 ui-smoke 一样经 `__cwBackground.inject`，每 2 秒补一次；
+网吧只画「有后台任务的对话」，不塞的话大厅是空的、几乎不画）。四个对话同时跑时找到的：
+- **网吧的循环从不停**：`CafeScene.start()` 每一帧都再要一帧，不画也要、看不见（页面关了，`visible` 假）也要。页面打开过一次就一直挂着，
+  所以**开过一次网吧以后整个窗口每秒 60 次整帧**：每帧样式、页面上所有 CSS 动画在主线程走一步（trace 里 `.sgw .spin`、
+  `.dot.running` 每帧一次「StyleRecalc Animation」），图层树 commit 一次（3 秒里 650–950 ms，主线程三成）。本来只做 transform /
+  opacity 的动画在合成线程上跑、不碰主线程，是这个 rAF 把它们拖回了主线程。现在只在要的时候要帧：真在动每帧、只有环境动 24 帧
+  （`setTimeout` 到下一帧的时间）、全静止每 250 ms 看一眼（客人自己的计时器要走：`v.timer -= dt`，静止后那一帧 dt 给真实时间，上限
+  0.5 s）、看不见就停；`dirty` 和 `visible` 改成 setter，一改就 `wake()`，`visibilitychange` 也叫醒。
+- **页面盖住的对话照样每帧画**：运行中 / 网吧页面盖在对话上面时，下面的 `ChatView` 还在为每个流式片段重画、Composer 还在量尺寸。
+  `ChatTile` 给 `FramesSeenContext`（`store/paneContext.ts`）：后面的标签页、被页面盖住时为假，`useScopedSessionLive` 这时像
+  `useScopedSession` 一样只跟整条消息走，重新看得见的那一刻拿最新的。Bot 页面里嵌的对话（不在格子里）照常实时。
+  被盖住的格子里的 CSS 动画也暂停：`.pane-layer[inert] * { animation-play-state: paused }`（Workbench 在有页面时把格子层设成 inert）。
+- **Composer 下面那一行每次渲染都量一遍**：`ComposerBar` 的 `useLayoutEffect(() => measure())` 没有依赖，中间的数字每秒变好几次，
+  每次读所有 chip 的 `offsetWidth` = 整页强制布局（我们自己代码里最忙的函数）。改成 ResizeObserver 看行、组、每个 chip、模型名
+  （回调在浏览器自己的布局之后，不强制），右边那组的文字变化（模型名被截短时盒子不变）用 MutationObserver + rAF 补一次。
+- **`Icon` 不 memo**：每个父组件重画它就跟着重画，跑任务时每秒 1260 次，一直是同一个 svg。`memo(IconSvg)`。
+- **过程字形（themes/ticker.ts）给看不见的元素也写**：每秒 30 次 `innerHTML`。现在 IntersectionObserver 看每个字形（没盒子 / 滚出视野 =
+  不写），在被页面盖住的格子层里（`.pane-layer` 是 inert）也不写；结束动画照样按时交回。
+- **server：`system/thinking_tokens`**（官方二进制思考时每个对话每秒 5–11 条）：四个对话时每秒 116 条，占所有消息的四成，什么也不画，
+  前端只拿它的时间给卡住检测。`SessionRunner.ingest` 现在每个对话每秒放一条（`THINKING_TOKENS_EVERY_MS`），也不再进回放历史
+  （5000 条的历史几分钟就被它挤满，一轮里真正的消息被挤掉）。
+- **网吧叠层每次渲染都量一遍**：`Office` 的 `useLayoutEffect(() => bindOverlays())` 没有依赖，`bindOverlays` 读每个区签 / 人头按钮的
+  `offsetWidth` = React 刚改完 DOM 就强制布局（D 场景 40 秒里 651 ms）。现在尺寸来自 ResizeObserver（`overlaySize`，border-box），
+  `bindOverlays` 只 querySelectorAll + 比较；叠层集合没变（同样的元素、同样的 `data-anchor`）就直接返回、不要帧。新叠层第一次用后备尺寸
+  （120×24）摆，尺寸回来再摆一次。
+- **网吧本身是渲染进程的三成**（D 场景 40 秒里 `tick` 13 s：主绘制 8.4 s、阴影图 2.5 s、`setProgram` 6.8 s 含 uniform 上传），
+  每帧的成本就是 draw call 数（一个小章鱼 18 个网格）× 帧数。所以减帧：人在动（打字、走路）限 30 帧、镜头照样每帧；阴影图只在人动了 /
+  大厅变了才重画（转镜头不画）；`setZones` 没变化不要帧（以前每个快照逼一帧）；眼睛不投影；小章鱼同材质、不相对动的部分合成一个几何
+  （六条腿、两只眼、配饰的几块，见「后台 · 网吧」）。perf-busy 报告多了「3D cafe draw calls (last frame)」（D 场景合之前 771）。
+
+结果（同一台机器、按工作量算，前 → 后）：4 个对话在跑 + 右侧网吧、一边打字：渲染进程每步 1250 → 623 ms，服务端每步 627 → 299 ms，
+服务端事件循环最长卡顿 2313 → 61 ms，输入到下一帧最长 319 → 121 ms。只开网吧页面：长任务 9.9 s → 0.16 s，GPU 129% → 27%。网吧页面 + 代理
+在干活：长任务 26.3 s → 7.4 s，GPU 157% → 82%。内存（4 个对话）：引擎（claude.exe）约 1.55 GB、占六成五，我们的 server 约 130 MB，
+渲染 + GPU 进程约 0.9 GB。
+
+还没动的（D 场景剩下的大头）：
+- （已修）three.js 主绘制里每帧 20 次 `getProgram`：只有一个材质——包间 / 窗户的玻璃，透明 + 双面，three 把它画两遍（先背面再正面），
+  每遍都 `needsUpdate`。`glass.forceSinglePass = true`（平面玻璃两面是同一片像素，看起来一样）。查法留着：给场景里每个材质包一层
+  `customProgramCacheKey` 数调用次数（`getParameters` 每次都调它），perf-busy 用 `CW_PERF_PAGE_JS` 在窗口结束时跑这段，
+  看哪些材质每帧都被问、`version` 涨了多少。
+- 小章鱼还能再少：头 + 眼睛 + 腮红 + 配饰合成一个顶点色网格能到 5–6 个 draw call，但高光是不受光的、腮红是半透明的，合了会变样，
+  要一起看效果。
+- 在跑的那一轮的步骤行（Fold / StepRow / ToolHead / Thinking）每次提交约 31 行跟着重画，越长越多；reducer 原地改 item，直接 memo 不安全。
+- i18n 的 `fmt` 每 40 秒 0.3–0.5 s。
+
+量的时候注意：
+- 这台机器上一直有个 `cmd.exe`（PID 17528，11-19 10:27 起，26 个线程、路径读不到、父进程没了）占 5–8 个核，空闲时整机 80–90%
+  忙，每轮量的数字都偏高、差别也大（假上游跑得快慢不一样：同样 40 秒，一轮 40 步一轮 63 步）。比较时按「每个流式片段 / 每一步」算，
+  不要直接比每秒。
+- 离屏（默认）和真窗口（`--show`）里，`.spin` / `.dot.running` 的每帧样式重算一样都在，不是离屏造成的。
+- `CW_PERF_TRACE=1` 录的 trace 用 `node scripts/perf-trace-sum.cjs <trace-running.json>` 看（按名字 / 绘制 / 失效原因汇总）；两轮对比用 `node scripts/perf-compare.cjs <前> <后>`。
+
 ## 对话里的代码块直接运行（2026-10-20，阶段 E）
 
 - `chat/CodeBlock.tsx` 的 `run` prop 只由对话正文提供（`Markdown` 里 `CodeRunCtx` 从 `ChatView` 的 `TurnView` / `ItemList`

@@ -18,6 +18,7 @@
  * same thing. If Lucide has nothing for the concept, draw it in `HAND`: inside 2..22, round corners, joins and caps,
  * two strokes rather than a busy outline. `icons.test.ts` fails on a map that was edited without regenerating.
  */
+import { memo } from 'react';
 import { GENERATED } from './icons.generated';
 
 type P = string | [string, Record<string, string | number>];
@@ -51,7 +52,7 @@ export function strokeFor(size: number): number {
   return Math.round(w * 1000) / 1000;
 }
 
-export function Icon({ name, size = 16, className, title }: { name: IconName; size?: number; className?: string; title?: string }) {
+function IconSvg({ name, size = 16, className, title }: { name: IconName; size?: number; className?: string; title?: string }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeFor(size)} strokeLinecap="round" strokeLinejoin="round" aria-hidden={title ? undefined : true} role={title ? 'img' : undefined} focusable="false">
       {title && <title>{title}</title>}
@@ -59,6 +60,13 @@ export function Icon({ name, size = 16, className, title }: { name: IconName; si
     </svg>
   );
 }
+
+/**
+ * Memoised: its props are a name, a number and two strings, and every row, chip and button draws one — re-rendered
+ * with each parent, it was the most rendered component while tasks ran (1 260 a second with four conversations
+ * streaming, perf-busy 2026-11-20), every time the same svg.
+ */
+export const Icon = memo(IconSvg);
 
 export const ICON_NAMES = Object.keys(PATHS) as IconName[];
 

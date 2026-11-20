@@ -4,7 +4,7 @@ import type { RoutedInfo, AgentInfo, AgentKind, AttachmentRef, EffortLevel, Engi
 import { withDefaultMode } from './default-mode';
 import { decodeAttachments, findChainUuidBefore, isPrompt } from '@/model/conversation';
 import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, panelToggleEffect, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
-import { PaneContext, winId } from './paneContext';
+import { FramesSeenContext, PaneContext, winId } from './paneContext';
 import { useContext, useRef } from 'react';
 import { onlyStreamed } from './streamed';
 export { onlyStreamed, settledVersion } from './streamed';
@@ -1393,12 +1393,20 @@ export const useScopedSession = () => {
     return id ? s.open[id] : undefined;
   });
 };
-/** The same, re-rendering for every streamed frame too: only for what draws the streaming text. */
+/**
+ * The same, re-rendering for every streamed frame too: only for what draws the streaming text — and only while it can
+ * be seen (FramesSeenContext): hidden, it is settled like useScopedSession, and the latest comes back with it.
+ */
 export const useScopedSessionLive = () => {
   const ctx = useContext(PaneContext);
+  const seen = useContext(FramesSeenContext);
+  const last = useRef<OpenSession | undefined>(undefined);
   return useStore((s) => {
     const id = ctx ? ctx.sessionId : s.activeId;
-    return id ? s.open[id] : undefined;
+    const next = id ? s.open[id] : undefined;
+    if (!seen && last.current && next && onlyStreamed(last.current, next)) return last.current;
+    last.current = next;
+    return next;
   });
 };
 export const useScopedSessionId = () => {

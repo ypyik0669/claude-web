@@ -54,6 +54,13 @@ const WINDOWS_SHELL_HINT = [
 const FIT_SHARE = 0.8;
 /** the official binary's lowest CLAUDE_CODE_AUTO_COMPACT_WINDOW (it reads a smaller one as this: phase 27, measured) */
 const OFFICIAL_COMPACT_FLOOR = 100_000;
+/**
+ * `system/thinking_tokens` (the official binary, 5–11 a second per conversation while it thinks): one goes out per
+ * this many ms. Nothing draws them — a window only takes the moment, the stall check's last event (model/health.ts,
+ * 30 s and more) — yet with four conversations thinking they were 116 of the 306 messages a second every window had
+ * to take (perf-busy 2026-11-20).
+ */
+export const THINKING_TOKENS_EVERY_MS = 1000;
 
 const esc = (s: string) => s.replace(/"/g, '&quot;');
 
@@ -275,6 +282,8 @@ export class SessionRunner extends EventEmitter {
   private ledgerId?: string;
   private features: SessionFeatures;
   lastActivity = Date.now();
+  /** when the last `thinking_tokens` went out (THINKING_TOKENS_EVERY_MS) */
+  private thinkingSentAt = 0;
   private closed = false;
   /** CLI flags from open (features / worktree), re-applied when the process is respawned */
   private extraArgs: Record<string, string | null> = {};
@@ -941,6 +950,15 @@ export class SessionRunner extends EventEmitter {
   }
 
   private ingest(m: SDKMessage) {
+    // the binary's thinking-token counts: one a second goes out (THINKING_TOKENS_EVERY_MS), and none into the replay
+    // history — at their rate they pushed a long turn's own messages out of its 5000 entries in a few minutes
+    if (m.type === 'system' && (m as { subtype?: string }).subtype === 'thinking_tokens') {
+      const now = Date.now();
+      if (now - this.thinkingSentAt < THINKING_TOKENS_EVERY_MS) return;
+      this.thinkingSentAt = now;
+      this.emit('message', m);
+      return;
+    }
     // claude-web-engine: a model refused its native thinking-strength parameter — ours to record, not the window's
     if (m.type === 'system' && (m as { subtype?: string }).subtype === 'cw_capability') {
       const model = (m as { model?: unknown }).model;

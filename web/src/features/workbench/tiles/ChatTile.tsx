@@ -2,6 +2,8 @@ import { Backdrop } from '@/themes/Backdrop';
 import { useActivePack } from '@/themes/apply';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { settledVersion, useSettledSession, useStore } from '@/store';
+import { FramesSeenContext } from '@/store/paneContext';
+import { usePageOpen } from '@/features/sections';
 import { basename, clsx } from '@/util';
 import { cachedDiffStat } from '@/model/diffstat';
 import type { Tile } from '@/model/layout';
@@ -188,6 +190,9 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
     return () => ro.disconnect();
   }, [!!active, mobile, tile.wb]);
   const infoShown = infoOn && roomy && !deleted;
+  // streamed frames are drawn while the conversation can be seen: not behind another tab, not under a page
+  const pageOver = usePageOpen();
+  const framesSeen = visible && !pageOver;
   // a character theme's backdrop, faint and slow behind the conversation (设置 → 对话里的淡背景)
   const chatBackdrop = useStore((s) => s.settings['ui.backdropInChat'] !== false) && !!useActivePack()?.backdrop;
   // restored from a persisted layout: lazily pull the transcript
@@ -216,12 +221,12 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   if (!sid) return <Welcome paneId={paneId} tileId={tile.id} />;
   if (!active) return <div className="empty">{tr('加载对话…')}</div>;
   const live = (
-    <>
+    <FramesSeenContext.Provider value={framesSeen}>
       <GoalBar sessionId={sid} />
       <PrBar sessionId={sid} visible={visible} />
       {tile.view === 'chat' ? <ChatView key={sid} /> : <TrajectoryView key={sid} />}
       <Composer key={`c-${sid}`} disabled={deleted} visible={visible} />
-    </>
+    </FramesSeenContext.Provider>
   );
   return (
     <div className="chat-tile">

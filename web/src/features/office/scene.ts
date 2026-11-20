@@ -19,6 +19,14 @@ import { EXIT, PCS, hallDepth, rowsFor } from './model';
 /** half the hall's width (x); the depth (z) follows the rows (hallDepth) */
 const HW = 9.6;
 const WALL_H = 3.6;
+/** how often the loop looks again while nothing moves (CafeScene's loop) */
+const STILL_MS = 250;
+/** frames a second while only the people move (walking, typing, waving, coming and going), and for ambient motion
+ *  only (bobbing, neon); the camera and the day / night and focus fades get every frame */
+const PEOPLE_FPS = 30;
+const AMBIENT_FPS = 24;
+/** a frame's interval by what step() says moves (0 still … 3 the camera) */
+const FRAME_MS = [Infinity, 1000 / AMBIENT_FPS, 1000 / PEOPLE_FPS, 0] as const;
 const FOV = 30;
 const PITCH = 2.5;
 /** PCs of a row: x of seat k */
@@ -474,6 +482,17 @@ function rowTemplate(): Map<string, THREE.BufferGeometry> {
 // ---------------------------------------------------------------------------------------------------- people
 
 /** the shared pieces of the little octopus (the default figure) */
+/** a copy of the geometry moved / turned / scaled the way a mesh with these would be (to merge parts into one) */
+function placed(g: THREE.BufferGeometry, p: [number, number, number], r: [number, number, number] = [0, 0, 0], s: [number, number, number] = [1, 1, 1]) {
+  return g.clone().applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(...p), new THREE.Quaternion().setFromEuler(new THREE.Euler(...r)), new THREE.Vector3(...s)));
+}
+function merged(parts: THREE.BufferGeometry[]) {
+  const g = mergeGeometries(parts, false);
+  if (!g) throw new Error('figure parts did not merge');
+  for (const p of parts) p.dispose();
+  return g;
+}
+
 class FigureKit {
   head = new THREE.SphereGeometry(0.27, 28, 20);
   leg = new THREE.CapsuleGeometry(0.058, 0.13, 4, 10);
@@ -490,6 +509,20 @@ class FigureKit {
   cap = new THREE.CylinderGeometry(0.2, 0.25, 0.13, 20);
   brim = new THREE.BoxGeometry(0.3, 0.025, 0.2);
   disc = new THREE.CircleGeometry(0.3, 20);
+  // the parts of one material that never move apart, merged (each one a draw, in the picture and in the shadow map:
+  // a person was 18 draws and 12 more for its shadow, it is 9–10 and 5)
+  legs6 = merged(Array.from({ length: 6 }, (_, i) => {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    return placed(this.leg, [Math.sin(a) * 0.15, 0.13, Math.cos(a) * 0.15], [Math.cos(a) * 0.55, 0, -Math.sin(a) * 0.55]);
+  }));
+  eyes2 = merged([-1, 1].map((s) => placed(this.eye, [s * 0.095, 0.47, 0.228], [0, 0, 0], [1, 1.3, 0.6])));
+  shines2 = merged([-1, 1].map((s) => placed(this.shine, [s * 0.095 + 0.014, 0.49, 0.257])));
+  cheeks2 = merged([-1, 1].map((s) => placed(this.cheek, [s * 0.16, 0.39, 0.2], [0, 0, 0], [1, 0.6, 0.4])));
+  /** the accessories: the 网管's cap, headphones (0), a beanie (1), bows (3); the antenna (2) is one part already */
+  accLead = merged([placed(this.cap, [0, 0.69, 0]), placed(this.brim, [0, 0.64, 0.2])]);
+  acc0 = merged([placed(this.band, [0, 0.46, 0], [0, Math.PI / 2, 0]), ...[-1, 1].map((s) => placed(this.cup, [s * 0.27, 0.44, 0], [0, 0, Math.PI / 2]))]);
+  acc1 = merged([placed(this.beanie, [0, 0.47, 0]), placed(this.ball, [0, 0.76, 0])]);
+  acc3 = merged([-1, 1].map((s) => placed(this.bow, [s * 0.08, 0.7, 0.05], [0, 0, (s * Math.PI) / 2])));
   eyeMat = new THREE.MeshStandardMaterial({ color: '#15161f', roughness: 0.25 });
   whiteMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
   cheekMat = new THREE.MeshStandardMaterial({ color: '#ff8fb1', roughness: 0.7, transparent: true, opacity: 0.75 });
@@ -518,39 +551,23 @@ function octopus(kit: FigureKit, color: string, shape: BotShape, lead: boolean):
   const mesh = (g: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number, parent: THREE.Object3D = body) => { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
   const head = mesh(kit.head, mat, 0, 0.44, 0);
   head.scale.set(1, 0.92, 1);
+  // the six legs turn together (sitting, walking): one mesh in their group
   const legs = new THREE.Group();
   body.add(legs);
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
-    const l = mesh(kit.leg, mat, Math.sin(a) * 0.15, 0.13, Math.cos(a) * 0.15, legs);
-    l.rotation.set(Math.cos(a) * 0.55, 0, -Math.sin(a) * 0.55);
-  }
-  for (const s of [-1, 1]) {
-    const e = mesh(kit.eye, kit.eyeMat, s * 0.095, 0.47, 0.228);
-    e.scale.set(1, 1.3, 0.6);
-    mesh(kit.shine, kit.whiteMat, s * 0.095 + 0.014, 0.49, 0.257).castShadow = false;
-    const c = mesh(kit.cheek, kit.cheekMat, s * 0.16, 0.39, 0.2);
-    c.scale.set(1, 0.6, 0.4);
-    c.castShadow = false;
-  }
+  mesh(kit.legs6, mat, 0, 0, 0, legs);
+  // (the eyes sit on the head: their shadow is inside the head's)
+  mesh(kit.eyes2, kit.eyeMat, 0, 0, 0).castShadow = false;
+  mesh(kit.shines2, kit.whiteMat, 0, 0, 0).castShadow = false;
+  mesh(kit.cheeks2, kit.cheekMat, 0, 0, 0).castShadow = false;
   const handL = mesh(kit.hand, mat, -0.2, 0.28, 0.12), handR = mesh(kit.hand, mat, 0.2, 0.28, 0.12);
   // an accessory per shape, so the same colour still reads as different people (and the 网管 wears a cap)
-  if (lead) {
-    mesh(kit.cap, acc, 0, 0.69, 0);
-    mesh(kit.brim, acc, 0, 0.64, 0.2);
-  } else if (shape === 0) {
-    const b = mesh(kit.band, acc, 0, 0.46, 0);
-    b.rotation.y = Math.PI / 2;
-    for (const s of [-1, 1]) { const c = mesh(kit.cup, acc, s * 0.27, 0.44, 0); c.rotation.z = Math.PI / 2; }
-  } else if (shape === 1) {
-    mesh(kit.beanie, acc, 0, 0.47, 0);
-    mesh(kit.ball, acc, 0, 0.76, 0);
-  } else if (shape === 2) {
+  if (lead) mesh(kit.accLead, acc, 0, 0, 0);
+  else if (shape === 0) mesh(kit.acc0, acc, 0, 0, 0);
+  else if (shape === 1) mesh(kit.acc1, acc, 0, 0, 0);
+  else if (shape === 2) {
     mesh(kit.stick, acc, 0.06, 0.78, 0);
     mesh(kit.ball, new THREE.MeshBasicMaterial({ color: mix(color, '#ffffff', 0.4) }), 0.06, 0.92, 0).castShadow = false;
-  } else {
-    for (const s of [-1, 1]) { const b = mesh(kit.bow, acc, s * 0.08, 0.7, 0.05); b.rotation.z = (s * Math.PI) / 2; }
-  }
+  } else mesh(kit.acc3, acc, 0, 0, 0);
   const sh = new THREE.Mesh(kit.disc, kit.shadowMat);
   sh.rotation.x = -Math.PI / 2;
   sh.position.y = 0.01;
@@ -667,16 +684,44 @@ export class CafeScene {
   private size = { w: 1, h: 1 };
   private inset = { left: 0, right: 0 };
   private raf = 0;
+  /** the loop's wait for its next frame while nothing (or only ambient motion) moves */
+  private later: ReturnType<typeof setTimeout> | null = null;
+  /** the next frame comes after a still pause: the people's own timers get the real time that went by */
+  private afterPause = false;
+  /** between start() and dispose() */
+  private running = false;
   private last = 0;
   private lastDraw = 0;
-  private dirty = true;
+  /** a step moved something that no frame has drawn yet (the motion stopped between two frames) */
+  private undrawn = false;
+  /** the shadow map is drawn only when what casts the shadows changed (the people, the hall), not for the camera, the
+   *  light's colour or the people's bobbing: `shadowMap.autoUpdate` is off */
+  private shadowDirty = true;
+  private dirtyFlag = true;
+  /** something changed (zones, the camera, the size, day / night): a frame now — it wakes a sleeping loop */
+  private get dirty(): boolean { return this.dirtyFlag; }
+  private set dirty(v: boolean) {
+    this.dirtyFlag = v;
+    if (v) this.wake();
+  }
   private populated = false;
   private signName: string;
   private roomWord: string;
   private overlays: { el: HTMLElement; kind: 'zone' | 'bot'; id: string; w: number; h: number }[] = [];
   private overlayRoot: HTMLElement | null = null;
+  /** the overlays' sizes, measured by a ResizeObserver (after the browser's own layout): bindOverlays runs after every
+   *  render of Office, and reading offsetWidth there, right after React changed the DOM, forced a layout each time */
+  private overlayRo: ResizeObserver | null = null;
+  private overlaySize = new Map<HTMLElement, { w: number; h: number }>();
   reduced = false;
-  visible = true;
+  private shown = true;
+  /** on screen (Office's IntersectionObserver): hidden, the loop stops; shown again, it wakes */
+  get visible(): boolean { return this.shown; }
+  set visible(v: boolean) {
+    if (v === this.shown) return;
+    this.shown = v;
+    if (v) this.wake();
+  }
   /** a frame was drawn (ui-smoke counts them; the loop sleeps when nothing moves) */
   frames = 0;
 
@@ -687,6 +732,7 @@ export class CafeScene {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.scene.background = new THREE.Color(P.bg[1]);
@@ -765,6 +811,7 @@ export class CafeScene {
 
   /** the hall for so many zones (rebuilt when the row count changes) */
   private buildHall(zones: number) {
+    this.shadowDirty = true;
     for (const rv of this.rows) this.disposeRow(rv);
     this.rows = [];
     this.disposeGroup(this.hallGroup);
@@ -790,6 +837,10 @@ export class CafeScene {
     this.hallGroup.add(floor);
     // glass: the windows, the door leaf, the rooms
     const glass = m.std('glass', ['#d8eefa', '#7f8ff0'], { opacity: 0.18, rough: 0.05, metal: 0.1, side: THREE.DoubleSide });
+    // one pass: three draws a transparent double-sided material twice (back faces, then front faces), flagging
+    // needsUpdate both times — every pane asked for its shader program twice a frame (perf-busy 2026-11-21: 20 a
+    // frame, the only material that did); a flat pane's two sides cover the same pixels, so it looks the same
+    glass.forceSinglePass = true;
     const pane = (w: number, hh: number, x: number, y: number, z: number, ry = 0) => {
       const g = new THREE.Mesh(new THREE.PlaneGeometry(w, hh), glass);
       g.position.set(x, y, z); g.rotation.y = ry; g.renderOrder = 2;
@@ -903,11 +954,14 @@ export class CafeScene {
     for (const t of rv.tex) t.dispose();
   }
 
-  /** Put the cafe in line with the model: zones (A first), their people, PCs and rooms. */
+  /** Put the cafe in line with the model: zones (A first), their people, PCs and rooms. Office calls it with every new
+   *  snapshot (many a second while agents work); only a change asks for a frame. */
   setZones(list: SceneZone[]) {
+    let changed = false;
     if (rowsFor(list.length) !== this.h.rows) {
       for (const v of [...this.bots.values()]) this.dropBot(v);
       this.buildHall(list.length);
+      changed = true;
     }
     for (let i = 0; i < this.h.rows; i++) {
       const z = list[i] ?? null;
@@ -916,6 +970,7 @@ export class CafeScene {
       if (`${rv.key}|${rv.name}|${rv.accent}` !== (z ? key : `empty-${i}||#8088a8`)) {
         this.disposeRow(rv);
         this.rows[i] = this.makeRow(z, i);
+        changed = true;
       }
     }
     const seen = new Set<string>();
@@ -925,11 +980,16 @@ export class CafeScene {
         seen.add(b.id);
         let v = this.bots.get(b.id);
         if (v && v.look !== b.look) { this.dropBot(v); v = undefined; }
-        if (!v) v = this.addBot(b, zi, arrive);
+        if (!v) { v = this.addBot(b, zi, arrive); changed = true; }
         const moved = v.zone !== zi || v.seat !== b.seat;
+        if (moved || v.status !== b.status || v.leaving) changed = true;
         v.status = b.status;
         v.leaving = false;
-        if (v.fig && !v.fig.sprite) { const m0 = v.fig.mats[0]; m0.base.set(b.color); }
+        if (v.fig && !v.fig.sprite) {
+          const m0 = v.fig.mats[0], was = m0.base.getHex();
+          m0.base.set(b.color);
+          if (m0.base.getHex() !== was) changed = true;
+        }
         if (moved) {
           const wasZone = v.zone;
           v.zone = zi;
@@ -939,9 +999,9 @@ export class CafeScene {
         }
       }
     });
-    for (const [id, v] of this.bots) if (!seen.has(id)) v.leaving = true;
+    for (const [id, v] of this.bots) if (!seen.has(id) && !v.leaving) { v.leaving = true; changed = true; }
     if (list.some((z) => z.bots.length > 1)) this.populated = true;
-    this.dirty = true;
+    if (changed) { this.shadowDirty = true; this.dirty = true; }
   }
 
   private addBot(b: SceneBot, zone: number, arrive: boolean): BotView {
@@ -1199,17 +1259,48 @@ export class CafeScene {
 
   // ---- overlays (HTML anchored to the scene)
 
+  /** Called after every render of Office. Reads no layout: the sizes come from the ResizeObserver (a new overlay is
+   *  placed once with the fallback size, then again when its size comes in); only a changed set of overlays (or a zone
+   *  tag that now points at another row) asks for a frame. */
   bindOverlays(root: HTMLElement | null) {
-    this.overlayRoot = root;
-    this.overlays = [];
+    const ro = typeof ResizeObserver === 'undefined' ? null : (this.overlayRo ??= new ResizeObserver((es) => this.overlaysResized(es)));
+    const next: typeof this.overlays = [];
     if (root) for (const el of root.querySelectorAll<HTMLElement>('[data-anchor]')) {
       const [kind, ...rest] = (el.dataset.anchor ?? '').split(':');
-      if (kind === 'zone' || kind === 'bot') this.overlays.push({ el, kind, id: rest.join(':'), w: el.offsetWidth, h: el.offsetHeight });
+      if (kind !== 'zone' && kind !== 'bot') continue;
+      const s = ro ? this.overlaySize.get(el) : { w: el.offsetWidth, h: el.offsetHeight };
+      next.push({ el, kind, id: rest.join(':'), w: s?.w ?? 0, h: s?.h ?? 0 });
     }
+    const prev = this.overlays;
+    if (root === this.overlayRoot && next.length === prev.length && next.every((o, i) => o.el === prev[i].el && o.kind === prev[i].kind && o.id === prev[i].id)) return;
+    if (ro) {
+      const keep = new Set(next.map((o) => o.el));
+      for (const el of [...this.overlaySize.keys()]) if (!keep.has(el)) { ro.unobserve(el); this.overlaySize.delete(el); }
+      // observed and waiting for its first size: in the map as 0×0 (the fallback size until then)
+      for (const o of next) if (!this.overlaySize.has(o.el)) { this.overlaySize.set(o.el, { w: 0, h: 0 }); ro.observe(o.el); }
+    }
+    this.overlayRoot = root;
+    this.overlays = next;
+    this.dirty = true;
+  }
+
+  private overlaysResized(es: ResizeObserverEntry[]) {
+    let changed = false;
+    for (const e of es) {
+      const el = e.target as HTMLElement;
+      if (!this.overlaySize.has(el)) continue; // let go of already
+      const b = e.borderBoxSize?.[0];
+      this.overlaySize.set(el, b ? { w: b.inlineSize, h: b.blockSize } : { w: e.contentRect.width, h: e.contentRect.height });
+      changed = true;
+    }
+    if (!changed) return;
+    for (const o of this.overlays) { const s = this.overlaySize.get(o.el); if (s) { o.w = s.w; o.h = s.h; } }
     this.dirty = true;
   }
 
   private tmp = new THREE.Vector3();
+  /** (animate(): a person's colour this step, without a new Color per person per step) */
+  private tmpColor = new THREE.Color();
   private placeOverlays() {
     if (!this.overlayRoot) return;
     const tags: { o: { el: HTMLElement; w: number; h: number }; x: number; y: number; raw: number; show: boolean }[] = [];
@@ -1272,31 +1363,74 @@ export class CafeScene {
   }
 
   // ---- the loop
+  //
+  // A frame is asked for only when one is wanted: every frame while something really moves, 24 a second for ambient
+  // motion, four a second while all is still (a guest's own timer — get up, walk out — still runs), none while the
+  // scene is not on screen. It used to ask for a frame every frame, drawn or not, also hidden — and a page that asks
+  // for frames gets the browser's whole frame (styles, every animation of the page ticked, the layer tree committed)
+  // 60 times a second: once the cafe had been opened, the window never rested (perf-busy 2026-11-20). Anything that
+  // changes the scene sets `dirty`, which wakes it.
 
   start() {
-    const tick = (t: number) => {
-      this.raf = requestAnimationFrame(tick);
-      const dt = Math.min(0.1, this.last ? (t - this.last) / 1000 : 0.016);
-      this.last = t;
-      if (!this.visible || document.hidden) return;
-      const m = this.step(dt, t / 1000);
-      // ambient motion only (bobbing, neon): a calmer frame rate
-      if (m === 2 || this.dirty || (m === 1 && t - this.lastDraw > 1000 / 24)) {
-        this.dirty = false;
-        this.lastDraw = t;
-        this.decorate(t / 1000);
-        this.renderer.render(this.scene, this.camera);
-        this.placeOverlays();
-        this.frames++;
-      }
-    };
-    this.raf = requestAnimationFrame(tick);
+    this.running = true;
+    document.addEventListener('visibilitychange', this.onVisibility);
+    this.raf = requestAnimationFrame(this.tick);
   }
 
-  /** advance everything; 0: still, 1: only ambient motion, 2: something really moves */
-  private step(dt: number, time: number): 0 | 1 | 2 {
+  /** a frame as soon as possible: something changed, or the scene came back on screen */
+  wake(): void {
+    if (!this.running || this.raf) return;
+    if (this.later) { clearTimeout(this.later); this.later = null; }
+    // no step over the time it slept (the camera would jump); the people's timers lose at most STILL_MS
+    this.last = 0;
+    this.raf = requestAnimationFrame(this.tick);
+  }
+
+  private onVisibility = () => {
+    if (!document.hidden) this.wake();
+  };
+
+  private tick = (t: number) => {
+    this.raf = 0;
+    const raw = this.last ? (t - this.last) / 1000 : 0.016;
+    // motion steps at most 0.1 s; after a still pause nothing moved, and the timers get the time that went by
+    const dt = Math.min(this.afterPause ? 0.5 : 0.1, raw);
+    this.afterPause = false;
+    this.last = t;
+    // not on screen: the loop stops here (the visible setter and visibilitychange wake it)
+    if (!this.shown || document.hidden) { this.last = 0; return; }
+    const m = this.step(dt, t / 1000);
+    // the camera every frame; people moving and ambient motion at a calmer rate (a frame a little early is fine: the
+    // timer below wakes half a frame early so the frame that is due is the one after it)
+    const every = FRAME_MS[m];
+    if (this.dirty || t - this.lastDraw >= every - 4 || (m === 0 && this.undrawn)) {
+      this.dirty = false;
+      this.undrawn = false;
+      this.lastDraw = t;
+      if (this.shadowDirty) { this.shadowDirty = false; this.renderer.shadowMap.needsUpdate = true; }
+      this.decorate(t / 1000);
+      this.renderer.render(this.scene, this.camera);
+      this.placeOverlays();
+      this.frames++;
+    } else if (m > 0) this.undrawn = true;
+    // a change during this frame has asked for the next one already
+    if (this.raf || this.later) return;
+    if (m === 3 || this.dirty) { this.raf = requestAnimationFrame(this.tick); return; }
+    const still = m === 0;
+    const wait = still ? STILL_MS : Math.max(0, every - (t - this.lastDraw) - 8);
+    this.later = setTimeout(() => {
+      this.later = null;
+      this.afterPause = still;
+      if (this.running && !this.raf) this.raf = requestAnimationFrame(this.tick);
+    }, wait);
+  };
+
+  /** advance everything; 0: still, 1: only ambient motion, 2: people move, 3: the camera moves (or a day / night or
+   *  focus fade) */
+  private step(dt: number, time: number): 0 | 1 | 2 | 3 {
     const k = this.reduced ? 1 : 1 - Math.exp(-dt * 5);
-    let fast = false, ambient = false;
+    // fast: the camera and the fades (every frame); moving: the people (PEOPLE_FPS, and their shadows change)
+    let fast = false, moving = false, ambient = false;
     const ease = (a: number, b: number, eps: number) => { if (Math.abs(a - b) < eps) return b; fast = true; return a + (b - a) * k; };
     const c = this.cur, g = this.goal;
     c.radius = ease(c.radius, g.radius, 0.005);
@@ -1326,23 +1460,24 @@ export class CafeScene {
     for (const v of [...this.bots.values()]) {
       if (v.leaving) {
         v.appear = this.reduced ? 0 : v.appear - dt * 3;
-        if (v.appear <= 0) { this.dropBot(v); fast = true; continue; }
-        fast = true;
-      } else if (v.appear < 1) { v.appear = Math.min(1, v.appear + dt * 2.5); fast = true; }
+        if (v.appear <= 0) { this.dropBot(v); moving = true; continue; }
+        moving = true;
+      } else if (v.appear < 1) { v.appear = Math.min(1, v.appear + dt * 2.5); moving = true; }
       if (!v.fig) continue;
       if (!v.path.length && !v.leaving) {
         v.timer -= dt;
         const w = this.want(v);
         if (w !== v.at) this.go(v, w);
       }
-      if (this.walk(v, dt)) fast = true;
+      if (this.walk(v, dt)) moving = true;
       // turn smoothly
       let dy = v.yawGoal - v.yaw;
       dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-      if (Math.abs(dy) > 0.002) { v.yaw += dy * (this.reduced ? 1 : Math.min(1, dt * 9)); fast = true; } else v.yaw = v.yawGoal;
-      if (this.animate(v, time)) fast = true; else if (!this.reduced) ambient = true;
+      if (Math.abs(dy) > 0.002) { v.yaw += dy * (this.reduced ? 1 : Math.min(1, dt * 9)); moving = true; } else v.yaw = v.yawGoal;
+      if (this.animate(v, time)) moving = true; else if (!this.reduced) ambient = true;
     }
-    return fast ? 2 : ambient ? 1 : 0;
+    if (moving) this.shadowDirty = true;
+    return fast ? 3 : moving ? 2 : ambient ? 1 : 0;
   }
 
   /** a person's pose this frame; true: a real motion (walking, typing, waving) */
@@ -1352,7 +1487,7 @@ export class CafeScene {
     const walking = v.path.length > 0 && v.sit === 0;
     const dimF = 1 - 0.5 * (this.dims[v.zone] ?? 0);
     for (const m of f.mats) {
-      const want = m.base.clone().multiplyScalar(dimF);
+      const want = this.tmpColor.copy(m.base).multiplyScalar(dimF);
       if (!m.mat.color.equals(want)) m.mat.color.copy(want);
     }
     f.root.position.set(v.pos.x, 0, v.pos.z);
@@ -1444,7 +1579,15 @@ export class CafeScene {
   }
 
   dispose() {
+    this.running = false;
     cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    if (this.later) { clearTimeout(this.later); this.later = null; }
+    document.removeEventListener('visibilitychange', this.onVisibility);
+    this.overlayRo?.disconnect();
+    this.overlayRo = null;
+    this.overlaySize.clear();
+    this.overlays = [];
     for (const v of [...this.bots.values()]) this.dropBot(v);
     for (const rv of this.rows) this.disposeRow(rv);
     this.disposeGroup(this.hallGroup);

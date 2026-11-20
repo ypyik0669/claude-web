@@ -722,6 +722,9 @@ input.field:focus-visible, select.field:focus-visible, textarea.field:focus-visi
 .groupbar .grow { flex: 1; min-width: 8px; }
 
 .pane-layer { position: relative; flex: 1; min-height: 0; }
+/* a page lies over the conversations (Workbench makes the layer inert): what animates under it waits — a step's spinner
+   or the thinking shimmer under the 运行中 page kept the browser drawing whole frames for nobody (perf-busy 2026-11-20) */
+.pane-layer[inert] *, .pane-layer[inert] *::before, .pane-layer[inert] *::after { animation-play-state: paused !important; }
 .pane { position: absolute; display: flex; flex-direction: column; background: var(--surface-0); border-radius: var(--r-card); box-shadow: var(--elev-1); overflow: hidden; }
 .pane { transition: box-shadow var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
 .pane-layer.multi .pane:not(.focused) { opacity: 0.88; }

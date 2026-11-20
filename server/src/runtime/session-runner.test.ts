@@ -2854,3 +2854,29 @@ describe('SessionRunner: the subagents get the prompt cache lifetime of the conv
     try { expect((await envOf({ sessionId: 'ttl-7' }, acct))[KEY]).toBeUndefined(); } finally { eng.kind = 'claude'; }
   });
 });
+
+// perf-busy 2026-11-20: four conversations thinking sent 116 thinking_tokens a second to every window, and each went
+// into the replay history (5000 entries: a few minutes of thinking pushed the turn's own messages out)
+describe('thinking_tokens', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('one a second goes out, none into the replay history; the other messages are untouched', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-20T12:00:00Z'));
+    const r = new SessionRunner({ sessionId: 'tt-1', cwd: '/x' } as any);
+    const out: any[] = [];
+    r.on('message', (m: any) => out.push(m));
+    const tokens = (n: number) => ({ type: 'system', subtype: 'thinking_tokens', tokens: n, session_id: 'tt-1' });
+    for (let i = 0; i < 10; i++) {
+      (r as any).ingest(tokens(i));
+      vi.advanceTimersByTime(90);
+    }
+    expect(out.map((m) => m.tokens)).toEqual([0]);
+    vi.advanceTimersByTime(200);
+    (r as any).ingest(tokens(10));
+    (r as any).ingest({ type: 'system', subtype: 'status', status: 'requesting', session_id: 'tt-1' });
+    expect(out.map((m) => m.subtype + ':' + (m.tokens ?? ''))).toEqual(['thinking_tokens:0', 'thinking_tokens:10', 'status:']);
+    expect((r as any).history.some((m: any) => m.subtype === 'thinking_tokens')).toBe(false);
+    expect((r as any).history.some((m: any) => m.subtype === 'status')).toBe(true);
+  });
+});

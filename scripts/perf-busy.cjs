@@ -3,7 +3,14 @@
 //
 //   node scripts/perf-busy.cjs [--out <dir>] [--seconds 60] [--dpr 2] [--show] [--dist <built web dir>]
 //        [--history 600] [--convs 300] [--rate 150] [--panel explorer|files|none] [--after 20] [--no-typing]
-//        [--runtime ccb|claude] [--keep]
+//        [--runtime ccb|claude] [--keep] [--parallel 4] [--cafe page]
+//
+// --parallel N: N conversations run the task at once (the long one in front, N-1 others opened as tabs behind it).
+// --cafe page: 自动化 › 运行中 shown as the 3D 网吧 for the whole run (the scene's frames drawn per second are counted);
+// --panel cafe shows it in the right panel beside the conversation instead. --cafe-guests: while the task runs, every
+// running conversation also has a workflow of three agents and a background subagent at work (put in the page's store
+// the way ui-smoke does, again every 2 s: the fake upstream starts none), so the hall has a zone per conversation with
+// people typing — what a long task with subagents looks like there.
 //
 // Needs `npm run build:all` first (the server runs from server/dist). The web app is built again with source maps into
 // <out>/web-dist (or --dist <dir> reuses one built with `vite build web --outDir <dir> --sourcemap`), so profiles map
@@ -834,12 +841,20 @@ async function driver() {
   await sleep(2000);
   // a few conversations open as tabs, then the long one in front
   for (const t of C.tabs) { await js(`window.__store.getState().loadHistory(${JSON.stringify(t)}, { focus: true, mode: 'tab' })`).catch((e) => result.notes.push('tab: ' + e.message)); await sleep(1200); }
+  // --parallel: the others that will run the task too, open (a conversation must be open to be sent to)
+  for (const t of (C.others || []).filter((x) => !C.tabs.includes(x))) { await js(`window.__store.getState().loadHistory(${JSON.stringify(t)}, { focus: true, mode: 'tab' })`).catch((e) => result.notes.push('other: ' + e.message)); await sleep(800); }
   await js(`window.__store.getState().loadHistory(${JSON.stringify(C.sid)}, { focus: true, mode: 'tab' })`).catch((e) => result.notes.push('long: ' + e.message));
   await waitFor(`(() => { const o = window.__store.getState().open[${JSON.stringify(C.sid)}]; return o && !o.loading && o.conv.items.length > 0; })()`, 60_000);
   if (C.panel !== 'none') await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: ${JSON.stringify(C.panel)} })`).catch((e) => result.notes.push('dock: ' + e.message));
   await js(`window.__cwPerf.sid = ${JSON.stringify(C.sid)}`);
   result.layout = await js(`(() => { const st = window.__store.getState(); const o = st.open[${JSON.stringify(C.sid)}]; return { items: o.conv.items.length, sessions: st.sessions.length, openTabs: Object.keys(st.open).length, info: st.settings['ui.infoPanel'] !== false, viewMode: st.settings['ui.viewMode'] || 'normal', showThinking: st.settings['ui.showThinking'], theme: st.settings['ui.theme'], dock: JSON.stringify(st.layout.dock || null).slice(0, 200), dpr: devicePixelRatio, size: innerWidth + 'x' + innerHeight }; })()`).catch((e) => ({ error: e.message }));
   log('layout', JSON.stringify(result.layout));
+  // --cafe page: 自动化 › 运行中 as the 3D 网吧, for every window
+  if (C.cafe === 'page') {
+    await js(`(async () => { await window.__store.getState().setSetting('background.view', 'cafe'); window.__cwBackground.open(); return true; })()`).catch((e) => result.notes.push('cafe: ' + e.message));
+    if (!await waitFor('!!window.__cwCafe && window.__cwCafe.frames > 2', 30_000)) result.notes.push('the cafe scene never drew');
+  }
+  if (C.panel === 'cafe' && !await waitFor('!!window.__cwCafe && window.__cwCafe.frames > 2', 30_000)) result.notes.push('the cafe panel never drew');
   await sleep(C.settle * 1000);
 
   const typeKey = (back) => {
@@ -850,6 +865,12 @@ async function driver() {
   };
   const focusComposer = () => js(`(() => { const t = [...document.querySelectorAll('.composer textarea')].find((x) => x.offsetParent); if (!t) return false; t.focus(); return true; })()`);
   const metricsMap = (m) => Object.fromEntries(m.metrics.map((x) => [x.name, x.value]));
+  // --cafe-guests: a workflow of three agents and a background subagent at work in every running conversation (or
+  // none: `on` false), the shapes ui-smoke injects
+  const guestSids = [C.sid, ...(C.others || [])];
+  // (page-side code: `now`, `A` and `i` are the page script's own)
+  const GUEST_TASKS = "[ { id: 'pwf' + i, kind: 'workflow', description: 'perf', name: 'perf-flow-' + i, status: 'running', startedAt: now - 60000, phases: [{ index: 1, title: '改代码' }], agents: [A('w1' + i, 1, 'alpha', { phase: 1, phaseTitle: '改代码', lastSummary: '改了 a.ts' }), A('w2' + i, 2, 'beta', { phase: 1, phaseTitle: '改代码' }), A('w3' + i, 3, 'gamma', { phase: 1, phaseTitle: '改代码' })] }, { id: 'pag' + i, kind: 'agent', description: '查一下', status: 'running', backgrounded: true, startedAt: now - 20000, agents: [A('pag' + i, 4, '查一下', { agentType: 'Explore' })] } ]";
+  const guestsJs = (on) => `(() => { const now = Date.now(); const A = (key, color, label, o) => Object.assign({ key, color, label, state: 'running', beats: [now - 30000, now - 9000], agentId: 'a' + key + '00000', startedAt: now - 200000 }, o || {}); ${JSON.stringify(guestSids)}.forEach((sid, i) => window.__cwBackground.inject({ sessionId: sid, updatedAt: now, events: [], tasks: ${on ? GUEST_TASKS : '[]'} })); return true; })()`;
   // percentCPUUsage / idleWakeupsPerSecond are "since the last call": one call at the start of a window, one at its end
   const appCpu = () => Object.fromEntries(app.getAppMetrics().map((x) => [x.pid, { type: x.type, name: x.name || x.serviceName || '', cum: x.cpu.cumulativeCPUUsage, wake: x.cpu.idleWakeupsPerSecond, pct: x.cpu.percentCPUUsage, mem: x.memory.workingSetSize }]));
 
@@ -859,6 +880,8 @@ async function driver() {
     await js('window.__cwPerf.reset()');
     const m0 = metricsMap(await cdp('Performance.getMetrics'));
     const a0 = appCpu();
+    const cafeFrames = () => withTimeout(js('window.__cwCafe ? window.__cwCafe.frames : null'), 30_000, null).catch(() => null);
+    const cf0 = await cafeFrames();
     paints = 0;
     await cdp('Profiler.start');
     const t0 = Date.now();
@@ -874,8 +897,11 @@ async function driver() {
     // one animation off, say). The window's numbers include it.
     if (process.env.CW_PERF_PRE_JS) await withTimeout(js(process.env.CW_PERF_PRE_JS), 30_000, null);
     let traced = !process.env.CW_PERF_TRACE || name !== 'running';
+    let guestsAt = 0;
     while (Date.now() - t0 < seconds * 1000) {
       if (!traced && Date.now() - t0 > 4000) { traced = true; await traceFor(3000, path.join(C.out, 'trace-running.json')); }
+      // --cafe-guests: the background snapshot the server sends would replace them — put them back every 2 s
+      if (C.cafeGuests && name === 'running' && Date.now() - guestsAt >= 2000) { guestsAt = Date.now(); void js(guestsJs(true)).catch(() => {}); }
       if (C.typing) { typeKey(back); back = !back; typed++; if (typed === 3) typedOk = await withTimeout(js(`(() => { const t = document.activeElement; return !!t && t.tagName === 'TEXTAREA'; })()`), 3000, null); }
       if (Date.now() - lastRtt >= 1000 && rttOpen < 3) {
         lastRtt = Date.now();
@@ -892,6 +918,10 @@ async function driver() {
     fs.writeFileSync(path.join(C.out, `renderer-${name}.cpuprofile`), JSON.stringify(profile));
     const m1 = metricsMap(await cdp('Performance.getMetrics'));
     const a1 = appCpu();
+    const cf1 = await cafeFrames();
+    // the cafe's last frame: draw calls (the shadow map's included when it was drawn) and triangles
+    const cafeDraw = await withTimeout(js('window.__cwCafe ? { calls: window.__cwCafe.renderer.info.render.calls, triangles: window.__cwCafe.renderer.info.render.triangles, programs: window.__cwCafe.renderer.info.programs.length } : null'), 30_000, null).catch(() => null);
+    const runningConvs = await withTimeout(js(`Object.values(window.__store.getState().open).filter((o) => o.state === 'running' || o.state === 'waiting').length`), 30_000, null).catch(() => null);
     emit({ ev: 'window-end', name });
     // CW_PERF_PAGE_JS=<expression>: evaluated in the page at the end of each window, saved as page-js-<window>.json
     // (e.g. what document.getAnimations() is running while a task runs)
@@ -928,7 +958,8 @@ async function driver() {
       procs[pid] = { type: x.type, name: x.name, cpuPct: b && x.cum != null && b.cum != null ? +(((x.cum - b.cum) / (wallMs / 1000)) * 100).toFixed(1) : +(x.pct || 0).toFixed(1), wakeupsPerSec: x.wake, memMB: Math.round(x.mem / 1024) };
     }
     const r = {
-      wallMs, typed, typedOk, paints, page: page || {}, pageAnswerMs, renderLocs, scriptRtt, scriptRttPending: rttOpen,
+      wallMs, typed, typedOk, paints, page: page || {}, pageAnswerMs, renderLocs, scriptRtt, scriptRttPending: rttOpen, runningConvs, cafeDraw,
+      cafeFramesPerSec: cf0 != null && cf1 != null ? +((cf1 - cf0) / (wallMs / 1000)).toFixed(1) : null,
       metrics: { taskMs: md('TaskDuration') * 1000, scriptMs: md('ScriptDuration') * 1000, layoutMs: md('LayoutDuration') * 1000, styleMs: md('RecalcStyleDuration') * 1000, layouts: md('LayoutCount'), styles: md('RecalcStyleCount'), nodes: m1.Nodes, layoutObjects: m1.LayoutObjects, heapMB: +(m1.JSHeapUsedSize / 1048576).toFixed(1), listeners: m1.JSEventListeners },
       electron: procs,
     };
@@ -941,13 +972,19 @@ async function driver() {
     // the task: sent from the window the way a user sends it
     const sent = await js(`window.__store.getState().send(${JSON.stringify(C.sid)}, ${JSON.stringify(C.prompt)}).then(() => 'ok', (e) => String(e && e.message || e))`);
     log('send:', sent);
+    for (const o of C.others || []) {
+      const r = await js(`window.__store.getState().send(${JSON.stringify(o)}, ${JSON.stringify(C.prompt)}).then(() => 'ok', (e) => String(e && e.message || e))`);
+      log('send (parallel):', o.slice(0, 8), r);
+    }
     const t0 = Date.now();
     const started = await waitFor('window.__cwPerf.streamTotal > 30', 180_000);
     result.startupMs = Date.now() - t0;
     if (!started) { result.notes.push('the task never started streaming'); emit({ ev: 'stop-loop' }); done(3); return; }
     log(`streaming after ${result.startupMs} ms`);
+    if (C.cafeGuests) await js(guestsJs(true)).catch((e) => result.notes.push('guests: ' + e.message));
     await sleep(C.warmup * 1000);
     result.windows.running = await measure('running', C.seconds);
+    if (C.cafeGuests) await js(guestsJs(false)).catch(() => {});
     save();
     result.stillRunningAtEnd = await withTimeout(js(`window.__store.getState().open[${JSON.stringify(C.sid)}].state`), 30_000, '(page did not answer)');
     emit({ ev: 'stop-loop' });
@@ -1005,6 +1042,7 @@ async function runner() {
     seconds: Number(arg('--seconds', 60)), after: Number(arg('--after', 20)), dpr: arg('--dpr', 0) ? Number(arg('--dpr', 0)) : 0, show: !!arg('--show', false),
     history: Number(arg('--history', 600)), convs: Number(arg('--convs', 300)), rate: Number(arg('--rate', 150)), panel: String(arg('--panel', 'explorer')),
     typing: !arg('--no-typing', false), walk: !arg('--no-walk', false), runtime: String(arg('--runtime', 'auto')), model: String(arg('--model', 'claude-sonnet-5-5')), settle: 8, warmup: 5,
+    parallel: Math.max(1, Number(arg('--parallel', 1))), cafe: String(arg('--cafe', 'none')), cafeGuests: !!arg('--cafe-guests', false),
   };
   console.log(`perf-busy → ${out}`);
   console.log(JSON.stringify(cfg));
@@ -1063,7 +1101,9 @@ async function runner() {
   const result = path.join(out, 'driver.json');
   fs.rmSync(result, { force: true });
   const tabs = world.ids.filter((x) => x.cwd === world.shop).slice(0, 2).map((x) => x.sid).concat(world.ids.filter((x) => x.cwd === world.projects.notes).slice(0, 1).map((x) => x.sid));
-  const env = { ...cleanEnv(), ELECTRON_DISABLE_SECURITY_WARNINGS: 'true', PERF_CFG: JSON.stringify({ ...cfg, url: srv.url, out, result, sid: world.sid, tabs, prompt: PROMPT }) };
+  // --parallel: the other conversations that run the task too (the tabs first, then more of the seeded ones)
+  const others = [...tabs, ...world.ids.map((x) => x.sid).filter((s) => s !== world.sid && !tabs.includes(s))].slice(0, cfg.parallel - 1);
+  const env = { ...cleanEnv(), ELECTRON_DISABLE_SECURITY_WARNINGS: 'true', PERF_CFG: JSON.stringify({ ...cfg, url: srv.url, out, result, sid: world.sid, tabs, others, prompt: PROMPT }) };
   const el = spawn(electron, [__filename], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false });
   const sampler = startSampler(out, [process.pid], (s) => samples.push(s));
   // whatever happens to this process, nothing it started stays behind
@@ -1167,6 +1207,7 @@ async function runner() {
         metricsPerSec: Object.fromEntries(Object.entries(d.metrics).map(([k, v]) => [k, ['nodes', 'layoutObjects', 'heapMB', 'listeners'].includes(k) ? v : +(v / secs).toFixed(1)])),
         reactCommitsPerSec: +(pg.commits / secs).toFixed(1), storeUpdatesPerSec: +(pg.storeUpdates / secs).toFixed(1), runningConvVersionBumpsPerSec: +(pg.bumps / secs).toFixed(1),
         osrPaintsPerSec: d.paints != null ? +(d.paints / secs).toFixed(1) : null,
+        cafeFramesPerSec: d.cafeFramesPerSec, cafeDraw: d.cafeDraw, runningConvs: d.runningConvs,
         longTasks: { count: (pg.longTasks || []).length, totalMs: Math.round((pg.longTasks || []).reduce((a, b) => a + b, 0)), maxMs: Math.round(Math.max(0, ...(pg.longTasks || []))) },
         longAnimationFrames: { count: (pg.loaf || []).length, totalMs: Math.round((pg.loaf || []).reduce((a, b) => a + b.d, 0)), blockingMs: Math.round((pg.loaf || []).reduce((a, b) => a + (b.b || 0), 0)), renderMs: Math.round((pg.loaf || []).reduce((a, b) => a + (b.render || 0), 0)), topScripts: Object.entries(loafScripts).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => ({ script: k, ms: Math.round(v) })) },
         inputToNextFrameMs: { n: (pg.input || []).length, p50: pct(pg.input, 0.5), p95: pct(pg.input, 0.95), max: pct(pg.input, 1), typedOk: d.typedOk },
@@ -1213,6 +1254,7 @@ function formatReport(S) {
   const rpad = (s, n) => String(s ?? '').padStart(n);
   L.push(`perf-busy  ${S.config.platform}, ${S.config.cpus} logical CPUs (${S.config.cpuModel})  window ${S.layout && S.layout.size} @${S.layout && S.layout.dpr}x  ${S.config.show ? 'visible window' : 'offscreen'}`);
   L.push(`conversation: ${S.layout && S.layout.items} items open, ${S.layout && S.layout.sessions} conversations listed, ${S.layout && S.layout.openTabs} tabs; engine ${S.config.runtime} / ${S.config.model}; task started streaming ${S.startupMs} ms after send; state at end of running window: ${S.stillRunningAtEnd}`);
+  L.push(`load: ${S.config.parallel} conversation(s) running the task at once; 3D cafe: ${S.config.cafe === 'page' ? 'the 运行中 page' : S.config.panel === 'cafe' ? 'the right panel' : 'not shown'}${S.config.cafeGuests ? ' (a zone per running conversation, its agents at work)' : ''}; right panel: ${S.config.panel}`);
   if (S.notes && S.notes.length) L.push('notes: ' + S.notes.join(' | '));
   L.push('');
   L.push('CPU % of one core (100 = one core busy), averaged over each window');
@@ -1237,6 +1279,9 @@ function formatReport(S) {
   row('store updates/s', (w) => w.renderer.storeUpdatesPerSec);
   row('running conv version bumps/s', (w) => w.renderer.runningConvVersionBumpsPerSec);
   row('offscreen paints/s', (w) => w.renderer.osrPaintsPerSec);
+  row('3D cafe frames drawn/s', (w) => w.renderer.cafeFramesPerSec);
+  row('3D cafe draw calls (last frame)', (w) => w.renderer.cafeDraw && w.renderer.cafeDraw.calls);
+  row('conversations running (window end)', (w) => w.renderer.runningConvs);
   row('long tasks (count)', (w) => w.renderer.longTasks.count);
   row('long tasks total ms', (w) => w.renderer.longTasks.totalMs);
   row('long animation frames (count)', (w) => w.renderer.longAnimationFrames.count);

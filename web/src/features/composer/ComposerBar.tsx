@@ -83,16 +83,42 @@ export function ComposerUnder({ lead, permission, stats, status, model, subagent
     const fits = el.clientWidth >= need;
     setWrap((w) => (w === !fits ? w : !fits));
   };
-  // after every render (a chip's words changed) and whenever the row or a group is resized
-  useLayoutEffect(() => measure.current());
+  // Measured when the row, a group, a chip or the model's name changes size — a ResizeObserver, whose callback comes
+  // after the browser's own layout — not after every render: the numbers in the middle re-render the row many times a
+  // second while a task streams, and measuring each time forced a layout of the whole page (the busiest function of
+  // our own while four conversations ran, perf-busy 2026-11-20). A name that changes inside a chip cut to its width
+  // keeps the box's size: the right group's text changes ask for a measurement too (the model, the meter; rare).
+  const ro = useRef<ResizeObserver | null>(null);
+  const watched = useRef(new Set<Element>());
   useLayoutEffect(() => {
     const el = row.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => measure.current());
-    ro.observe(el);
-    for (const c of el.children) ro.observe(c);
-    return () => ro.disconnect();
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const o = new ResizeObserver(() => measure.current());
+    ro.current = o;
+    let raf = 0;
+    const mo = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => {
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; measure.current(); });
+    });
+    const right = el.querySelector(':scope > .cb-right');
+    if (mo && right) mo.observe(right, { subtree: true, childList: true, characterData: true });
+    return () => {
+      o.disconnect();
+      mo?.disconnect();
+      cancelAnimationFrame(raf);
+      ro.current = null;
+      watched.current = new Set();
+    };
   }, []);
+  // after each render, the chips there are now are the ones watched (no size is read here)
+  useLayoutEffect(() => {
+    const el = row.current;
+    const o = ro.current;
+    if (!el || !o) return;
+    const now = new Set<Element>([el, ...el.children, ...el.querySelectorAll(':scope > .cb-left > *, :scope > .cb-right > *, :scope > .cb-right .mm-anchor:not(.sub-anchor) .mm-chip-label')]);
+    for (const x of watched.current) if (!now.has(x)) o.unobserve(x);
+    for (const x of now) if (!watched.current.has(x)) o.observe(x);
+    watched.current = now;
+  });
   return (
     <div ref={row} className="composer-under cb" data-wrap={wrap ? '' : undefined}>
       <div className="cb-left">{lead}{permission}</div>
