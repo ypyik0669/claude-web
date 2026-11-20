@@ -904,11 +904,11 @@ export class Hub {
         return { removed: !!(await s.openings?.remove(String(req.id ?? ''))) };
       case 'openings.github.inspect':
         // what the desktop app plays at its start comes from here: the user at this machine decides
-        this.localWindowOnly(ws, tr('从 GitHub 安装开场动画'));
+        this.localWindowOnly(ws, tr('GitHub 上的开场动画'));
         if (!s.openings) throw new Error('openings unavailable');
         return s.openings.githubInspect(String(req.url ?? ''));
       case 'openings.github.install':
-        this.localWindowOnly(ws, tr('从 GitHub 安装开场动画'));
+        this.localWindowOnly(ws, tr('GitHub 上的开场动画'));
         if (!s.openings) throw new Error('openings unavailable');
         return s.openings.githubInstall(String(req.token ?? ''));
       case 'openings.github.cancel':
@@ -916,11 +916,11 @@ export class Hub {
         return null;
       case 'openings.trialHost':
         // a draft plays in a window on this machine (a phone or a peer is not handed someone's page)
-        this.localWindowOnly(ws, tr('开场动画'));
+        this.localWindowOnly(ws, tr('开场动画的试放'));
         s.openings?.setHost(ws, !!req.on, (r) => this.send(ws, { type: 'event', event: { kind: 'openings.trial', id: r.id, pack: r.pack, html: r.html } }));
         return null;
       case 'openings.trialResult': {
-        this.localWindowOnly(ws, tr('开场动画'));
+        this.localWindowOnly(ws, tr('开场动画的试放'));
         const { kind: _k, id, ...r } = req;
         return { taken: !!s.openings?.trialResult(ws, String(id), r) };
       }

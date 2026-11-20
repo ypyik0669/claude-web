@@ -486,7 +486,7 @@ function player(cfg: PlayerConfig): void {
   const dust: { x: number; y: number; v: number; s: number; p: number }[] = [];
   /** 星图: the stars of the sky, and the ones that fly to the logo's outline */
   let sky: { x: number; y: number; s: number; p: number }[] = [];
-  let flyers: { x0: number; y0: number; tx: number; ty: number; sw: number; p: number }[] = [];
+  let flyers: { x0: number; y0: number; tx: number; ty: number; sw: number; p: number; d: number }[] = [];
   /** 字符雨: the rain's columns (on the 10 × 16.2 grid of the stage, out to the window's edges) and the big logo's cells */
   let cols: { c: number; y: number; v: number; len: number }[] = [];
   let cells: { c: number; r: number; kind: string; at: number }[] = [];
@@ -644,7 +644,8 @@ function player(cfg: PlayerConfig): void {
     dust.length = 0; sky = [];
     if (!LEN.length) geom();
     flyers = [];
-    if (kind === 'stars') for (const g of groups) for (const p of g) flyers.push({ x0: left() + rnd() * (right() - left()), y0: top() + rnd() * (bottom() - top()), tx: p.x, ty: p.y, sw: (rnd() - 0.5) * 0.9, p: rnd() * TAU });
+    // (d: when it sets off, in turn along its stroke — the square first, the dot last — with a little spread)
+    if (kind === 'stars') groups.forEach((g, gi) => g.forEach((p, j) => flyers.push({ x0: left() + rnd() * (right() - left()), y0: top() + rnd() * (bottom() - top()), tx: p.x, ty: p.y, sw: (rnd() - 0.5) * 0.9, p: rnd() * TAU, d: (j / g.length) * 0.4 + gi * 0.025 + rnd() * 0.05 })));
     if (kind === 'ascii') {
       const c0 = Math.floor(left() / 10), c1 = Math.ceil(right() / 10);
       rows = { r0: Math.floor(top() / 16.2), n: Math.ceil(bottom() / 16.2) - Math.floor(top() / 16.2) };
@@ -697,20 +698,29 @@ function player(cfg: PlayerConfig): void {
   }
   /** 星图: the sky's stars fly to the outline and join up, the logo fills in behind the lines, the dot lights */
   function starsAt(t: number, dt: number) {
-    const tw = R(t, 0, 0.45), conv = R(t, 0.35, 1.45), fade = 1 - R(t, 1.55, 2.0), la = R(t, 0.95, 1.45) * fade;
-    const pos = flyers.map((s) => {
-      const x = s.x0 + (s.tx - s.x0) * conv, y = s.y0 + (s.ty - s.y0) * conv, kk = Math.sin(conv * Math.PI) * s.sw;
+    const tw = R(t, 0, 0.45), fade = 1 - R(t, 1.55, 2.0);
+    // each star lands in its turn along its stroke (`d`), and a line joins two neighbours once both are there: the
+    // outline draws itself round (lines between stars still flying cross into a tangle)
+    const cv = flyers.map((s) => R(t, 0.3 + s.d, 0.95 + s.d));
+    const pos = flyers.map((s, i) => {
+      const c = cv[i], x = s.x0 + (s.tx - s.x0) * c, y = s.y0 + (s.ty - s.y0) * c, kk = Math.sin(c * Math.PI) * s.sw;
       return { x: x - (s.ty - s.y0) * kk * 0.35, y: y + (s.tx - s.x0) * kk * 0.35 };
     });
     bx.save(); bx.globalCompositeOperation = PAL.blend;
-    if (la > 0.01) {
-      bx.strokeStyle = `${PAL.line}${0.6 * la})`; bx.lineWidth = 1.1;
+    if (fade > 0.01) {
+      bx.strokeStyle = `${PAL.line}0.6)`; bx.lineWidth = 1.1;
       let i0 = 0;
       for (const g of groups) {
-        bx.beginPath();
-        for (let j = 0; j < g.length; j++) { const p = pos[i0 + j]; if (!p) break; if (j) bx.lineTo(p.x, p.y); else bx.moveTo(p.x, p.y); }
-        bx.closePath(); bx.stroke(); i0 += g.length;
+        for (let j = 0; j < g.length; j++) {
+          const a = i0 + j, b = i0 + ((j + 1) % g.length), pa = pos[a], pb = pos[b];
+          if (!pa || !pb) continue;
+          const al = R(Math.min(cv[a], cv[b]), 0.86, 1) * fade;
+          if (al < 0.01) continue;
+          bx.globalAlpha = al; bx.beginPath(); bx.moveTo(pa.x, pa.y); bx.lineTo(pb.x, pb.y); bx.stroke();
+        }
+        i0 += g.length;
       }
+      bx.globalAlpha = 1;
     }
     bx.fillStyle = `rgb(${PAL.star})`;
     pos.forEach((p, i) => { bx.globalAlpha = Math.max(0, tw * fade * (0.65 + 0.35 * Math.sin(t * 5 + flyers[i].p))); bx.beginPath(); bx.arc(p.x, p.y, 1.6, 0, TAU); bx.fill(); });
