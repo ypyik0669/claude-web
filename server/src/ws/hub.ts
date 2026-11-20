@@ -13,6 +13,7 @@ import { listProjectFiles, rankFiles } from '../files/find.js';
 import { copyWorktreeIncludes, resolveWorktreeDir } from '../git/worktree-include.js';
 import { readChangelog } from '../app/changelog.js';
 import { recentArtifacts } from '../library/artifacts.js';
+import { listArtifactTypes } from '../library/artifact-types.js';
 import type { LocalEnvStore } from '../runtime/local-env.js';
 import type { VcsTokenStore } from '../vcs/token-store.js';
 import { autoLeases } from '../vcs/auto-lease.js';
@@ -868,6 +869,8 @@ export class Hub {
       }
       case 'artifacts.list':
         return { items: await recentArtifacts(s.library) };
+      case 'artifactTypes.list':
+        return listArtifactTypes();
       case 'app.changelog':
         return { markdown: readChangelog(String(req.lang ?? 'en')), version: s.version };
       case 'shell.editors':

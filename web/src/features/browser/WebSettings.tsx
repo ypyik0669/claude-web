@@ -35,7 +35,7 @@ const ENGINE_LABEL: Record<string, string> = {
 export const engineChoiceLabel = (e: { id: string; label: string }): string => ENGINE_LABEL[e.id] ?? e.label;
 
 /**
- * 设置 → 联网 (spec 2026-10-10-ui-structure §5): whether Agents get the web tools at all, what searches for them, and
+ * 设置 → 联网与浏览器 (spec 2026-10-10-ui-structure §5): whether Agents get the web tools at all, what searches for them, and
  * whose logins the pages they open carry. The status comes from the server (`web.status`), which also keeps the keys.
  */
 export function WebSettings() {
@@ -153,7 +153,7 @@ export function WebSettings() {
         <Row label={tr('保留 Cookie')} hint={tr('{desc}。已经打开的页面还用原来的，之后新开的页面用新的设置。', { desc: cookieModeText(cookieMode).desc })}>
           <Select className="field" aria-label={tr('保留 Cookie')} data-id="web-cookies" value={cookieMode} onValueChange={(value) => void set(COOKIES_KEY, String(value))} options={COOKIE_MODES.map((m) => ({ value: m, label: cookieModeText(m).label }))} />
         </Row>
-        {/* the site card's 「设置 → 联网 → 允许的网站 里可以删掉」 points here (PermissionCards.tsx) */}
+        {/* the site card's 「设置 → 联网与浏览器 → 允许的网站 里可以删掉」 points here (PermissionCards.tsx) */}
         <Row label={tr('允许的网站')} hint={sites.length ? tr('Agent 在内置浏览器里打开这 {n} 个网站、在上面操作页面都不再问你；别的网站第一次打开或操作时问一次。', { n: sites.length }) : tr('在权限卡上点「总是允许这个网站」的网站会列在这里。')}>
           <button className="btn sm" data-id="web-allowed-sites" onClick={() => setSitesOpen(true)}>{tr('管理…')}</button>
         </Row>

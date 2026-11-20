@@ -871,7 +871,7 @@ export class GatewayService extends EventEmitter {
 
   /** The same gate a POST meets before it is routed (enabled, key, LAN / IP rules, group access). */
   private async authorizeUpgrade(surface: 'loopback' | 'lan', req: http.IncomingMessage, url: URL, groupId: string | undefined): Promise<{ key: string } | { status: number; message: string }> {
-    if (!this.enabled()) return { status: 503, message: tr('模型网关未启用（设置 → 模型网关）') };
+    if (!this.enabled()) return { status: 503, message: tr('模型网关未启用（设置 → 模型 → 路由）') };
     const ip = String(req.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
     if (surface === 'lan') {
       const c = this.deps.meta.gatewayLan();
@@ -943,7 +943,7 @@ export class GatewayService extends EventEmitter {
       });
       return this.sendError(res, inbound, status, message, extra);
     };
-    if (!this.enabled()) return deny(503, tr('模型网关未启用（设置 → 模型网关）'));
+    if (!this.enabled()) return deny(503, tr('模型网关未启用（设置 → 模型 → 路由）'));
 
     const presented = this.presentedKeys(req, url);
     let auth = presented.map((k) => this.keys.verify(k)).find(Boolean) ?? null;

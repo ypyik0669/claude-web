@@ -45,7 +45,7 @@ export function PeersSection() {
     void useStore.getState().refreshSessions().catch(() => {});
   });
   const repair = (p: PeerInfo) => run(p.id, async () => {
-    const code = (await dlg.prompt(tr('重新配对「{name}」', { name: p.name }), '', { message: tr('在那台机器的 设置 → 手机与其它电脑 里生成一个新的配对码，填在这里。对话 id 保持不变。'), placeholder: tr('6 位配对码') }))?.trim();
+    const code = (await dlg.prompt(tr('重新配对「{name}」', { name: p.name }), '', { message: tr('在那台机器的 设置 → 手机与远程 里生成一个新的配对码，填在这里。对话 id 保持不变。'), placeholder: tr('6 位配对码') }))?.trim();
     if (!code) return;
     const r = await ws.request<PeerInfo>({ kind: 'peers.repair', id: p.id, code });
     toast(r.state === 'online' ? tr('已重新配对') : `${STATE[r.state].l}${r.error ? `：${r.error}` : ''}`, r.state === 'online');
@@ -97,7 +97,7 @@ export function PeersSection() {
           </div>
           {draft.mode === 'code' ? <>
             <label>{tr('地址')}<input className="field" autoFocus value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="http://192.168.1.20:3091" /></label>
-            <label>{tr('配对码')}<input className="field mono" inputMode="numeric" maxLength={6} value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value.replace(/\D/g, '') })} placeholder={tr('6 位数字')} title={tr('在那台机器的 设置 → 手机与其它电脑 里生成')} /></label>
+            <label>{tr('配对码')}<input className="field mono" inputMode="numeric" maxLength={6} value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value.replace(/\D/g, '') })} placeholder={tr('6 位数字')} title={tr('在那台机器的 设置 → 手机与远程 里生成')} /></label>
           </> : (
             <label>{tr('SSH 主机')}
               <Select className="field" value={draft.hostId} onValueChange={(value) => setDraft({ ...draft, hostId: String(value) })} aria-label={tr('SSH 主机')} options={freeHosts.map((h) => ({ value: h.id, label: h.name, description: h.target }))} />

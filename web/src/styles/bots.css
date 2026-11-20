@@ -48,6 +48,23 @@
 .bots-col-thread { flex: 1 1 auto; }
 .bots-col-thread .bt-head { min-height: var(--h-head); }
 .bots-col-new { flex: 1 1 auto; overflow: auto; }
+/* 设置 (the roster's gear; redesign 2026-11 stage 2): the settings' own rows (EntryRow) in a column like the New Bot page */
+.bots-col-settings { flex: 1 1 auto; overflow: auto; }
+.bot-settings { width: min(680px, 100%); margin: 0 auto; padding: var(--sp-5) var(--sp-4) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-3); }
+.bot-settings .bs-head { display: flex; align-items: center; gap: var(--sp-2); color: var(--ink-3); }
+.bot-settings .bs-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: 600; color: var(--ink-1); }
+.bot-settings .bs-lead { margin: 0 0 var(--sp-2); color: var(--ink-3); font-size: var(--fs-base); line-height: 1.6; }
+.br-top .icon-btn.on { background: var(--layer-selected); color: var(--ink-1); }
+/* a phone: wide controls under the words, a lone switch on the right — the settings' phone rows (styles.css) */
+.app.mobile .bot-settings { padding: var(--sp-2) var(--sp-3) var(--sp-6); }
+.app.mobile .bot-settings .sp-card { border-radius: 16px; background: var(--surface-elev); }
+.app.mobile .bot-settings .sp-row { flex-direction: column; align-items: stretch; gap: 10px; min-height: 60px; padding: 12px 14px; }
+.app.mobile .bot-settings .sp-row > .ctl { width: 100%; flex-wrap: wrap; }
+.app.mobile .bot-settings .sp-row:has(> .ctl > .toggle:only-child) { flex-direction: row; align-items: center; gap: 14px; }
+.app.mobile .bot-settings .sp-row:has(> .ctl > .toggle:only-child) > .ctl { width: auto; }
+.app.mobile .bot-settings .segmented.sp-seg { display: flex; width: 100%; }
+.app.mobile .bot-settings .segmented.sp-seg > button { flex: 1 1 0; min-height: 40px; justify-content: center; }
+.app.mobile .bot-settings .sp-row > .ctl > :is(.select-trigger, input.field) { flex: 1 1 auto; width: 100% !important; max-width: none; min-height: 44px; font-size: 16px; }
 .bots-col-profile { flex: 0 0 340px; overflow: auto; border-left: var(--hairline) solid var(--edge-subtle); padding: 0 var(--sp-3); }
 /* Windows / Linux: the caption buttons float over the top-right corner (unless the right panel owns it) — the profile's
    tabs and × start under them, and the conversation's head keeps clear of them when it reaches the corner */

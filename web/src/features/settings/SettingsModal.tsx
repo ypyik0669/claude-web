@@ -1,15 +1,13 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { backdropOn } from '@/features/home/letter-flow';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
-import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { ZoomControl } from './ZoomControl';
-import { Mcp, McpAddJson, Overview, Plugins, ProviderProfiles, Settings, SimpleList } from '@/features/panels/ConfigPanel';
+import { Overview, ProviderProfiles, Settings, SimpleList } from './config-parts';
 import { CJK_FONTS, DENSITIES, FONT_SIZES, LANGUAGES } from './ui-settings';
 import { ThemeSwatches } from './ThemePicker';
 import { ThemeGallery } from './ThemeGallery';
-import { SkillsBackup, SkillsSection } from './SkillsSection';
 import { ToolsSection } from './ToolsSection';
 import { ProxySection } from './ProxySection';
 import { AgentsSection } from './AgentsSection';
@@ -23,19 +21,22 @@ import { GatewaySection } from './GatewaySection';
 import { UpdateSection, type UpdateState } from './UpdateSection';
 import { DiagnosticsSection } from './DiagnosticsSection';
 import { ModelsSection } from './ModelsSection';
-import { McpCatalog } from './McpCatalog';
 import { AccountSection } from './AccountSection';
 import { EnvEditor } from './EnvEditor';
+import { ModelHubLink, PrivacyLink } from './HubLinks';
 import { MemorySettings } from '@/features/memory/MemorySettings';
-import { openHub } from '@/features/model-hub/state';
+import { UsagePanel } from '@/features/panels/UsagePanel';
+import { openExtensions } from '@/features/extensions/state';
+import { openBotSettings } from '@/features/bots/state';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { MODE_LABEL } from '@/ui/terms';
-import type { GatewayStatus, PermissionMode } from '@shared';
+import { pushBackLayer } from '@/ui/back-layer';
+import type { PermissionMode } from '@shared';
 import {
-  ADVANCED_SECTIONS, BODY_INFO, SETTINGS_GROUPS, VISIBLE_SECTIONS, activeTab, findSection, moreHint, navStatus,
-  resolveSettingsTarget, searchSettings, type BodyId, type EntryId, type EntryMeta, type SectionMeta, type SettingsHit,
-  type SettingsTarget,
+  BODY_INFO, SETTINGS_GROUPS, SETTINGS_SECTIONS, activeTab, awayTarget, entriesOn, findSection, moreHint, navStatus,
+  resolveSettingsTarget, searchSettings, type AwayTarget, type BodyId, type EntryId, type EntryMeta, type SectionMeta,
+  type SettingsAsk, type SettingsHit, type SettingsTarget,
 } from './catalog';
 import { NumberSelect, Row, Seg, Select, TextSetting, Toggle } from './controls';
 import { coverApp } from './cover';
@@ -55,7 +56,10 @@ export { Row } from './controls';
 /** Modes offered as the default for new sessions (dontAsk is a per-session choice, not a default). */
 const DEFAULT_MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'];
 
-/** The control of every row in the settings map (catalog.ts); typed on EntryId, so a row without one does not compile. */
+/**
+ * The control of every row in the settings map (catalog.ts) — 自动化 › Bot › 设置's rows too (BOT_ENTRIES, drawn by
+ * bots/BotSettings.tsx with `EntryRow`); typed on EntryId, so a row without one does not compile.
+ */
 const CONTROLS: Record<EntryId, (e: EntryMeta) => ReactNode> = {
   'ui.defaultMode': (e) => <Select k={e.id} def="default" label={e.label} options={DEFAULT_MODES.map((m) => ({ id: m, l: MODE_LABEL[m] }))} />,
   autoContinueOnReset: (e) => <Toggle k={e.id} label={e.label} />,
@@ -113,16 +117,11 @@ const muted = { color: 'var(--ink-3)', fontSize: 12 } as const;
 const BODIES: Record<BodyId, () => ReactNode> = {
   account: () => <AccountSection />,
   engine: () => <Overview part="engine" />,
+  usage: () => <UsagePanel />,
   models: () => <ModelsSection />,
   providers: () => <ProviderProfiles />,
   proxy: () => <ProxySection />,
   gateway: () => <GatewaySection />,
-  mcp: () => <Mcp />,
-  mcpCatalog: () => <McpCatalog />,
-  mcpJson: () => <McpAddJson />,
-  plugins: () => <Plugins />,
-  skills: () => <SkillsSection />,
-  skillsBackup: () => <SkillsBackup />,
   agents: () => <AgentsSection />,
   subagents: () => <SimpleList kind="config.agents" empty={tr('还没有子代理。~/.claude/agents 里的 .md 文件和插件带的子代理会出现在这里。')} render={(a) => <div className="grow"><div>{a.name} <span style={muted}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} />,
   memory: () => <MemorySettings />,
@@ -134,6 +133,7 @@ const BODIES: Record<BodyId, () => ReactNode> = {
   web: () => <WebSettings />,
   library: () => <LibrarySection />,
   secrets: () => <SecretsSection />,
+  privacy: () => <PrivacyLink />,
   hooks: () => <SimpleList kind="config.hooks" empty={tr('还没有 Hooks。settings.json 或插件里配置的会出现在这里。')} render={(h) => <div className="grow"><div>{h.event} <span style={muted}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} />,
   localEnv: () => <LocalEnvEditor />,
   env: () => <EnvEditor bare />,
@@ -145,6 +145,13 @@ const BODIES: Record<BodyId, () => ReactNode> = {
   openings: () => <OpeningPacks />,
 };
 
+/** Go to what left the settings (自定义's tabs, 自动化 › Bot › 设置) — the settings dialog closes first. */
+export function goAway(t: AwayTarget): void {
+  useStore.setState({ settingsOpen: null });
+  if (t.to === 'extensions') openExtensions(t.tab, { json: t.json });
+  else openBotSettings(t.reveal);
+}
+
 /** Is the key event aimed at something you type into? ('/' focuses the search only when it is not.) */
 function typing(t: EventTarget | null) {
   const el = t as HTMLElement | null;
@@ -152,46 +159,54 @@ function typing(t: EventTarget | null) {
 }
 
 /**
- * The settings window (Ctrl+,), full-window like Linear / Codex (spec §5.7): grouped navigation + search on the left,
- * the page in a 660px column on the right. `settingsOpen` = {section, query, reveal}; old section ids still work
- * (catalog.ts LEGACY_SECTIONS). The app underneath stays mounted.
+ * The settings (Ctrl+,, the account menu's 设置, the account row's ⚙): a dialog over the page you were on (界面改版
+ * 2026-11 阶段 2, spec #pages 「设置弹窗」) — the four groups' fourteen pages on the left with a line between groups,
+ * the page on the right, × or Esc and you are back where you were. On a phone it is a page pushed in: the list of
+ * pages, a tap pushes a page, ‹ at the top-left goes back. `settingsOpen` = {section, tab, query, reveal}; old ids
+ * still land (catalog.ts LEGACY_SECTIONS), and the ids of what left the settings open its new place instead
+ * (AWAY_SECTIONS: 自定义, 自动化 › Bot › 设置). The app underneath stays mounted.
  */
 export function SettingsModal() {
   const open = useStore((s) => s.settingsOpen);
-  if (!open) return null;
-  return <SettingsPage open={open} />;
+  const away = open ? awayTarget(open) : undefined;
+  useLayoutEffect(() => { if (away) goAway(away); }, [open]);
+  if (!open || away) return null;
+  return <SettingsDialog open={open} />;
 }
 
-function SettingsPage({ open }: { open: { section?: string; query?: string; reveal?: string } }) {
+function SettingsDialog({ open }: { open: SettingsAsk }) {
+  const mobile = useStore((s) => s.mobile);
   const [target, setTarget] = useState<SettingsTarget>(() => resolveSettingsTarget(open));
   const [q, setQ] = useState(open.query ?? '');
   const [moreOpen, setMoreOpen] = useState(!!target.more);
-  const [advOpen, setAdvOpen] = useState(!!findSection(target.section)?.advanced);
-  // phones (≤ 600px): the navigation and the page take turns; opened on a given page = the page
+  // phones (≤ 600px): the list of pages and a page take turns; opened on a given page = the page
   const [phonePage, setPhonePage] = useState(!!(open.section || open.reveal));
   const inp = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const layer = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const close = () => useStore.setState({ settingsOpen: null });
-  // desktop: the search box; phones: the page itself (focusing an input would pop the keyboard up)
+  // desktop: the search box; phones: the dialog itself (focusing an input would pop the keyboard up)
   const focusStart = () => { if (useStore.getState().mobile) root.current?.focus({ preventScroll: true }); else inp.current?.focus(); };
 
   const go = (t: SettingsTarget) => {
     setTarget(t);
     setMoreOpen(!!t.more);
     setPhonePage(true);
-    if (findSection(t.section)?.advanced) setAdvOpen(true);
   };
   // the app underneath stays mounted but must not keep the keyboard: typing would land in the covered composer, Esc
   // would interrupt its turn. Inert while open, focus here, and back to where it was on close (cover.ts).
   useLayoutEffect(() => {
     const prev = document.activeElement;
-    const el = root.current;
+    const el = layer.current;
     if (!el) return;
     const undo = coverApp(el, prev);
     focusStart();
     return undo;
   }, []);
+  // phones: the system's back closes the page first (back to the list), then the settings (ui/back-layer.ts)
+  useEffect(() => pushBackLayer(close), []);
+  useEffect(() => (phonePage ? pushBackLayer(() => setPhonePage(false)) : undefined), [phonePage]);
   // a new openSettings() while open (a link in a section, the model menu's 管理模型…) moves to that page; one without
   // a section / row (Ctrl+, again) keeps the page and only starts over at the search box
   const seen = useRef(open);
@@ -208,9 +223,9 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
     shut(useStore.getState());
     return useStore.subscribe(shut);
   }, []);
-  // Esc: a typed search is cleared first, then the page closes. Inside the page that is the root's onKeyDown (after
-  // the page's own controls had their say); with the focus nowhere (<body>: after a dialog closed, a toast was
-  // clicked, the focused row went away) the window catches it here, before the global Esc that would close the page
+  // Esc: a typed search is cleared first, then the dialog closes. Inside the dialog that is the root's onKeyDown
+  // (after the page's own controls had their say); with the focus nowhere (<body>: after a dialog closed, a toast was
+  // clicked, the focused row went away) the window catches it here, before the global Esc that would close it
   const esc = useRef(() => {});
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
@@ -226,7 +241,7 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
   // right after the click, ui-smoke's scrollIntoView of 「更多选项」 — was undone a moment later (polish P5: 通用's
   // 更多选项, below the fold, jumped back down between measuring and clicking)
   useLayoutEffect(() => {
-    // the nav keeps the current page in view (an advanced page, or a short window)
+    // the nav keeps the current page in view (a short window)
     root.current?.querySelector('.sp-si.on')?.scrollIntoView({ block: 'nearest' });
     const box = scroller.current;
     if (!box) return;
@@ -242,7 +257,7 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
   }, []);
 
   const status = useNavStatus();
-  const sec = findSection(target.section) ?? VISIBLE_SECTIONS[0];
+  const sec = findSection(target.section) ?? SETTINGS_SECTIONS[0];
   const searching = !!q.trim();
   esc.current = () => { if (searching) setQ(''); else close(); };
   const hits = searching ? searchSettings(q) : [];
@@ -250,84 +265,86 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
 
   const navItem = (s: SectionMeta) => (
     <button key={s.id} className={clsx('sp-si', s.id === sec.id && !searching && 'on')} data-section={s.id} aria-current={s.id === sec.id && !searching ? 'page' : undefined} onClick={() => pick({ section: s.id })}>
-      <Icon name={s.ic} size={15} /><span className="t">{s.l}</span>{status[s.id] && <span className="r">{status[s.id]}</span>}
+      <Icon name={s.ic} size={15} /><span className="t">{s.l}</span>{status[s.id] && <span className="r">{status[s.id]}</span>}<Icon name="chevronRight" size={15} className="sp-si-go" />
     </button>
   );
 
   return (
-    <div
-      ref={root}
-      tabIndex={-1}
-      className={clsx('modal settings sp', phonePage && 'phone-page', searching && 'searching')}
-      role="dialog"
-      aria-modal="true"
-      aria-label={tr('设置')}
-      data-section={sec.id}
-      data-tab={activeTab(sec, target.tab)?.id}
-      onKeyDown={(e) => {
-        if (e.key !== 'Escape') return;
-        e.stopPropagation();
-        esc.current();
-      }}
-    >
-      <nav className="sp-nav">
-        <div className="sp-nav-top">
-          <button className="sp-back" onClick={close} title={tr('返回 (Esc)')}><Icon name="restore" size={16} />{tr('返回')}</button>
-        </div>
-        <label className="sp-search">
-          <Icon name="search" size={14} />
-          <input ref={inp} placeholder={tr('搜索设置')} value={q} onChange={(e) => setQ(e.target.value)} aria-label={tr('搜索设置')} />
-          {!q && <span className="kbd">/</span>}
-        </label>
-        <div className="sp-groups">
-          {SETTINGS_GROUPS.filter((g) => g.id !== 'advanced').map((g) => (
-            <div key={g.id} className="sp-g">
-              <div className="sp-gh">{g.l}</div>
-              {VISIBLE_SECTIONS.filter((s) => s.group === g.id).map(navItem)}
-            </div>
-          ))}
-          <div className={clsx('sp-g sp-adv', advOpen && 'open')}>
-            <button className="sp-gh sp-adv-h" aria-expanded={advOpen} onClick={() => setAdvOpen(!advOpen)}>{tr('高级')}<Icon name={advOpen ? 'chevronDown' : 'chevronRight'} size={12} /></button>
-            {advOpen ? ADVANCED_SECTIONS.map(navItem) : <button className="sp-adv-sub" onClick={() => setAdvOpen(true)}>{ADVANCED_SECTIONS.map((s) => s.l).join(' · ')}</button>}
+    <div ref={layer} className={clsx('sp-layer', mobile && 'phone')}>
+      <div className="sp-scrim" aria-hidden />
+      <div
+        ref={root}
+        tabIndex={-1}
+        className={clsx('modal settings sp', phonePage && 'phone-page', searching && 'searching')}
+        role="dialog"
+        aria-modal="true"
+        aria-label={tr('设置')}
+        data-section={sec.id}
+        data-tab={activeTab(sec, target.tab)?.id}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return;
+          e.stopPropagation();
+          esc.current();
+        }}
+      >
+        <nav className="sp-nav">
+          {/* phones: the list's own bar — × closes the settings */}
+          <div className="sp-bar">
+            <button className="sp-bar-btn" data-act="close" onClick={close} aria-label={tr('关闭设置')}><Icon name="close" size={20} /></button>
+            <span className="sp-bar-title">{tr('设置')}</span>
+            <span className="sp-bar-btn ghost" />
           </div>
-        </div>
-        <VersionLine onOpen={() => pick({ section: 'update' })} />
-      </nav>
+          <label className="sp-search">
+            <Icon name="search" size={14} />
+            <input ref={inp} placeholder={tr('搜索设置')} value={q} onChange={(e) => setQ(e.target.value)} aria-label={tr('搜索设置')} />
+            {!q && !mobile && <span className="kbd">/</span>}
+          </label>
+          <div className="sp-groups">
+            {SETTINGS_GROUPS.map((g) => (
+              <div key={g.id} className="sp-g" data-group={g.id}>
+                <div className="sp-gh">{g.l}</div>
+                <div className="sp-gl">{SETTINGS_SECTIONS.filter((s) => s.group === g.id).map(navItem)}</div>
+              </div>
+            ))}
+          </div>
+          <VersionLine onOpen={() => pick({ section: 'diagnostics', body: 'update' })} />
+        </nav>
 
-      <main className="sp-main">
-        <div className="sp-drag" />
-        <div className="sp-scroll" ref={scroller}>
-          <div className="sp-inner">
-            <button className="sp-phone-back" onClick={() => setPhonePage(false)}><Icon name="restore" size={15} />{tr('全部设置')}</button>
-            {searching ? (
-              <SearchResults q={q} hits={hits} pick={pick} />
-            ) : (
-              <Page key={sec.id} sec={sec} tab={target.tab} reveal={target.reveal} moreOpen={moreOpen} setMoreOpen={setMoreOpen} setTab={(tab) => go({ section: sec.id, tab })} />
-            )}
+        <main className="sp-main">
+          {/* phones: a page's bar — ‹ back to the list, its name */}
+          <div className="sp-bar">
+            <button className="sp-bar-btn" data-act="back" onClick={() => setPhonePage(false)} aria-label={tr('全部设置')}><Icon name="chevronLeft" size={22} /></button>
+            <span className="sp-bar-title">{searching ? tr('搜索设置') : sec.l}</span>
+            <button className="sp-bar-btn" data-act="close" onClick={close} aria-label={tr('关闭设置')}><Icon name="close" size={20} /></button>
           </div>
-        </div>
-      </main>
+          <button className="icon-btn sp-x" data-act="close" onClick={close} title={tr('关闭 (Esc)')} aria-label={tr('关闭设置')}><Icon name="close" size={18} /></button>
+          <div className="sp-scroll" ref={scroller}>
+            <div className="sp-inner">
+              {searching ? (
+                <SearchResults q={q} hits={hits} pick={pick} />
+              ) : (
+                <Page key={sec.id} sec={sec} tab={target.tab} reveal={target.reveal} moreOpen={moreOpen} setMoreOpen={setMoreOpen} setTab={(tab) => go({ section: sec.id, tab })} />
+              )}
+            </div>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
 
-/** Nav row statuses: login (the server's shared `config.auth`), provider count, gateway on / off. Nothing that spawns MCP servers. */
+/** Nav row statuses: login (the server's shared `config.auth`). Nothing that spawns MCP servers. */
 function useNavStatus() {
-  const providers = useStore((s) => s.providers.length);
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
-  const [gateway, setGateway] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
     useStore.getState().checkAuth().then((a) => live && setLoggedIn(typeof a?.loggedIn === 'boolean' ? a.loggedIn : null)).catch(() => {});
-    const loadGw = () => ws.request<GatewayStatus>({ kind: 'gateway.status' }).then((g) => live && setGateway(!!g?.enabled)).catch(() => {});
-    void loadGw();
-    const off = ws.on((e) => { if (e.kind === 'gateway.changed') void loadGw(); });
-    return () => { live = false; off(); };
+    return () => { live = false; };
   }, []);
-  return navStatus({ loggedIn, providers, gatewayEnabled: gateway });
+  return navStatus({ loggedIn });
 }
 
-/** Bottom-left: the app version and whether it is current (desktop); click → 高级 › 更新. */
+/** Bottom-left: the app version and whether it is current (desktop); click → 高级 › 诊断与更新. */
 function VersionLine({ onOpen }: { onOpen: () => void }) {
   const [st, setSt] = useState<UpdateState | null>(null);
   useEffect(() => {
@@ -345,15 +362,31 @@ function VersionLine({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-function EntryRow({ sec, e, reveal }: { sec: SectionMeta; e: EntryMeta; reveal?: string }) {
+/** A tap anywhere on a row whose control is one switch flips it (phones: spec #phone 「整行都能点」). */
+function rowTap(e: MouseEvent<HTMLDivElement>) {
+  if (!useStore.getState().mobile) return;
+  const t = e.target as HTMLElement;
+  if (t.closest('button, a, input, textarea, select, label, [role="switch"], [role="button"], [role="combobox"]')) return;
+  const ctl = e.currentTarget.querySelector(':scope > .sp-row > .ctl');
+  const sw = ctl?.querySelectorAll('[role="switch"]');
+  if (sw?.length === 1 && ctl!.children.length === 1) (sw[0] as HTMLButtonElement).click();
+}
+
+/**
+ * One row: name + one sentence + the control on the right (the sentence without keyboard words on a phone). Shared
+ * with 自动化 › Bot › 设置 (bots/BotSettings.tsx): `area` names the place in its error card.
+ */
+export function EntryRow({ e, area, reveal }: { e: EntryMeta; area: string; reveal?: string }) {
+  const mobile = useStore((s) => s.mobile);
   return (
-    <div className={clsx('sp-row-wrap', e.wide && 'wide', reveal === e.id && 'reveal')} data-entry={e.id}>
-      <ErrorBoundary area={tr('设置 · {l} · {label}', { l: sec.l, label: e.label })} compact>
-        <Row label={e.label} hint={e.hint} tag={e.tag}>{CONTROLS[e.id](e)}</Row>
+    <div className={clsx('sp-row-wrap', e.wide && 'wide', reveal === e.id && 'reveal')} data-entry={e.id} onClick={rowTap}>
+      <ErrorBoundary area={tr('{area} · {label}', { area, label: e.label })} compact>
+        <Row label={e.label} hint={mobile ? e.touchHint ?? e.hint : e.hint} tag={e.tag}>{CONTROLS[e.id](e)}</Row>
       </ErrorBoundary>
     </div>
   );
 }
+const areaOf = (sec: SectionMeta) => tr('设置 · {l}', { l: sec.l });
 
 /** 更多选项: the page's low-frequency rows and parts. Mounted on first open (their requests wait until then), kept after. */
 function More({ open, onToggle, hint, children }: { open: boolean; onToggle: () => void; hint: string; children: ReactNode }) {
@@ -371,7 +404,7 @@ function More({ open, onToggle, hint, children }: { open: boolean; onToggle: () 
 
 function Page({ sec, tab, reveal, moreOpen, setMoreOpen, setTab }: { sec: SectionMeta; tab?: string; reveal?: string; moreOpen: boolean; setMoreOpen: (v: boolean) => void; setTab: (id: string) => void }) {
   const t = activeTab(sec, tab);
-  const entries = sec.entries ?? [];
+  const entries = entriesOn(sec, t?.id);
   const main = entries.filter((e) => !e.more);
   const moreEntries = entries.filter((e) => e.more);
   const bodies = t ? t.bodies : sec.bodies ?? [];
@@ -392,15 +425,9 @@ function Page({ sec, tab, reveal, moreOpen, setMoreOpen, setTab }: { sec: Sectio
     <>
       <h1 className="sp-title">{sec.l}</h1>
       <div className="sp-lead">{sec.desc}</div>
-      {/* 设置 › 模型 (redesign 2026-11 stage 1): the model hub — sources, accounts, routing, usage — opens from here
-          (the rail's 模型 is gone; stage 2 makes these three pages one with the hub's own tabs) */}
-      {sec.group === 'model' && (
-        <div className="sp-hub-link" data-act="open-hub">
-          <Icon name="gateway" size={16} />
-          <span className="t">{tr('来源、账号、路由和用量都在模型看板里')}</span>
-          <button className="btn sm" onClick={() => { useStore.setState({ settingsOpen: null }); openHub(); }}>{tr('打开模型看板')}</button>
-        </div>
-      )}
+      {/* 设置 › 模型 (spec #pages 「设置弹窗」 note 1): the big board of sources, accounts, routing and usage opens
+          full-page from here */}
+      {sec.id === 'model' && <ModelHubLink />}
       {sec.tabs && (
         <div className="sp-tabs" role="tablist">
           {sec.tabs.map((x) => <button key={x.id} role="tab" aria-selected={x.id === t?.id} data-tab={x.id} className={clsx(x.id === t?.id && 'on')} onClick={() => setTab(x.id)}>{x.l}</button>)}
@@ -409,13 +436,13 @@ function Page({ sec, tab, reveal, moreOpen, setMoreOpen, setTab }: { sec: Sectio
       {blocks.map((b, i) => (
         <div key={b.h ?? i}>
           {b.h && <div className="sp-blk-h">{b.h}</div>}
-          <div className="sp-card">{b.rows.map((e) => <EntryRow key={e.id} sec={sec} e={e} reveal={reveal} />)}</div>
+          <div className="sp-card">{b.rows.map((e) => <EntryRow key={e.id} e={e} area={areaOf(sec)} reveal={reveal} />)}</div>
         </div>
       ))}
       <div key={t?.id ?? 'page'} className="sp-bodies">{bodies.map(body)}</div>
       {(moreEntries.length > 0 || moreBodies.length > 0) && (
         <More key={`more-${t?.id ?? ''}`} open={moreOpen} onToggle={() => setMoreOpen(!moreOpen)} hint={moreHint(sec, t?.id)}>
-          {moreEntries.length > 0 && <div className="sp-card">{moreEntries.map((e) => <EntryRow key={e.id} sec={sec} e={e} reveal={reveal} />)}</div>}
+          {moreEntries.length > 0 && <div className="sp-card">{moreEntries.map((e) => <EntryRow key={e.id} e={e} area={areaOf(sec)} reveal={reveal} />)}</div>}
           {moreBodies.map(body)}
         </More>
       )}
@@ -429,24 +456,47 @@ function SearchResults({ q, hits, pick }: { q: string; hits: SettingsHit[]; pick
       <h1 className="sp-title q">{tr('搜索「{q}」', { q: q.trim() })}</h1>
       <div className="sp-lead">{hits.length ? tr('{hitsCount} 条结果', { hitsCount: hits.length }) : tr('没有匹配的设置。试试别的说法，或者换成英文 / 旧名称。')}</div>
       <div className="sp-hits">
-        {hits.map((h) => h.kind === 'entry' ? (
-          <div key={`e:${h.entry.id}`} className="sp-hit">
-            <button className="sp-crumb" title={tr('打开这一页')} onClick={() => pick({ section: h.section.id, reveal: h.entry.id, more: h.entry.more })}>{h.crumb}</button>
-            <div className="sp-card"><EntryRow sec={h.section} e={h.entry} /></div>
-          </div>
-        ) : (
-          <button
-            key={`p:${h.section.id}:${h.tab?.id ?? ''}:${h.body ?? ''}`}
-            className="sp-jump"
-            data-target={`${h.section.id}${h.tab ? `/${h.tab.id}` : ''}${h.body ? `#${h.body}` : ''}`}
-            onClick={() => pick({ section: h.section.id, tab: h.tab?.id, body: h.body, more: h.more })}
-          >
-            <Icon name={h.section.ic} size={15} />
-            <span className="t">{h.title}</span>
-            <span className="sp-crumb">{h.crumb}</span>
-            <Icon name="chevronRight" size={14} />
-          </button>
-        ))}
+        {hits.map((h) => {
+          switch (h.kind) {
+            case 'entry':
+              return (
+                <div key={`e:${h.entry.id}`} className="sp-hit">
+                  <button className="sp-crumb" title={tr('打开这一页')} onClick={() => pick({ section: h.section.id, tab: h.entry.tab, reveal: h.entry.id, more: h.entry.more })}>{h.crumb}</button>
+                  <div className="sp-card"><EntryRow e={h.entry} area={areaOf(h.section)} /></div>
+                </div>
+              );
+            case 'away-entry':
+              return (
+                <div key={`a:${h.entry.id}`} className="sp-hit" data-away={h.target.to}>
+                  <button className="sp-crumb" title={tr('打开这一页')} onClick={() => goAway(h.target)}>{h.crumb}</button>
+                  <div className="sp-card"><EntryRow e={h.entry} area={h.crumb} /></div>
+                </div>
+              );
+            case 'away':
+              return (
+                <button key={`x:${h.id}`} className="sp-jump" data-target={`away:${h.id}`} onClick={() => goAway(h.target)}>
+                  <Icon name={h.ic} size={15} />
+                  <span className="t">{h.title}</span>
+                  <span className="sp-crumb">{h.crumb}</span>
+                  <Icon name="external" size={14} />
+                </button>
+              );
+            default:
+              return (
+                <button
+                  key={`p:${h.section.id}:${h.tab?.id ?? ''}:${h.body ?? ''}`}
+                  className="sp-jump"
+                  data-target={`${h.section.id}${h.tab ? `/${h.tab.id}` : ''}${h.body ? `#${h.body}` : ''}`}
+                  onClick={() => pick({ section: h.section.id, tab: h.tab?.id, body: h.body, more: h.more })}
+                >
+                  <Icon name={h.section.ic} size={15} />
+                  <span className="t">{h.title}</span>
+                  <span className="sp-crumb">{h.crumb}</span>
+                  <Icon name="chevronRight" size={14} />
+                </button>
+              );
+          }
+        })}
       </div>
     </>
   );

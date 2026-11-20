@@ -25,6 +25,7 @@ import { pickFolder } from '@/ui/pick-folder';
 import { openFamily } from '@/features/automation/family';
 import { openExtensions } from '@/features/extensions/state';
 import { openHub } from '@/features/model-hub/state';
+import { openBotSettings } from '@/features/bots/state';
 import { openArtifacts } from '@/features/artifacts/state';
 import { showPanel } from '@/features/workbench/right-panel';
 import { MOVED, PANEL_OLD_NAMES, type MovedTarget } from './moved';
@@ -39,7 +40,8 @@ function goTo(t: MovedTarget): void {
     case 'hub': openHub(t.page); return;
     case 'artifacts': openArtifacts(); return;
     case 'panel': showPanel(t.panel); return;
-    case 'settings': useStore.getState().openSettings({ section: t.section }); return;
+    case 'settings': useStore.getState().openSettings({ section: t.section, tab: t.tab }); return;
+    case 'bots-settings': openBotSettings(); return;
   }
 }
 

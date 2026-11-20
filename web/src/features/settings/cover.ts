@@ -1,17 +1,19 @@
-// The settings page covers the whole window while the app stays mounted underneath (nothing may unmount: terminals,
-// drafts, editors). Covering is not enough on its own: keyboard focus would stay in the covered composer / editor /
-// terminal, so typing would land there unseen, Enter would send, Esc would interrupt a running turn (review C1).
-// `coverApp` makes the rest of the app inert while the page is open and gives focus back when it closes.
+// The settings dialog covers the window (a scrim over the app; a phone: the whole screen) while the app stays mounted
+// underneath (nothing may unmount: terminals, drafts, editors). Covering is not enough on its own: keyboard focus would
+// stay in the covered composer / editor / terminal, so typing would land there unseen, Enter would send, Esc would
+// interrupt a running turn (review C1). `coverApp` makes the rest of the app inert while the dialog is open and gives
+// focus back when it closes.
 import { closeAnchoredMenus } from '@/ui/menus';
 
 /**
  * Layers drawn above the page that stay usable while it covers the app: dialogs (asked for from inside the page),
  * the command palette, the shortcut sheet (`?` / F1 from the page, final review M1: it used to open under the page and
- * show up only after it closed), toasts, the image viewer, crash cards and first-run onboarding. An allow-list rather than
- * "fixed with a higher z-index": the phone's sidebar drawer is fixed at z-index 60 too, and must not float over the
- * page as a live layer (review round 2).
+ * show up only after it closed), toasts, the image viewer, crash cards, first-run onboarding, and the window's own
+ * minimise / maximise / close (Windows / Linux, `.win-ctl`: the dialog starts under them — redesign 2026-11 stage 2).
+ * An allow-list rather than "fixed with a higher z-index": the phone's sidebar drawer is fixed at z-index 60 too, and
+ * must not float over the page as a live layer (review round 2).
  */
-export const ABOVE_COVER = '.dialog-bg, .palette-bg, .shortcuts-bg, .toast-wrap, .viewer, .err-boundary.floating';
+export const ABOVE_COVER = '.dialog-bg, .palette-bg, .shortcuts-bg, .toast-wrap, .viewer, .err-boundary.floating, .win-ctl';
 
 /** Is this sibling one of the layers above the page? */
 export function aboveCover(el: Element): boolean {

@@ -93,7 +93,7 @@ export function AccountRow({ open, setOpen }: { open: boolean; setOpen(v: boolea
           <span className="sub">{connected ? <UsageRing tip={false} ring={false} fallbackPlan={auth?.subscriptionType} /> : <span className="conn-off"><ProcessGlyph process="connect" /> {tr('连接断开，正在重连…')}</span>}</span>
         </span>
       </button>
-      <button className="icon-btn sb-gear" data-id={id('settings')} title={tr('设置 ({modKey}+,) · 右键：在右侧面板打开配置中心', { modKey })} aria-label={tr('设置')} onClick={settings} onContextMenu={(e) => { e.preventDefault(); if (showPanel('config')) closeDrawer(); }}>
+      <button className="icon-btn sb-gear" data-id={id('settings')} title={tr('设置 ({modKey}+,)', { modKey })} aria-label={tr('设置')} onClick={settings}>
         <Icon name="settings" size={16} />
       </button>
       {open && <AccountMenu auth={auth} name={who.name} onClose={() => setOpen(false)} />}

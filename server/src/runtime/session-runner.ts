@@ -93,7 +93,7 @@ export function sendRefused(failed: boolean, reason?: string): string {
   // the folder is gone: the provider is fine, and resending fails the same way (missingCwd says what to do)
   if (reason && CWD_WORDS.some((w) => reason.includes(w))) return tr('这个对话的进程没能启动：{reason}', { reason });
   // the reason is explained already (withExplanation: a Chinese line, then the original), so the advice goes after it
-  return tr("这个对话的进程出错退出了{v}\n再发一次会重新打开它；还是不行的话，到 设置 → 供应商 点「测试连接」看看。", { v: reason ? `：${reason}` : '。' });
+  return tr("这个对话的进程出错退出了{v}\n再发一次会重新打开它；还是不行的话，到 设置 → 模型 → 来源 点「测试连接」看看。", { v: reason ? `：${reason}` : '。' });
 }
 
 /** Unbounded async queue used as the SDK's streaming-input prompt. */

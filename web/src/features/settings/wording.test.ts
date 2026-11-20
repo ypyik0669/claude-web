@@ -17,22 +17,18 @@ import { BODY_INFO, SETTINGS_SECTIONS, VISIBLE_SECTIONS, allBodies, type BodyId 
 const SRC = path.resolve(__dirname, '..', '..');
 const read = (f: string) => fs.readFileSync(path.join(SRC, f), 'utf8');
 
-const CONFIG = 'features/panels/ConfigPanel.tsx';
 const S = (f: string) => `features/settings/${f}`;
+// the parts that came from the old 配置中心 panel (gone in the redesign 2026-11 stage 2)
+const CONFIG = S('config-parts.tsx');
 /** Which component draws each part, where it is exported from, and the props that tell same-component parts apart. */
 const BODY_SOURCE: Record<BodyId, { comp: string; file: string; props?: string }> = {
   account: { comp: 'AccountSection', file: S('AccountSection.tsx') },
   engine: { comp: 'Overview', file: CONFIG, props: 'part="engine"' },
+  usage: { comp: 'UsagePanel', file: 'features/panels/UsagePanel.tsx' },
   models: { comp: 'ModelsSection', file: S('ModelsSection.tsx') },
   providers: { comp: 'ProviderProfiles', file: CONFIG },
   proxy: { comp: 'ProxySection', file: S('ProxySection.tsx') },
   gateway: { comp: 'GatewaySection', file: S('GatewaySection.tsx') },
-  mcp: { comp: 'Mcp', file: CONFIG },
-  mcpCatalog: { comp: 'McpCatalog', file: S('McpCatalog.tsx') },
-  mcpJson: { comp: 'McpAddJson', file: CONFIG },
-  plugins: { comp: 'Plugins', file: CONFIG },
-  skills: { comp: 'SkillsSection', file: S('SkillsSection.tsx') },
-  skillsBackup: { comp: 'SkillsBackup', file: S('SkillsSection.tsx') },
   agents: { comp: 'AgentsSection', file: S('AgentsSection.tsx') },
   subagents: { comp: 'SimpleList', file: CONFIG, props: 'kind="config.agents"' },
   memory: { comp: 'MemorySettings', file: 'features/memory/MemorySettings.tsx' },
@@ -44,6 +40,7 @@ const BODY_SOURCE: Record<BodyId, { comp: string; file: string; props?: string }
   web: { comp: 'WebSettings', file: 'features/browser/WebSettings.tsx' },
   library: { comp: 'LibrarySection', file: S('LibrarySection.tsx') },
   secrets: { comp: 'SecretsSection', file: S('SecretsSection.tsx') },
+  privacy: { comp: 'PrivacyLink', file: S('HubLinks.tsx') },
   hooks: { comp: 'SimpleList', file: CONFIG, props: 'kind="config.hooks"' },
   localEnv: { comp: 'LocalEnvEditor', file: S('LocalEnvEditor.tsx') },
   env: { comp: 'EnvEditor', file: S('EnvEditor.tsx'), props: 'bare' },
@@ -218,7 +215,7 @@ describe('non-advanced settings pages speak the interface vocabulary (ui/terms.t
       byFile.get(file)!.add(comp);
     }
     for (const [file, comps] of byFile) {
-      // the dock's config panel shares ConfigPanel.tsx: only what the settings pages draw, and its helpers
+      // config-parts.tsx also holds 自定义's JSON form: only what the settings pages draw, and its helpers
       if (file === CONFIG) scan(file, onlyDeclarations(file, read(file), [...comps, ...CONFIG_HELPERS]), `${file}#${[...comps, ...CONFIG_HELPERS].join(',')}`);
       else scan(file, read(file)); // files that hold one page's parts: whole (their helpers draw the same page)
     }

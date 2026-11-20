@@ -4,7 +4,7 @@
 import type { IconName } from '@/ui/icons';
 import { tr } from '@/i18n';
 
-export type PanelId = 'tasks' | 'files' | 'explorer' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra' | 'board' | 'browser' | 'cafe';
+export type PanelId = 'tasks' | 'files' | 'explorer' | 'usage' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra' | 'board' | 'browser' | 'cafe';
 /** A chat tile's view: the conversation (`live`) or one of the per-session workbench views. */
 export const WORKBENCH_TABS = ['live', 'changes', 'git', 'files', 'search', 'schedules', 'artifacts', 'board'] as const;
 export type WorkbenchTab = (typeof WORKBENCH_TABS)[number];
@@ -34,7 +34,6 @@ export const PANELS: { id: PanelId; title: string; icon: IconName; tier: PanelTi
   { id: 'files', title: tr('审阅'), icon: 'diff', tier: 'core', rail: true },
   { id: 'explorer', title: tr('文件'), icon: 'folder', tier: 'core' },
   { id: 'usage', title: tr('用量'), icon: 'usage', tier: 'extra' },
-  { id: 'config', title: tr('配置中心'), icon: 'config', tier: 'workbench' },
   // keepAlive: the tab holds a live process (a pty) — toggling it off hides the panel instead of closing the tab
   { id: 'terminal', title: tr('终端'), icon: 'terminal', tier: 'core', rail: true, keepAlive: true },
   // keepAlive: its pages are live (a webview each) — and an Agent may be working in one of them
@@ -707,6 +706,12 @@ export function sanitizeLayout(x: unknown): LayoutState | null {
     if (!g.root || !g.panes) return null;
     const order = paneOrder(g.root);
     if (!order.length || order.some((id) => !g.panes[id])) return null;
+    // a panel tile of a panel this version does not have (配置中心, gone in the redesign 2026-11 stage 2) has no body
+    for (const id of order) {
+      const p = g.panes[id];
+      const tiles = (Array.isArray(p.tiles) ? p.tiles : []).filter((t) => t.kind !== 'panel' || PANEL_IDS.includes(t.panel));
+      if (tiles.length !== p.tiles.length) g.panes[id] = { ...p, tiles, activeTileId: tiles.some((t) => t.id === p.activeTileId) ? p.activeTileId : tiles[0]?.id ?? null };
+    }
     for (const id of order) if (!g.panes[id].tiles.length) { const t = chatTile(); g.panes[id] = { ...g.panes[id], tiles: [t], activeTileId: t.id }; }
     // drop panes that are not in the tree
     for (const id of Object.keys(g.panes)) if (!order.includes(id)) delete g.panes[id];

@@ -1,6 +1,6 @@
 // 本机发现: which other agents / editors keep data on THIS computer, and whether the conversation library can read
 // it. A bounded look at known directories only — never the whole disk, never a credential file, never a process.
-// `readable` means a SessionSource exists for it (the switch next to it in 设置 → 对话库); the rest is listed so the
+// `readable` means a SessionSource exists for it (the switch next to it in 设置 → 记忆与对话库); the rest is listed so the
 // user sees what was found instead of guessing why a tool is missing.
 import fs from 'node:fs/promises';
 import os from 'node:os';

@@ -7,7 +7,7 @@ import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
 import type { AgentConfigBackup, AgentConfigFile, AgentConfigKind, AgentConfigState, AgentSettingField, ClaudeMcpEntry, McpSpec, McpSyncResult, McpSyncSource } from '@shared';
 import { EMPTY_FORM, catalogSpec, describeSpec, formFromCatalog, formToSpec, settingToCommit, type McpForm } from './agent-config-form';
-import { MCP_CATALOG } from './McpCatalog';
+import { MCP_CATALOG } from './mcp-catalog';
 import { tr, dateLocale } from '@/i18n';
 import { Select } from '@/ui/Select';
 import { SwitchChip } from '@/ui/Switch';

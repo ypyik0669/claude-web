@@ -97,7 +97,6 @@ export const EN_DESKTOP: Record<string, string> = {
   "退出 {APP_NAME}": "Quit {APP_NAME}",
   "退出会结束对话的进程（记录保留在磁盘，发消息即可继续）；未保存的编辑会丢失。": "Quitting ends the conversations' processes (the records stay on disk, send a message to continue); unsaved edits will be lost.",
   "选择工作目录": "Choose a working folder",
-  "配置中心（右侧面板）": "Config center (side panel)",
   "重命名分组": "Rename group",
   "重新加载": "Reload",
   "键盘快捷键": "Keyboard shortcuts",

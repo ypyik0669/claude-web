@@ -149,6 +149,18 @@
 .cx-form select.field { width: auto; flex: none; }
 .cx-form .btn { height: 36px; padding: 0 16px; flex: none; }
 .cx .cx-hint { color: var(--ink-3); font-size: var(--fs-sm); line-height: 1.5; }
+/* 连接器's JSON form (用配置手动添加…, the old settings MCP page's 更多选项) */
+.cx-json .section { padding: 0; }
+.cx-json .section h5 { margin: 0 0 var(--sp-2); font-size: var(--fs-body); font-weight: 600; color: var(--ink-1); }
+.cx-json textarea.code { width: 100%; }
+/* Artifact 类型 with none yet (redesign 2026-11 stage 2: a placeholder until open-artifact is wired in) */
+.cx-empty { align-items: flex-start; gap: var(--sp-3); padding: var(--sp-6) 0 var(--sp-4); max-width: 620px; }
+.cx-empty p { margin: 0; color: var(--ink-2); font-size: var(--fs-base); line-height: 1.6; }
+.cx-empty .cx-empty-line { color: var(--ink-1); font-size: var(--fs-body); }
+.cx-empty .cx-path { padding: 6px 10px; border-radius: var(--r-md); background: var(--fill-subtle); font-size: var(--fs-sm); color: var(--ink-1); }
+.cx-empty-acts { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.cx-empty-acts .btn, .cx-bar > .btn { display: inline-flex; align-items: center; gap: 6px; }
+.cx-d.mono { font-size: var(--fs-sm); color: var(--ink-4); }
 
 /* ---- the right panel's fifth fixed tab 浏览器 (spec §4) ---- */
 /* no room for five names (tab-row.ts `fixedShort`): only the tab in front keeps its name, the others are their icons */
@@ -294,6 +306,11 @@
 .app.mobile .over-tabs::-webkit-scrollbar { display: none; }
 .app.mobile .fam-tabs .ft, .app.mobile .over-tabs .ht { height: 44px; padding: 0 14px; font-size: var(--fs-base); }
 .app.mobile .fam-tabs .ft:first-child, .app.mobile .over-tabs .ht:first-child { margin-left: 0; }
+.app.mobile .over-tabs .ht { flex: none; }
+/* 连接器's categories: one row that scrolls sideways, not two (spec #phone 问题 13), each a 44px target */
+.app.mobile .cx-cats { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--sp-3)) var(--sp-1); padding: 0 var(--sp-3); }
+.app.mobile .cx-cats::-webkit-scrollbar { display: none; }
+.app.mobile .cx-cats .ht { flex: none; height: 44px; padding: 0 14px; white-space: nowrap; }
 .app.mobile .arts-body { padding: var(--sp-3) var(--sp-3) var(--sp-6); }
 .app.mobile .arts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2); }
 .app.mobile .arts-th { height: 96px; }

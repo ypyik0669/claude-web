@@ -9,6 +9,17 @@
 .app.mobile { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .app.mobile :is(.chat, .sb-list, .dock-panel, .welcome, .sp-scroll, .over-body, .rv-list, .menu) { overscroll-behavior: contain; }
 
+/* ---- the switch: 51 × 31 like the system's (redesign 2026-11 stage 2, spec #phone 问题 1 — it was 36 × 20); the small
+   one drawn inside a menu row (`.toggle.sm`, the row is the target) keeps its size ---- */
+.app.mobile .toggle:not(.sm) { width: 51px; height: 31px; }
+.app.mobile .toggle:not(.sm)::after { top: 2px; left: 2px; width: 27px; height: 27px; }
+.app.mobile .toggle:not(.sm).on::after { transform: translateX(20px); }
+.app.mobile .toggle:not(.sm):active:not(:disabled)::after { width: 31px; }
+.app.mobile .toggle:not(.sm).on:active:not(:disabled)::after { transform: translateX(16px); }
+.app.mobile .hub-switch { width: 51px; height: 31px; }
+.app.mobile .hub-switch::after { width: 27px; height: 27px; }
+.app.mobile .hub-switch.on::after { left: 22px; }
+
 /* ---- a tap lands on anything within 44px: the drawing stays its size, the target grows around it ---- */
 /* (zero specificity: anything already placed — an absolute ··· on a row — keeps its own position) */
 :where(.app.mobile) :where(.icon-btn, .sh-diff, .cb .plus, .cb .cchip, .cb .mm-anchor > .chip, .msg-actions button, .link, .sp-more-h, .turn-sum) { position: relative; }
@@ -109,9 +120,5 @@
   /* the folder browser: 新建文件夹 · 显示隐藏的 on a line of their own, 取消 · 选择 the two halves under them */
   .modal-bg > .modal .folder-browser .fb-tools { flex: 1 1 100%; justify-content: space-between; margin-right: 0; }
   .modal-bg > .modal .folder-browser .fb-tools .btn { flex: none; }
-  .sp-si, .sp-back { height: 44px; font-size: var(--fs-body); }
-  .sp-row { min-height: 60px; }
-  .modal.settings .sp-search { height: 40px; }
-  .sp-nav { padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: calc(var(--sp-3) + env(safe-area-inset-bottom, 0px)); }
-  .sp-inner { padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px)); }
+  /* (the settings' phone layout is styles.css's `.sp-layer.phone`: a page pushed in, its own bars and safe areas) */
 }

@@ -235,7 +235,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
 
   const meta = new MetaStore();
   await meta.load();
-  // the user's proxy (a ladder's system proxy, HTTP(S)_PROXY, or 设置 → 供应商 → 网络代理) for this process's own
+  // the user's proxy (a ladder's system proxy, HTTP(S)_PROXY, or 设置 → 模型 → 来源 → 网络代理) for this process's own
   // requests and every CLI it starts; requests that go out wait for this first look (net/proxy.ts)
   proxy.configure(() => meta.settings()['network.proxy']);
   void proxy.refresh().catch(() => {});

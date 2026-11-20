@@ -11,7 +11,7 @@ import {
 import { tr } from '@/i18n';
 import { SwitchChip } from '@/ui/Switch';
 
-// 设置 → 手机与其它电脑 → 更多选项: what 在外面也能用 runs on — the signaling brokers, the STUN servers, the phone page
+// 设置 → 手机与远程 → 更多选项: what 在外面也能用 runs on — the signaling brokers, the STUN servers, the phone page
 // the QR opens — and its last 20 connections. The network words (MQTT / WebRTC / STUN / ICE) are allowed here and in
 // tooltips only (spec §10; wording.test.ts lets this file use them because it draws nothing but a 更多选项 part).
 // Each list is saved as a whole with 保存 (a bad row is a sentence, nothing is saved); 恢复默认 removes the setting.

@@ -576,6 +576,11 @@ export type LiveFeatureKey = (typeof LIVE_FEATURES)[number];
 /** One question and answer of a side chat (旁聊), as the CLI wants them. */
 /** A file Claude wrote (Write / Artifact) in a recent conversation, still on disk. */
 export interface ArtifactRef { path: string; sessionId: string; title: string; at: number }
+/**
+ * An Artifact type the user added (自定义 › Artifact 类型): a folder of ~/.agents/artifact-types. `format`: what made
+ * it a type — an `artifact-type.json` (open-artifact), a SKILL.md, or an `index.html` (claude.ai's own format).
+ */
+export interface ArtifactTypeInfo { id: string; name: string; summary?: string; version?: string; path: string; format: 'manifest' | 'skill' | 'frame' }
 
 export interface SideTurn { question: string; response: string }
 
@@ -668,6 +673,8 @@ export type ClientRequest =
   | { kind: 'app.changelog'; lang: string }
   /** 生成的文件 across the recent conversations here → `{ items: ArtifactRef[] }` */
   | { kind: 'artifacts.list' }
+  /** 自定义 › Artifact 类型: the user's type folders → `{ root, exists, types: ArtifactTypeInfo[] }` (read only) */
+  | { kind: 'artifactTypes.list' }
   /** 本机环境变量: names only → `{ names: string[] }`; a value only on `env.reveal` → `{ value }`; `env.set` with
    *  `value: null` removes. In every conversation / terminal started here, under 供应商's own variables */
   | { kind: 'env.list' }

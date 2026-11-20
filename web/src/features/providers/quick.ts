@@ -87,8 +87,8 @@ export interface ProbeLike { ok: boolean; status?: number; error?: string; model
 
 /** A provider refusing this machine's region (user report: 403 "Access from this region requires trusted account access"). */
 export const REGION_RE = /\bregion\b|country|territory|location is not supported|unsupported_country|地区|国家/i;
-/** Where the proxy is set (catalog: the `proxy` part of the 供应商 page). */
-export const PROXY_SETTING_PATH = tr('设置 → 供应商 → 网络代理');
+/** Where the proxy is set (catalog: the `proxy` part of 模型 › 来源). */
+export const PROXY_SETTING_PATH = tr('设置 → 模型 → 来源 → 网络代理');
 export const REGION_BLOCKED = tr('这个服务不接受你所在地区的直连请求。开着梯子的话，看 {PROXY_SETTING_PATH} 是否显示在用它；没开就先开梯子再试。', { PROXY_SETTING_PATH });
 
 /** A failed check in words a first-time user can act on (the raw error stays in the tooltip). */

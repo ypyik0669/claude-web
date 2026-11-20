@@ -1,4 +1,4 @@
-// 设置 › 通用 › 值班 Bot (spec 2026-10-30-duty-bots-design §「设置 → Bot」, §10): the controls of the rows that are more than a
+// 自动化 › Bot › 设置 (until the redesign 2026-11 stage 2: 设置 › 通用 › 值班 Bot; spec 2026-10-30-duty-bots-design §「设置 → Bot」, §10): the controls of the rows that are more than a
 // plain meta.json switch — the global budget, the default source, the headless duty service, the desktop shell's
 // tray / launch-at-login, and 放开全部 / 收回. Every value still goes through `settings.set`.
 import { useEffect, useState } from 'react';

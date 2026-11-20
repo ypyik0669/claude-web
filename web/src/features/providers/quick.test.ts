@@ -61,7 +61,7 @@ describe('quick connect: a failed check in plain words', () => {
     for (const error of ['Access from this region requires trusted account access', 'Country, region, or territory not supported', 'User location is not supported for the API use.']) {
       const t = explainProbe({ ok: false, status: 403, error }, 'list');
       expect(t, error).toMatch(/所在地区/);
-      expect(t).toContain('设置 → 供应商 → 网络代理');
+      expect(t).toContain('设置 → 模型 → 来源 → 网络代理');
     }
     expect(explainProbe({ ok: false, status: 403, error: 'forbidden: regional_endpoint_key mismatch' }, 'list')).toMatch(/API Key 不对/);
   });

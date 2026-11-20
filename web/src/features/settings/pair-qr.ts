@@ -1,4 +1,4 @@
-// The pairing QR image (设置 → 手机与其它电脑): dark on white, what every phone camera reads. A link that names the
+// The pairing QR image (设置 → 手机与远程): dark on white, what every phone camera reads. A link that names the
 // PC's own broker / STUN lists is long (up to core's MAX_PAIR_LINK_BYTES, which the list editor holds them to), so the
 // error correction drops to L only when M cannot hold the link, and the image is drawn at several pixels a module and
 // shown larger when the code is dense, so it still scans off a screen.

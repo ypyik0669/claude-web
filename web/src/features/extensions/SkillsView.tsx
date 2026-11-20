@@ -19,9 +19,10 @@ const SUGGESTED = [
 type Scope = 'user' | 'project';
 
 /**
- * Skills on the 扩展 page (spec 2026-10-10-ui-structure §4): the ones installed (open, show in folder, delete), a
- * couple of collections to start from, and installing from GitHub or a folder. The same requests as the settings
- * page's list (skills.list / install / create / remove).
+ * Skills on the 自定义 page (spec 2026-10-10-ui-structure §4): the ones installed (open, show in folder, delete), a
+ * couple of collections to start from, installing from GitHub or a folder, and the backup of the user-level ones
+ * (the settings' Skills page and its 更多选项 › 备份 moved here in the redesign 2026-11 stage 2; the old id `skills`
+ * opens this tab). Requests: skills.list / install / create / remove / backup.
  */
 export function SkillsView() {
   const active = useScopedSession();
@@ -114,6 +115,31 @@ export function SkillsView() {
           <button className="btn primary" disabled={!!busy || !src.trim()} onClick={() => void install(src.trim())}>{busy?.startsWith('install:') ? tr('安装中…') : tr('安装')}</button>
         </div>
       </section>
+
+      <SkillsBackup />
     </div>
+  );
+}
+
+/** The backup of the user-level skills: a tar in ~/.claude-web/backups (restore: unpack it back into ~/.claude). */
+export function SkillsBackup() {
+  const toast = useStore((s) => s.toast);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const backup = async () => {
+    setBusy(true); setMsg('');
+    try { const f = await ws.request<string>({ kind: 'skills.backup' }); toast(tr('已备份'), true); setMsg(tr('已备份到 {f}', { f })); } catch (e: any) { setMsg(e.message); }
+    setBusy(false);
+  };
+  return (
+    <section className="cx-sec" data-id="backup">
+      <div className="cx-h"><h3>{tr('备份')}</h3></div>
+      <div className="cx-form">
+        <button className="btn" disabled={busy} onClick={backup}>{tr('备份用户级 skills')}</button>
+        <button className="btn ghost" onClick={() => ws.request({ kind: 'shell.open', path: '~/.claude-web/backups' }).catch(() => {})}>{tr('打开备份目录')}</button>
+      </div>
+      <div className="cx-hint">{tr('tar 归档放在 ~/.claude-web/backups；恢复：把 tar 解压回 ~/.claude 即可。')}</div>
+      {msg && <div className="cx-hint" style={{ whiteSpace: 'pre-wrap' }}>{msg}</div>}
+    </section>
   );
 }

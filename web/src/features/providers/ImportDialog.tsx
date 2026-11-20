@@ -24,7 +24,7 @@ export function initialPicks(items: ImportItem[], only?: ImportItem['kind']): Se
 /**
  * 从其它工具导入 (2026-10-17 user request: Hermes, Mirasim, every other IDE / agent): what other tools on this computer
  * have configured — providers and MCP servers — ticked unless this app has them already; 导入 takes the ticked ones.
- * Opened from 设置 → 供应商 (providers first) and 扩展 → 连接器 (MCP servers first).
+ * Opened from 设置 → 模型 → 来源 (providers first) and 自定义 → 连接器 (MCP servers first).
  */
 export function ImportDialog({ only, onClose }: { only?: ImportItem['kind']; onClose: () => void }) {
   const loadProviders = useStore((s) => s.loadProviders);

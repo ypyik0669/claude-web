@@ -69,7 +69,7 @@ export const ERROR_HINT: Record<ErrorKind, string> = {
   balance: tr('供应商账户的余额不够了：去供应商那里充值，或在模型菜单里换一个供应商。'),
   network: tr('检查网络或 Base URL；中转站可能暂时不可达。'),
   stream: tr('网络、代理或中转在回答途中断开了，这一轮停在这里：点重试，或者发「继续」接着做。'),
-  credential: tr('供应商的 API Key 不对或过期（设置 → 供应商），或 Claude 账号登录失效（终端里运行 claude auth login）。'),
+  credential: tr('供应商的 API Key 不对或过期（设置 → 模型 → 来源），或 Claude 账号登录失效（终端里运行 claude auth login）。'),
   context: tr('对话太长了：/compact 压缩，或从某条消息分叉一个新对话。'),
   output_cap: tr('单次输出超过上限，让模型分段继续。'),
   server: tr('上游 5xx / 过载，稍后重试通常就好。'),
@@ -89,13 +89,13 @@ export const ERROR_HINT: Record<ErrorKind, string> = {
  */
 /** Under the first retry of a refused key, worded like `noResponseHint` for what the conversation talks to. */
 export function credentialHint(provider?: string): string {
-  if (provider) return tr('「{provider}」拒绝了这个 API Key：检查 设置 → 供应商 →「{provider2}」里的 Key（可以点「测试连接」）。', { provider, provider2: provider });
+  if (provider) return tr('「{provider}」拒绝了这个 API Key：检查 设置 → 模型 → 来源 →「{provider2}」里的 Key（可以点「测试连接」）。', { provider, provider2: provider });
   return tr('这个对话用的是「Claude 账号」，没有经过你添加的供应商（中转）：被拒的是 Claude 账号的登录，或者 ~/.claude/settings.json 里写的 Key。要用供应商：点输入框右下角的模型按钮，在供应商那一节选一个模型。');
 }
 
 export function noResponseHint(provider?: string): string {
   const why = tr('具体原因要等十次重试走完才会显示；常见原因：代理（梯子）没开或端口不对，或者域名解析不了。');
-  if (provider) return tr('连不上「{provider}」。{why}想马上知道：设置 → 供应商 →「{provider2}」的「测试连接」。', { provider, why, provider2: provider });
+  if (provider) return tr('连不上「{provider}」。{why}想马上知道：设置 → 模型 → 来源 →「{provider2}」的「测试连接」。', { provider, why, provider2: provider });
   return tr('这个对话用的是「Claude 账号」，没有经过你添加的供应商（中转）。要用供应商：点输入框右下角的模型按钮，在供应商那一节选一个模型。{why}', { why });
 }
 

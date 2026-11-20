@@ -8,12 +8,14 @@ import { WB_VIEWS } from './wb-views';
 import { ACCOUNT, ACCOUNT_PANELS, AUTOMATION, AUTOMATION_PANELS } from '@/features/sidebar/entries';
 import { FAMILY_TABS, tabClicks } from '@/features/automation/page';
 
-// the 11 panels of the pre-redesign dock: none may disappear
-const OLD_PANELS = ['mission', 'goals', 'orchestra', 'memory', 'tasks', 'files', 'usage', 'config', 'terminal', 'inspector', 'android'];
+// the panels of the pre-redesign dock: none may disappear — but 配置中心 ('config'), taken apart in the redesign 2026-11
+// stage 2: its MCP / 插件 / Skills are 自定义's, Hooks / 环境变量 / settings.json 设置 › 高级's (palette/moved.ts finds them)
+const OLD_PANELS = ['mission', 'goals', 'orchestra', 'memory', 'tasks', 'files', 'usage', 'terminal', 'inspector', 'android'];
 
 describe('every panel is reachable in ≤ 2 clicks', () => {
-  it('no panel of the old dock is gone', () => {
+  it('no panel of the old dock is gone (配置中心 aside: taken apart into 自定义 and 设置 › 高级)', () => {
     for (const id of OLD_PANELS) expect(PANELS.map((p) => p.id)).toContain(id);
+    expect(PANELS.map((p) => p.id as string)).not.toContain('config');
   });
 
   for (const p of PANELS) {
@@ -59,9 +61,6 @@ describe('every panel is reachable in ≤ 2 clicks', () => {
     expect(panelEntries('goals')).toContain('sidebarAutomation');
     expect(panelEntries('orchestra')).toContain('sidebarAutomation');
     expect(panelEntries('usage')).toContain('accountMenu');
-    // 配置中心 left the account menu (自定义 and 设置 › 高级 have what it held); the palette still opens the panel
-    expect(panelEntries('config')).not.toContain('accountMenu');
-    expect(minClicks(panelEntries('config'))).toBeLessThanOrEqual(2);
     // 定时任务 is also a view: 自动化 reaches it in 2 clicks with or without a conversation
     expect(viewEntries('schedules')).toContain('sidebarAutomation');
   });
