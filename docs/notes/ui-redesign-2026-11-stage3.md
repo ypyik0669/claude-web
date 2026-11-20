@@ -117,6 +117,9 @@
 - ui-smoke 里打开显示菜单别直接点 `.sidebar [data-id="view"]`：有项目以后那一行没有这个按钮（用 `viewBtn()`）。i18n-smoke
   的 `click` 是 `element.click()`，不用先悬停。
 - 子菜单开着时按两次 Esc 不一定关得掉整个菜单（一次一层）：收尾用的 `closeMenus` 在 i18n-smoke 里多按一次。
+- 主题 › 的面板 200px 宽时「浅色 · 深色 · 跟随系统」放不下，「跟随系统」挤出自己的胶囊：`.menu.acct-fly` 最小 232px。
+- 几个 worktree 同时跑 ui-smoke 时，默认的输出目录（`%TEMP%/cw-ui-smoke`，结果文件 `ui-smoke.json` 也在里面）是共用的：
+  并行时各自给 `--out`。机器满载时 `scripts/shot.cjs` 偶尔截不到图（`UnknownVizError`），加 `SHOT_OFFSCREEN=1` 就行。
 
 ## 和方案不一样的地方
 

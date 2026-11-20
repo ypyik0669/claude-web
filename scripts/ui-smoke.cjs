@@ -2696,6 +2696,14 @@ function driver() {
             check('/ in the sidebar opens the list\'s filter box, focused and empty; it filters the list and 显示 shows its dot; Esc closes it and the list is back', slashUp && box0 === '' && filtered.box === 'zzz-no-such-conversation' && filtered.rows === 0 && filtered.dot && slashGone, JSON.stringify({ slashUp, box0, filtered, slashGone }));
           }
           await closeMenus();
+          // 搜索 finds Artifacts too (stage 3): the palette says so. (The hits themselves are palette/artifacts.test.ts's:
+          // no conversation of the temp HOME wrote one — artifacts.list counts Write / Artifact, the seed only edits)
+          await click('.sidebar .sb-nav [data-id="search"]');
+          await waitFor('!!document.querySelector(".palette-bg .cmdk input")', 3000);
+          const palHint = await js(`document.querySelector('.palette-bg .cmdk input')?.placeholder ?? null`);
+          await key('Escape');
+          await waitFor('!document.querySelector(".palette-bg")', 2000);
+          check('搜索 (the palette) says it finds conversations and Artifacts', /对话和 Artifacts/.test(palHint || ''), String(palHint));
           // redesign phase 7: 自动化 is a page over the main area (spec §5.9); redesign 2026-11 stage 1: one tab row for
           // 运行中 · 定时任务 · Bot · 目标 · 编排 (the background and Bot pages are two of its tabs), 新建 at the top right.
           // Opening it closes whatever sidebar menu was open (here: the funnel)
