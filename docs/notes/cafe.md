@@ -46,7 +46,8 @@
 - `office/Office.tsx`（文件夹名没改，还是 `office/`；类名 `office-*` 也没改，ui-smoke 和 readme-shots 用它们）：胶囊、左栏「各区」、卡片、面包屑
   「整个网吧 › A区 名字」、「看这一区」、缩放 ±、昼夜（设置 `office.light`，存 meta.json）、角色库。拿不到 WebGL → 按区分组的列表。
 - `office/OfficePanel.tsx`：右侧面板 extra 标签（panel id 仍是 `cafe`，标题「网吧」，图标 cafe），compact，跟着当前对话那一区。
-- 挂载点：`BackgroundPage` 顶上一大块（`lazy()`，three.js 独立 chunk）。样式 `styles/office.css`（`.ob-receipt` 小票、`.ob-bang` 感叹号、区签居中在锚点上方）。
+- 挂载点：`BackgroundPage` 的「网吧」看法（`lazy()`，three.js 独立 chunk）。2026-11-20 起和「列表」二选一、第一次显示才挂载、撑满页面主体，
+  手机上底栏和右上角的工具收进页头 ⋯、人头上的按钮不接点按（见「界面改版（2026-11）自动化」）。样式 `styles/office.css`（`.ob-receipt` 小票、`.ob-bang` 感叹号、区签居中在锚点上方）。
 - **角色库保留**（`server/src/characters/`、`character_*` 工具、cafe-character skill、`cafe/state.ts`、`cafe/bake.ts`、`cafe/CharacterLibrary.tsx`）；
   只有非内置角色才贴成 billboard（内置小章鱼 = 默认 3D 小章鱼）。
 - **旧的 Canvas 网吧引擎** `cafe/sim.ts / render.ts / map.ts / path.ts / iso.ts / money.ts` **留着**：官网 `site/src/hero/` 经 `@cafe/*` 用它，别删。
@@ -59,7 +60,7 @@
   `CLAUDE_WEB_DIR`、`PORT=3197`，去掉继承的 `CLAUDE_*` / `ANTHROPIC_*` / `ELECTRON_RUN_AS_NODE`；server 用 run_in_background 起。
   截图的 console 不进 log，要看运行时的值就往页面里插一个 div 再拍。裁细节用 `sharp`（`extract`）。
 - ui-smoke background 段：`.office-bot` ≥ 6（网管 + 5）、`aria-label^="网管"`、A区的区签（`data-anchor="zone:0"` 的 aria-label 以「A区 · 」开头）、
-  `__cwCafe.frames > 2`、画布不是一片纯色、点客人开卡片、卡片「打开对话」开抽屉、角色库、右侧面板 compact 带区卡片；A3 滚轮三条照旧。
+  `__cwCafe.frames > 2`、画布不是一片纯色、点客人开卡片、卡片「打开对话」开抽屉、角色库、右侧面板 compact 带区卡片；A3 滚轮两条（见下）。
 
 ## 踩过的坑
 
@@ -67,7 +68,8 @@
   `mats.dim`，而 `dims[i]` 还是 `undefined`。`dims` 每帧先写成数再比。
 - three r18x 去掉了 `PCFSoftShadowMap` → 用 `PCFShadowMap` + `shadow.radius`。
 - 设计令牌测试不许 CSS 用 `font-weight: 500`。
-- 后台页 `.bg-body` 是 flex 列，外框要 `flex: none` + 固定高度。页面在后台时 rAF 不跑，截图前页面要可见。
+- 后台页 `.bg-body` 以前是 flex 列，外框要 `flex: none` + 固定高度；11-20 起 `.bg-body` 横排、网吧撑满（`.bg-body.cafe > .bg-office-wrap`）。
+  页面在后台时 rAF 不跑，截图前页面要可见。
 - 坐着的客人背对镜头（屏幕要朝镜头才看得见），所以椅背做矮、显示器做高；网管朝 +z 站，镜头看得见脸。
 - 在 bash 里写 heredoc 改文件会吃引号 / 反斜杠；改代码用 Edit，或者用 Write 写一个 .mjs 再 `node` 跑。
 
@@ -75,4 +77,5 @@
 
 - React 的 `onWheel` 是被动监听，`preventDefault()` 没用 → 画布上挂原生 `addEventListener('wheel', fn, { passive: false })`，用共用的
   `web/src/ui/wheel-zoom.ts` 的 `wheelZoom(scale, e, { min, max, step })`（返回 `null` = 交给页面：Shift、只有横向、到上下限还往那边滚）；范围 0.45–3.5、每格 1.2 倍。
-- 验证：`wheel-zoom.test.ts`；ui-smoke `parity-a` 段（画布上滚四下页面不动、Shift 不拿、页面别处照滚）。
+- 验证：`wheel-zoom.test.ts`；ui-smoke `parity-a` 段（画布上滚四下页面不动、Shift 不拿、页面别处照滚）。11-20 网吧撑满页面以后外面没东西
+  可滚，改成：每一下都被网吧拿走（prevented）而且缩放真的变了、Shift + 滚轮不拿。

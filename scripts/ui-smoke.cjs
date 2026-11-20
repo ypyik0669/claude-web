@@ -2005,7 +2005,9 @@ function driver() {
             const viewWas = await js(`JSON.stringify(window.__store.getState().settings['background.view'] ?? null)`);
             await js(`window.__store.getState().setSetting('background.view', 'cafe')`);
             const schedulesWas = await js('JSON.stringify(window.__store.getState().schedules)');
-            await js(`window.__store.setState({ schedules: [{ id: 'psa', name: '每天早上把昨天的提交整理成一份简短的日报发到这个对话', cwd: ${JSON.stringify(E.SMOKE_REPO)}, prompt: 'x', everyMinutes: 60, cron: '0 9 * * 1-5', enabled: true, lastRunAt: Date.now() - 3600000, nextRunAt: Date.now() + 7200000, runs: 12, freshSession: true, sessionId: ${bgSid} }, { id: 'psb', name: '周报', cwd: ${JSON.stringify(E.SMOKE_REPO)}, prompt: 'y', everyMinutes: 60, cron: '0 18 * * 5', enabled: false }] })`);
+            // (put in on the 定时任务 tab itself, not once here: every settings.set — background.view just above, the
+            // theme below — comes back as meta.changed, and loadMeta brings the server's own list back)
+            const putSchedules = () => js(`window.__store.setState({ schedules: [{ id: 'psa', name: '每天早上把昨天的提交整理成一份简短的日报发到这个对话', cwd: ${JSON.stringify(E.SMOKE_REPO)}, prompt: 'x', everyMinutes: 60, cron: '0 9 * * 1-5', enabled: true, lastRunAt: Date.now() - 3600000, nextRunAt: Date.now() + 7200000, runs: 12, freshSession: true, sessionId: ${bgSid} }, { id: 'psb', name: '周报', cwd: ${JSON.stringify(E.SMOKE_REPO)}, prompt: 'y', everyMinutes: 60, cron: '0 18 * * 5', enabled: false }] })`);
             // 运行中 on a phone: the list first (with ⋯), then ⋯ › 3D 网吧 (the canvas filling the body, its tools in ⋯,
             // the counts not covered), then 跑过的 and one run of it — every rule on each, the ⋯ sheets too
             const phoneRunning = async (tag, w, theme) => {
@@ -2064,7 +2066,10 @@ function driver() {
             };
             // 定时任务 on a phone: each task's name on a line of its own, the switch and the actions behind one ⋯
             const phoneSchedules = async (tag, w, theme) => {
-              await waitFor(`document.querySelectorAll('.auto-page .auto-body[data-body="schedules"] .row.sched').length === 2`, 4000);
+              for (let i = 0; i < 3; i++) {
+                await putSchedules();
+                if (await waitFor(`document.querySelectorAll('.auto-page .auto-body[data-body="schedules"] .row.sched').length === 2`, 2000)) break;
+              }
               await sleep(300);
               const rows = await js(`[...document.querySelectorAll('.auto-page .auto-body[data-body="schedules"] .row.sched')].map((r) => { const n = r.querySelector('.sched-name'); return { phone: r.classList.contains('phone'), name: n ? Math.round(n.getBoundingClientRect().width) : 0, row: Math.round(r.getBoundingClientRect().width), buttons: r.querySelectorAll('button').length, sw: !!r.querySelector('[role="switch"], button.toggle') }; })`);
               if (rows.length !== 2 || rows.some((r) => !r.phone || r.name < r.row * 0.7 || r.buttons !== 1 || r.sw)) faults.push(`${tag} · 定时任务: each name a full row, one ⋯ and no switch on the row: ${JSON.stringify(rows)}`);
