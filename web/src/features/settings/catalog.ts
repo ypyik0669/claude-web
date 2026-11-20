@@ -101,7 +101,7 @@ export const BODY_INFO: Record<BodyId, { l: string; keywords: string }> = {
   update: { l: tr('应用更新'), keywords: tr('update version release 更新 版本 检查更新') },
   raw: { l: tr('settings.json 原文'), keywords: tr('settings json raw 原文 user project local 编辑') },
   customCss: { l: tr('自定义样式'), keywords: tr('custom css 自定义样式 样式表 皮肤 美化 stylesheet userstyle 进度条') },
-  openings: { l: tr('动画包'), keywords: tr('opening pack import folder video 开场 动画包 导入 文件夹 视频 opening.json 许可') },
+  openings: { l: tr('动画包'), keywords: tr('opening pack import folder video web html github install skill 开场 动画包 导入 文件夹 视频 网页 安装 许可 作者 让 Claude 做 opening.json') },
 };
 
 const GENERAL: EntryMeta[] = [
@@ -149,11 +149,11 @@ const APPEARANCE: EntryMeta[] = [
   { id: 'ui.reduceMotion', block: tr('显示'), label: tr('减少动画'), hint: tr('关掉界面里的过渡与动画。'), keywords: tr('motion animation 动画 过渡') },
   { id: 'ui.haptics', block: tr('显示'), label: tr('触感反馈'), hint: tr('在支持的手机上，发送、批准、长按出菜单时轻震一下。打开「减少动画」时不震。'), keywords: tr('haptic vibrate 震动 振动 触感 手机') },
   // 开场和背景 (界面改版方案 第 7 版 #opening): the desktop shell reads these from meta.json before the server is up
-  { id: 'ui.opening.pack', block: tr('开场和背景'), wide: true, label: tr('开场动画'), hint: tr('桌面版打开时放。Claude Web 娘是一段 10 秒的开场片，点火不用视频；也能放自己的视频。'), keywords: tr('opening intro splash animation video 开场 开场动画 启动 动画 视频 Claude Web 娘 看板娘 点火') },
+  { id: 'ui.opening.pack', block: tr('开场和背景'), wide: true, label: tr('开场动画'), hint: tr('桌面版打开时放。Claude Web 娘是一段 10 秒的开场片；点火、星图、字符雨不用视频，网吧开门是 3D 的网吧（要 WebGL）。也能放自己的视频，或者装别人做的。'), keywords: tr('opening intro splash animation video stars ascii cafe 3d 开场 开场动画 启动 动画 视频 Claude Web 娘 看板娘 点火 星图 星星 字符雨 字符 网吧 网吧开门') },
   { id: 'ui.opening.when', block: tr('开场和背景'), label: tr('什么时候放'), hint: tr('其它时候是 1.6 秒的老开场；不放就只显示标志。网页版打开时不放。'), keywords: tr('opening when daily every 开场 每天 每次 第一次 不放') },
-  { id: 'ui.opening.length', block: tr('开场和背景'), label: tr('长度'), hint: tr('Claude Web 娘完整约 13 秒、简短约 6 秒；点火完整约 4 秒、简短约 2 秒。'), keywords: tr('opening length short full 开场 长度 简短 完整 时长') },
+  { id: 'ui.opening.length', block: tr('开场和背景'), label: tr('长度'), hint: tr('Claude Web 娘完整约 13 秒、简短约 6 秒；点火、星图、字符雨完整约 4 秒、简短约 2 秒，网吧开门再多半秒；网页做的开场看它自己，最多 12 秒。'), keywords: tr('opening length short full 开场 长度 简短 完整 时长') },
   { id: 'ui.opening.sound', block: tr('开场和背景'), label: tr('声音'), hint: tr('默认关。开场左下角的小喇叭也能开，下次还记得。'), keywords: tr('opening sound audio mute 开场 声音 音乐 静音 喇叭') },
-  { id: 'ui.opening.keep', block: tr('开场和背景'), label: tr('放完留作背景'), hint: tr('她站着的那段循环垫在应用后面，只从首页和空白处透出来；浅色主题换成火星。窗口最小化或切到别的程序时停下。'), keywords: tr('opening background backdrop loop opacity 开场 背景 循环 浓淡 透明度 火星 留作背景') },
+  { id: 'ui.opening.keep', block: tr('开场和背景'), label: tr('放完留作背景'), hint: tr('Claude Web 娘站着的那段循环垫在应用后面，只从首页和空白处透出来；浅色主题和没有循环的开场换成火星，星图留下星星，字符雨留下飘着的字符。窗口最小化或切到别的程序时停下。'), keywords: tr('opening background backdrop loop opacity stars ascii 开场 背景 循环 浓淡 透明度 火星 星星 字符 留作背景') },
 ];
 
 // 值班 Bot (spec 2026-10-30-duty-bots-design 「设置 → Bot」): a block on 通用 (the 15-page cap holds), next to

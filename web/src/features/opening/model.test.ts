@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { OpeningInfo } from '@shared';
-import { DEFAULT_PACK, IGNITE_ID, OPACITY_DEFAULT, backdropKind, fullOf, keepOn, opacityOf, openingCards, packFileUrl, packOf, shellSolid, soundOf, whenOf } from './model';
+import { CAFE_ID, DEFAULT_PACK, DRAWN_IDS, IGNITE_ID, OPACITY_DEFAULT, backdropKind, fullOf, isBuiltinId, isDrawnId, keepOn, opacityOf, openingCards, packFileUrl, packOf, shellSolid, soundOf, whenOf } from './model';
 import { emberAlpha, emberCount, rgba, spawn, stepEmbers } from './embers';
 
 const CHAN: OpeningInfo = { id: 'claude-web-chan', name: 'Claude Web 娘', builtin: true, kind: 'video', intro: 'intro.mp4', loop: 'loop.mp4', poster: 'poster.webp', logoAt: 9.71, shortFrom: 6.6, maxSeconds: 12 };
 const MINE: OpeningInfo = { id: 'mine', name: 'Mine', builtin: false, kind: 'video', intro: 'intro.mp4', maxSeconds: 12 };
+const WEB: OpeningInfo = { id: 'glow', name: '萤火', builtin: false, kind: 'web', entry: 'index.html', author: 'someone', license: 'MIT', maxSeconds: 8 };
 const url = (id: string, f: string) => `u/${id}/${f}`;
 
 describe('开场和背景 · settings', () => {
@@ -43,11 +44,20 @@ describe('开场和背景 · what stays behind the app', () => {
   it('dark theme: her loop', () => {
     expect(backdropKind(base)).toEqual({ kind: 'video', pack: CHAN, src: 'u/claude-web-chan/loop.mp4' });
   });
-  it('light theme, 点火, a pack without a loop, a pack that is gone: 火星', () => {
+  it('light theme, 点火, 网吧开门, a web pack, a pack without a loop, a pack that is gone: 火星', () => {
     expect(backdropKind({ ...base, light: true })).toEqual({ kind: 'embers' });
     expect(backdropKind({ ...base, pack: IGNITE_ID })).toEqual({ kind: 'embers' });
+    expect(backdropKind({ ...base, pack: CAFE_ID })).toEqual({ kind: 'embers' });
+    expect(backdropKind({ ...base, pack: 'glow', packs: [CHAN, WEB] })).toEqual({ kind: 'embers' });
     expect(backdropKind({ ...base, pack: 'mine' })).toEqual({ kind: 'embers' });
     expect(backdropKind({ ...base, pack: 'removed' })).toEqual({ kind: 'embers' });
+  });
+  it('星图 leaves its stars and 字符雨 its characters, on a light theme too, before the packs are known', () => {
+    expect(backdropKind({ ...base, pack: 'stars' })).toEqual({ kind: 'stars' });
+    expect(backdropKind({ ...base, pack: 'ascii' })).toEqual({ kind: 'rain' });
+    expect(backdropKind({ ...base, pack: 'stars', light: true })).toEqual({ kind: 'stars' });
+    expect(backdropKind({ ...base, pack: 'ascii', light: true, packs: null })).toEqual({ kind: 'rain' });
+    expect(backdropKind({ ...base, pack: 'ascii', mobile: true })).toBeNull();
   });
   it('nothing: kept off, a phone, a character theme with its own backdrop, the packs not known yet', () => {
     expect(backdropKind({ ...base, keep: false })).toBeNull();
@@ -55,9 +65,17 @@ describe('开场和背景 · what stays behind the app', () => {
     expect(backdropKind({ ...base, themeBackdrop: true })).toBeNull();
     expect(backdropKind({ ...base, packs: null })).toBeNull();
   });
-  it('the cards: the built-in packs, 点火, then the user\'s', () => {
-    expect(openingCards([MINE, CHAN]).map((c) => c.id)).toEqual(['claude-web-chan', IGNITE_ID, 'mine']);
-    expect(openingCards([]).map((c) => c.id)).toEqual([IGNITE_ID]);
+  it('the cards: the built-in packs, 点火 · 星图 · 字符雨 · 网吧开门, then the user\'s (video or web)', () => {
+    const cards = openingCards([MINE, CHAN, WEB]);
+    expect(cards.map((c) => c.id)).toEqual(['claude-web-chan', IGNITE_ID, 'stars', 'ascii', CAFE_ID, 'mine', 'glow']);
+    expect(cards.map((c) => c.kind)).toEqual(['video', 'ignite', 'stars', 'ascii', 'cafe', 'video', 'web']);
+    expect(openingCards([]).map((c) => c.id)).toEqual([...DRAWN_IDS, CAFE_ID]);
+  });
+  it('the ids that need no folder: the three drawn scenes and 网吧开门', () => {
+    expect(['ignite', 'stars', 'ascii', 'cafe'].every(isBuiltinId)).toBe(true);
+    expect(isBuiltinId(DEFAULT_PACK)).toBe(false);
+    expect(isBuiltinId('mine')).toBe(false);
+    expect(isDrawnId('cafe')).toBe(false);
   });
 });
 

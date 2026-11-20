@@ -17,6 +17,12 @@ export const OPENING_KEYS = {
 export const DEFAULT_PACK = 'claude-web-chan';
 /** 点火: drawn, no video, no folder */
 export const IGNITE_ID = 'ignite';
+/** the three drawn scenes of the 轻量版 (desktop/src/opening.ts DRAWN_KINDS): 点火 · 星图 · 字符雨 */
+export const DRAWN_IDS = ['ignite', 'stars', 'ascii'] as const;
+export type DrawnId = (typeof DRAWN_IDS)[number];
+export const isDrawnId = (id: unknown): id is DrawnId => id === 'ignite' || id === 'stars' || id === 'ascii';
+/** 网吧开门: the 3D cafe (its script: web/dist/opening/cafe-opening.js) */
+export const CAFE_ID = 'cafe';
 export const OPACITY_DEFAULT = 30;
 export const OPACITY_MAX = 60;
 
@@ -49,17 +55,20 @@ export function opacityOf(s: Record<string, unknown>): number {
   return Number.isFinite(v) ? Math.max(0, Math.min(OPACITY_MAX, Math.round(v))) : OPACITY_DEFAULT;
 }
 
-export type BackdropKind = { kind: 'video'; pack: OpeningInfo; src: string } | { kind: 'embers' } | null;
+export type BackdropKind = { kind: 'video'; pack: OpeningInfo; src: string } | { kind: 'embers' } | { kind: 'stars' } | { kind: 'rain' } | null;
 
 /**
  * What stays behind the app: her loop on a dark theme (the film is dark — under a light shell it turns grey), 火星 on a
- * light one or for a pack without a loop (点火 too). Nothing on a phone, with 留作背景 off, or under a character theme
- * that brings its own backdrop (that theme is the look the user picked). `packs` null: not known yet — nothing until it is.
+ * light one or for a pack without a loop (点火, 网吧开门 and the web packs too); 星图 leaves its stars, 字符雨 its
+ * characters, drifting (in either brightness). Nothing on a phone, with 留作背景 off, or under a character theme that
+ * brings its own backdrop (that theme is the look the user picked). `packs` null: not known yet — nothing until it is.
  */
 export function backdropKind(o: { keep: boolean; mobile: boolean; light: boolean; themeBackdrop: boolean; pack: string; packs: OpeningInfo[] | null; url: (id: string, file: string) => string }): BackdropKind {
   if (!o.keep || o.mobile || o.themeBackdrop) return null;
+  if (o.pack === 'stars') return { kind: 'stars' };
+  if (o.pack === 'ascii') return { kind: 'rain' };
   if (o.light) return { kind: 'embers' };
-  if (o.pack === IGNITE_ID) return { kind: 'embers' };
+  if (o.pack === IGNITE_ID || o.pack === CAFE_ID) return { kind: 'embers' };
   if (!o.packs) return null;
   const p = o.packs.find((x) => x.id === o.pack);
   return p?.loop ? { kind: 'video', pack: p, src: o.url(p.id, p.loop) } : { kind: 'embers' };
@@ -77,9 +86,28 @@ export function packFileUrl(id: string, file: string, token: string | null): str
   return `api/opening/${encodeURIComponent(id)}/${encodeURIComponent(file)}${q}`;
 }
 
-/** The cards of 设置 › 外观 › 开场动画: the built-in video packs, 点火, the user's packs (自己的视频 is the last card). */
-export function openingCards(packs: OpeningInfo[]): ({ id: string; kind: 'video'; pack: OpeningInfo } | { id: typeof IGNITE_ID; kind: 'ignite' })[] {
-  const builtin = packs.filter((p) => p.builtin);
-  const mine = packs.filter((p) => !p.builtin);
-  return [...builtin.map((pack) => ({ id: pack.id, kind: 'video' as const, pack })), { id: IGNITE_ID, kind: 'ignite' as const }, ...mine.map((pack) => ({ id: pack.id, kind: 'video' as const, pack }))];
+/** A card of 设置 › 外观 › 开场动画: a pack (video or web), a drawn scene, or 网吧开门 (one member per kind, so a check narrows). */
+export type OpeningCard =
+  | { id: string; kind: 'video'; pack: OpeningInfo }
+  | { id: string; kind: 'web'; pack: OpeningInfo }
+  | { id: 'ignite'; kind: 'ignite' }
+  | { id: 'stars'; kind: 'stars' }
+  | { id: 'ascii'; kind: 'ascii' }
+  | { id: typeof CAFE_ID; kind: 'cafe' };
+
+/**
+ * The cards (界面改版方案 第 7 版 #opening, 六种开场): the built-in video packs (Claude Web 娘), 点火, 星图, 字符雨,
+ * 网吧开门, then the user's packs; 自己的视频 is the last card, drawn by the picker itself.
+ */
+export function openingCards(packs: OpeningInfo[]): OpeningCard[] {
+  const asCard = (pack: OpeningInfo): OpeningCard => (pack.kind === 'web' ? { id: pack.id, kind: 'web', pack } : { id: pack.id, kind: 'video', pack });
+  return [
+    ...packs.filter((p) => p.builtin).map(asCard),
+    ...DRAWN_IDS.map((id) => ({ id, kind: id }) as OpeningCard),
+    { id: CAFE_ID, kind: 'cafe' },
+    ...packs.filter((p) => !p.builtin).map(asCard),
+  ];
 }
+
+/** The ids that are always there (no folder): what a chosen id that is not a pack can still be. */
+export const isBuiltinId = (id: string) => isDrawnId(id) || id === CAFE_ID;
