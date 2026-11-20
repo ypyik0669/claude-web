@@ -8,6 +8,7 @@ import { loginInTerminal } from '@/features/providers/ConnectModel';
 import { STEP_TITLE, currentStep, onboardingSteps, recentFolders } from './steps';
 import { tr } from '@/i18n';
 import { pickFolder } from '@/ui/pick-folder';
+import { MOVED_NOTICE_KEY } from '@/features/home/moved-notice';
 
 const STEP_LABEL = { login: tr('接一个模型'), project: tr('选一个项目文件夹') } as const;
 
@@ -53,7 +54,8 @@ export function Onboarding() {
   const folders = useMemo(() => recentFolders(sessions, workspaces.map((w) => w.path)), [sessions, workspaces]);
   if (!show) return null;
 
-  const finish = () => void setSetting('onboarded', true);
+  // a fresh install never saw the old layout: the start page's 「东西搬到哪了」 card is not for it (features/home)
+  const finish = () => { void setSetting('onboarded', true); void setSetting(MOVED_NOTICE_KEY, true); };
   const use = async (p: string) => {
     setBusy(true);
     try {

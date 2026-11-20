@@ -1,5 +1,6 @@
 // The sidebar's first screen for someone new (final review §9 #5). Pure: the component passes what it knows.
-import { checklistView, readChecklist } from '@/features/home/model';
+import type { SessionSummary } from '@shared';
+import { firstTime } from '@/features/home/model';
 import { tr } from '@/i18n';
 
 /**
@@ -18,20 +19,14 @@ export function makeProjectSpelled(projects: number): boolean {
   return projects === 0;
 }
 
-/** How long the library's discovery hint waits for an unfinished checklist (re-review M-7). */
-export const HINT_WAIT_MS = 3 * 24 * 60 * 60 * 1000;
-
 /**
- * The library's discovery hint waits until the newcomer checklist is finished or closed: finding Codex / OpenCode
- * conversations is not the first thing to learn, and the first screen has enough to say. Not forever (re-review
- * M-7): the list only shows on the home page, and someone whose desktop app always opens on a conversation never
- * finishes it — 3 days after the list first showed (`since`), the hint comes anyway. A list without `since` (not read
- * by this build yet) waits: it gets one the first time it is read.
+ * The library's discovery hint waits out the very first screen: finding Codex / OpenCode conversations is not the first
+ * thing to learn, and that screen has enough to say. It used to wait for the 入门清单 to be finished or closed (at most
+ * 3 days); since the 2026-11 redesign the list only shows the first time — no conversation on this computer yet
+ * (`firstTime`) — so the hint waits exactly that long. Nothing before the conversation list has come in (no flash).
  */
-export function hintReady(checklist: unknown, now: number): boolean {
-  const c = readChecklist(checklist);
-  if (!checklistView(c).visible) return true;
-  return c.since !== undefined && now - c.since >= HINT_WAIT_MS;
+export function hintReady(o: { listed: boolean; sessions: readonly SessionSummary[] }): boolean {
+  return o.listed && !firstTime(o);
 }
 
 /** 「把 Codex 等工具里的对话也列在这里？」: one tool by name, several by the first one's; every name is in the tooltip. */

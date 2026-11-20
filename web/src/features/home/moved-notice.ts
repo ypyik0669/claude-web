@@ -18,7 +18,9 @@ export function movedLines(mobile: boolean): MovedLine[] {
     { id: 'customize', from: tr('扩展（Skills、连接器、插件）'), to: tr('自定义') },
     { id: 'settings', from: tr('设置、配置中心'), to: mobile ? tr('账号菜单 › 设置；配置中心拆进了自定义和设置') : tr('设置是弹窗了（Ctrl+,）；配置中心拆进了自定义和设置') },
     { id: 'account', from: tr('用量与账本、语言、主题'), to: mobile ? tr('点抽屉底部的头像') : tr('点左下角的头像') },
-    { id: 'header', from: tr('Issue 与 PR、Android、对话信息栏'), to: tr('对话头的 ⋯') },
+    { id: 'panels', from: tr('右侧面板的标签'), to: mobile ? tr('对话头的 ⋯；「审阅」改叫「改动」') : tr('对话头右边的五个按钮，或面板左上角的下拉；「审阅」改叫「改动」') },
+    { id: 'header', from: tr('Issue 与 PR、Android、对话信息栏'), to: mobile ? tr('对话头的 ⋯ › 更多') : tr('对话头的 ⋯') },
+    ...(mobile ? [] : [{ id: 'keys', from: tr('Ctrl 1–9（跳到分组）'), to: tr('Ctrl+Alt+1–9；Ctrl 1–5 现在切右侧面板（网页版 Ctrl+Shift+1–5）') }]),
     { id: 'search', from: tr('还是找不到'), to: mobile ? tr('在抽屉顶上的搜索框里用原来的名字搜') : tr('按 Ctrl K 用原来的名字搜') },
   ];
 }

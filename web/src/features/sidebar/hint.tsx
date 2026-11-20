@@ -9,8 +9,8 @@ import { tr } from '@/i18n';
 
 /**
  * 「把 Codex 等工具里的对话也列在这里？」 as one quiet line above the account row (it used to be a card over the list),
- * shown only once the newcomer checklist is finished or closed (`hintReady`, Sidebar) — until then the home page shows
- * it, under the checklist (`home`; user report: someone who came for their Codex conversations found no way to them).
+ * shown once there is a conversation on this computer (`hintReady`, Sidebar: the first screen has the 入门清单). The
+ * start page no longer has a copy (redesign 2026-11 stage 4: nothing stacked under the box).
  * 列出来 joins (one source
  * directly; several → 选择… which), × is 以后再说. Joining is opt-in; ignoring it changes nothing; settings → 对话库
  * manages the sources later.

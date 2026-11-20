@@ -7,6 +7,7 @@ import { AppLogo } from '@/ui/AppLogo';
 import { GREETING, STARTERS, firstTime, projectHasConversations } from '@/features/home/model';
 import { Checklist } from '@/features/home/Checklist';
 import { EngineNotice } from '@/features/home/EngineNotice';
+import { MovedNotice } from '@/features/home/MovedNotice';
 import { SidebarReveal, usePaneEdge } from './pane-edge';
 import { tr } from '@/i18n';
 import { LetterFlow } from '@/features/home/LetterFlow';
@@ -21,7 +22,7 @@ import { useOpeningBackdropOn } from '@/features/opening/OpeningBackdrop';
  * the project in the box has no conversation yet (they only fill the box), the 入门清单 only the first time (no
  * conversation on this computer yet), the login / runtime notice only when something is wrong. The recent
  * conversations live in the sidebar (a phone's drawer). The background is still unless 外观 › 背景动画 is on.
- * Under the composer is room for the one-time 「东西搬到哪了」 card (features/home, mounted by the release).
+ * Under the composer, once, for someone who used the old layout: 「东西搬到哪了」 (features/home/MovedNotice).
  */
 export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) {
   const edge = usePaneEdge();
@@ -61,6 +62,7 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
             </div>
           )}
           <EngineNotice />
+          <MovedNotice />
           {first && <Checklist tileId={tileId} />}
         </div>
       </div>

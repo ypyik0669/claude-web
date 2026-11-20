@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HINT_WAIT_MS, hintReady, hintText, makeProjectSpelled, projectsEmpty } from './newcomer';
+import { hintReady, hintText, makeProjectSpelled, projectsEmpty } from './newcomer';
 
 describe('the sidebar for someone new (final review §9 #5)', () => {
   it('no project but folders in 其它文件夹: the empty state points at 「设为项目」, without a second 打开文件夹 button', () => {
@@ -11,20 +11,13 @@ describe('the sidebar for someone new (final review §9 #5)', () => {
     expect(makeProjectSpelled(0)).toBe(true);
     expect(makeProjectSpelled(1)).toBe(false);
   });
-  it('the discovery hint waits for the checklist to be finished or closed', () => {
-    const now = 1_000_000_000_000;
-    expect(hintReady(undefined, now)).toBe(false);
-    expect(hintReady({ done: ['project', 'send'] }, now)).toBe(false);
-    expect(hintReady({ done: [], dismissed: true }, now)).toBe(true);
-    expect(hintReady({ done: ['project', 'send', 'review', 'palette'] }, now)).toBe(true);
-  });
-  it('…but not forever: 3 days after the list first showed it comes anyway (re-review M-7); a list without since waits', () => {
-    const now = 1_000_000_000_000;
-    expect(hintReady({ done: ['project'], since: now - HINT_WAIT_MS + 60_000 }, now)).toBe(false);
-    expect(hintReady({ done: ['project'], since: now - HINT_WAIT_MS }, now)).toBe(true);
-    expect(hintReady({ done: [], since: now - 10 * HINT_WAIT_MS }, now)).toBe(true);
-    expect(hintReady({ done: ['project'] }, now)).toBe(false); // gets its since the first time it is read
-    expect(HINT_WAIT_MS).toBe(3 * 24 * 60 * 60 * 1000);
+  it('the discovery hint waits out the first screen only: once this computer has a conversation (redesign 2026-11)', () => {
+    const local = { sessionId: 's1', title: 'x', cwd: '/p', lastModified: 1 } as any;
+    const peer = { ...local, sessionId: 'peer_a~s2', peer: { id: 'a', name: 'A' } } as any;
+    expect(hintReady({ listed: false, sessions: [local] })).toBe(false); // the list not in yet: no flash
+    expect(hintReady({ listed: true, sessions: [] })).toBe(false); // the first screen (入门清单)
+    expect(hintReady({ listed: true, sessions: [peer] })).toBe(false); // another computer's conversations do not count
+    expect(hintReady({ listed: true, sessions: [peer, local] })).toBe(true);
   });
   it('asks in plain words, every name in the tooltip', () => {
     expect(hintText(['Codex']).text).toBe('把 Codex 里的对话也列在这里？');

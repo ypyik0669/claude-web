@@ -27,7 +27,6 @@ import { imeComposing } from '@/ui/ime';
 import { AccountRow } from './account';
 import { DiscoveryHint } from './hint';
 import { hintReady, makeProjectSpelled, projectsEmpty } from './newcomer';
-import { CHECKLIST_KEY } from '@/features/home/model';
 import { Menu, closeDrawer } from './menus';
 import { anchoredMenuOpen } from '@/ui/menus';
 import { openExtensions } from '@/features/extensions/state';
@@ -220,10 +219,10 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const otherKept = useMemo(() => (otherCollapsed ? otherAll.filter(keepFam) : []), [otherCollapsed, otherAll, keepFam]);
   const otherBusy = otherAll.some(busyFam);
   // someone new (final review §9 #5): no project yet → the empty state points at 其它文件夹's folders, whose 设为项目
-  // is written out; the library's discovery hint waits until the newcomer checklist is finished or closed
+  // is written out; the library's discovery hint waits out the first screen (no conversation here yet)
   const empty = byProject ? projectsEmpty({ projects: workspaces.length, otherFolders: grouped.other.length }) : null;
   const spellMake = makeProjectSpelled(workspaces.length);
-  const hintOk = useStore((s) => hintReady(s.settings[CHECKLIST_KEY], Date.now()));
+  const hintOk = useStore((s) => hintReady({ listed: s.sessionsListed, sessions: s.sessions }));
   // 显示 (stage 3, 图 7): a desktop's is on each project / folder / date header (on hover); the 项目 row has it where no
   // header carries it — the flat list, an empty one, a newcomer's folders (their header says 设为项目) — and while it
   // has something to say (its dot). A phone: the list's one ≡, on this row

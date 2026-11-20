@@ -637,6 +637,19 @@ function driver() {
         const notice = await js(`({ auth: window.__store.getState().auth?.loggedIn ?? null, providers: window.__store.getState().providers.length, text: document.querySelector('.welcome .home-notice')?.textContent ?? null })`);
         const wantNotice = notice.auth === false && notice.providers === 0;
         check('home: 「还没接模型…[接一个模型] [用 Claude 账号登录]」 only when not logged in with no provider (nothing when fine)', wantNotice ? /还没接模型/.test(notice.text ?? '') && /接一个模型/.test(notice.text) && /用 Claude 账号登录/.test(notice.text) : notice.text === null || !/登录/.test(notice.text), JSON.stringify(notice));
+        // the one-time 「东西搬到哪了」 card (redesign 2026-11): the first-run wizard above marked it seen; for someone who
+        // used the old layout it sits under the box with its lines (the desktop's keys line too), and 知道了 puts it
+        // away for good (meta.json)
+        if (E.SMOKE_READONLY !== '1') {
+          const seenAfterWizard = await js(`window.__store.getState().settings['ui.movedNoticeSeen'] === true`);
+          await js(`window.__store.getState().setSetting('ui.movedNoticeSeen', false)`);
+          const up = await waitFor('!!document.querySelector(".welcome .moved-notice")', 4000);
+          const card = await js(`(() => { const c = document.querySelector('.welcome .moved-notice'); const box = document.querySelector('.welcome .composer'); if (!c || !box) return null; return { rows: [...c.querySelectorAll('.mn-row')].map((r) => r.dataset.id).join(' '), under: c.getBoundingClientRect().top >= box.getBoundingClientRect().bottom - 1, ctrlK: /Ctrl K/.test(c.textContent), inCol: c.getBoundingClientRect().right <= document.querySelector('.welcome .home-col').getBoundingClientRect().right + 1 }; })()`);
+          await shot('home-moved-notice');
+          await click('.welcome .moved-notice [data-act="dismiss"]');
+          const away = await waitFor(`!document.querySelector('.welcome .moved-notice') && window.__store.getState().settings['ui.movedNoticeSeen'] === true`, 3000);
+          check('东西搬到哪了: not after the first-run wizard; for someone from the old layout its ten lines under the box, inside the column (Ctrl K to search by the old name); 知道了 puts it away for good', seenAfterWizard && up && !!card && card.rows === 'rail automation models customize settings account panels header keys search' && card.under && card.inCol && card.ctrlK && away, JSON.stringify({ seenAfterWizard, up, card, away }));
+        }
       }
       // redesign phase 1: one pane, one tab, no workbench setting → no global top bar, no group bar, no tab strip, no panel rail
       if (E.SMOKE_READONLY !== '1') {

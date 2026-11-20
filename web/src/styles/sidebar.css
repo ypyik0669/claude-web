@@ -101,3 +101,9 @@
 .as-sheet .menu .sb-per .segmented > button { height: 44px; font-size: var(--fs-base); }
 .as-sheet .menu.sb-fly .theme-quick button { height: 44px; }
 .as-sheet .menu.acct-fly .menu-note { padding-left: 12px; }
+/* the drawer's 「把 Codex 等工具里的对话也列在这里？」 line on a phone: 列出来 / 选择… and × are finger-sized (the phone check's
+   44 rule; 选择… was 38×20), the line just gets taller */
+.app.mobile .sb-hint { padding-top: 0; padding-bottom: 0; }
+.app.mobile .sb-hint .link { min-height: 44px; padding: 0 8px; }
+.app.mobile .sb-hint .line > .icon-btn.xs { width: 44px; height: 44px; }
+.app.mobile .sb-hint .picks .btn { min-height: 44px; }
