@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateContext, meterMode, ringLevel, sessionTotals, usageLines } from './stats';
+import { estimateContext, meterMode, ringLevel, sessionTotals, speedText, usageCard } from './stats';
 
 const items = [
   { kind: 'user' },
@@ -18,7 +18,7 @@ describe('the old stats bar, now behind the usage ring', () => {
   it('cache writes count as input — the same hit rate as the ledger and the line under each answer', () => {
     const t = sessionTotals([{ kind: 'user' }, { kind: 'assistant', usage: { input: 100, output: 10, cacheRead: 600, cacheWrite: 300 } }]);
     expect(t.write).toBe(300);
-    const lines = usageLines(t, {});
+    const lines = usageCard(t, null, {}).rows;
     expect(lines.find((l) => l[0] === '输入 / 输出')?.[1]).toBe('↑1.0K ↓10');
     expect(lines.find((l) => l[0] === '缓存命中')?.[1]).toBe('60%'); // 600 of 1000, not 600 of 700
   });
@@ -92,15 +92,27 @@ describe('the old stats bar, now behind the usage ring', () => {
     // known, so not bumped to 1M by what it holds (the window just shrank under it): full
     expect(estimateContext([at577k], { contextWindow: 200_000 })).toMatchObject({ percentage: 100, maxTokens: 200_000 });
   });
-  it('the lines the hover card shows (every field of the old bar)', () => {
-    const lines = usageLines(sessionTotals(items), { lastMs: 4200, context: { percentage: 72, totalTokens: 145_000, maxTokens: 200_000 }, tasks: 2 });
-    expect(lines.map((l) => l[0])).toEqual(['轮数', '输入 / 输出', '缓存命中', '费用', '上一轮用时', '上下文', '后台任务']);
-    expect(lines.find((l) => l[0] === '轮数')?.[1]).toBe('2');
-    expect(lines.find((l) => l[0] === '缓存命中')?.[1]).toBe('93%'); // 1850 of 2000 input tokens
-    expect(lines.find((l) => l[0] === '费用')?.[1]).toBe('≥ $0.50');
-    expect(lines.find((l) => l[0] === '上下文')?.[1]).toMatch(/^72% · 145/);
+  it('the card: the context on top, then 输入 / 输出 · 缓存命中 · 速度 · 轮数 · 步数 · 费用 · 上一轮用时 · 后台任务', () => {
+    const card = usageCard(sessionTotals(items), { turns: 2, steps: 6, tokPerSec: 44.2, cacheHit: 0.83 }, { lastMs: 4200, context: { percentage: 72, totalTokens: 145_000, maxTokens: 200_000 }, tasks: 2 });
+    expect(card.context).toMatchObject({ pct: 72 });
+    expect(card.context?.used).toMatch(/^145/);
+    expect(card.rows.map((l) => l[0])).toEqual(['输入 / 输出', '缓存命中', '速度', '轮数 · 步数', '费用', '上一轮用时', '后台任务']);
+    expect(card.rows.find((l) => l[0] === '缓存命中')?.[1]).toBe('83%'); // the row's own number
+    expect(card.rows.find((l) => l[0] === '速度')?.[1]).toBe('44 tok/s');
+    expect(card.rows.find((l) => l[0] === '轮数 · 步数')?.[1]).toBe('2 轮 · 6 步');
+    expect(card.rows.find((l) => l[0] === '费用')?.[1]).toBe('≥ $0.50');
+  });
+  it('without the turns\' numbers: the cache from the answers, the turns counted from the messages', () => {
+    const card = usageCard(sessionTotals(items), null, {});
+    expect(card.rows.find((l) => l[0] === '缓存命中')?.[1]).toBe('93%'); // 1850 of 2000 input tokens
+    expect(card.rows.find((l) => l[0] === '轮数')?.[1]).toBe('2');
+    expect(card.context).toBeUndefined();
+  });
+  it('the speed: whole numbers from 10 up', () => {
+    expect(speedText(231.4)).toBe('231 tok/s');
+    expect(speedText(9.94)).toBe('9.9 tok/s');
   });
   it('fields without data are left out', () => {
-    expect(usageLines({ turns: 0, inp: 0, out: 0, cache: 0, write: 0, cost: 0, costUnknown: 0 }, {}).map((l) => l[0])).toEqual(['轮数', '输入 / 输出']);
+    expect(usageCard({ turns: 0, inp: 0, out: 0, cache: 0, write: 0, cost: 0, costUnknown: 0 }, null, {}).rows.map((l) => l[0])).toEqual(['输入 / 输出', '轮数']);
   });
 });

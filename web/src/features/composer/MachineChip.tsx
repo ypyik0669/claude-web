@@ -18,7 +18,7 @@ export function MachineChip({ peers, wsl, value, onPick, onAddSsh, onInstall, on
   onInstall: (distro: string) => void;
   /** the menu opened: the welcome page asks for the distros and checks each */
   onOpen?: () => void;
-  /** the phone: only drawn when there is a peer, as before */
+  /** only drawn when there is another computer — a peer or a WSL distro (redesign 2026-11: 「本机」 joins the folder only then) */
   hideWhenAlone?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -26,7 +26,7 @@ export function MachineChip({ peers, wsl, value, onPick, onAddSsh, onInstall, on
   // 常开机器 (stage F1) first: 合上电脑也继续
   const usable = peers.filter((p) => p.enabled).sort((a, b) => Number(!!b.alwaysOn) - Number(!!a.alwaysOn));
   useEffect(() => { if (open) onOpen?.(); }, [open]);
-  if (hideWhenAlone && !usable.length) return null;
+  if (hideWhenAlone && !usable.length && !wsl.length && !value) return null;
   const m = machineOf(value);
   const curPeer = m.kind === 'peer' ? usable.find((p) => p.id === m.id) : undefined;
   const label = m.kind === 'wsl' ? tr('WSL · {d}', { d: m.distro }) : curPeer ? curPeer.name : tr('本机');

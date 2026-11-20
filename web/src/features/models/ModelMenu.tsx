@@ -1,15 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentKind } from '@shared';
+import type { AgentKind, EffortLevel } from '@shared';
 import { useStore } from '@/store';
 import { ago, clsx } from '@/util';
 import { AGENT_ICONS, Icon } from '@/ui/icons';
-import { TERMS } from '@/ui/terms';
+import { EFFORT_DESC, EFFORT_LABEL, TERMS, ULTRACODE } from '@/ui/terms';
 import { buildModelMenu, filterMenu, foldMenu, pushRecent, recentKey, type AgentSource, type ModelMenuItem, type ModelMenuSection } from './menu';
 import { refreshAllModels, useGatewayStatus, useRefreshRun } from './data';
 import { fmtWindow } from '@/features/info/info-model';
 import { placeMenu, samePlacement, withOrigin, type Placement } from './place';
-import { MODEL_MENU_ID, SUBAGENT_MENU_ID } from '@/features/composer/ids';
+import { MODEL_MENU_ID, PHONE_SHEET_ID, SUBAGENT_MENU_ID } from '@/features/composer/ids';
 import './models.css';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { useMenuClaim } from '@/ui/menus';
@@ -59,8 +59,23 @@ export interface ModelMenuProps {
   subagentRow?: { label: string; onOpen: () => void };
   /** a row opening the 强度 chip's menu (phase 6 §4: the official menu has Effort › in it) */
   effortRow?: { label: string; onOpen: () => void };
+  /**
+   * A phone's 「模型 · 强度」 sheet (redesign 2026-11 #phone 输入框下面): the five levels right in it, between the models
+   * and the subagents' row — on a phone the level rides on the model chip, there is no chip of its own to open.
+   */
+  effortSeg?: EffortSeg;
   /** 快速模式: only where the CLI reported it; `note` says why it can't be on now */
   fast?: { on: boolean; note?: string; onToggle: (on: boolean) => void };
+}
+
+export interface EffortSeg {
+  levels: EffortLevel[];
+  /** null: 深度编排 is on (no level is the chosen one) or nothing picked */
+  value: EffortLevel | null;
+  defaultLevel?: EffortLevel;
+  onChange: (l: EffortLevel) => void;
+  ultracode?: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean };
+  disabled?: boolean;
 }
 
 export interface SubagentMenuOptions {
@@ -223,6 +238,7 @@ export function ModelMenu(p: ModelMenuProps) {
   if (portal && !pos && !sheet) return null; // measured in the layout effect before the first paint
   const body = (
     <div ref={box} className={clsx('menu mm', portal ? 'fixed' : [p.placement === 'down' ? 'down' : 'up', p.align === 'left' ? 'left' : 'right'].join(' '))} style={pos ?? undefined} role="dialog" aria-label={sub ? tr('子代理用的模型') : tr('选择模型')} onKeyDown={onKey} {...motion}>
+      {sheet && !sub && p.effortSeg && <div className="mm-sheet-h">{tr('模型和思考强度')}</div>}
       <div className="mm-search">
         <Icon name="search" size={13} />
         <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr('搜索模型或供应商…')} aria-label={tr('搜索模型')} role="combobox" aria-expanded aria-controls="mm-list" aria-activedescendant={flat[active] ? `mm-opt-${active}` : undefined} />
@@ -305,6 +321,27 @@ export function ModelMenu(p: ModelMenuProps) {
           <Switch on={p.subagent.isDefault} disabled={p.subagent.same && p.subagent.isDefault} onChange={() => p.subagent!.onToggleDefault()} />
         </label>
       )}
+      {p.effortSeg && !p.subagent && (p.effortSeg.levels.length > 0 || p.effortSeg.ultracode) && (
+        <div className="mm-effort" role="group" aria-label={TERMS.effort} data-id={PHONE_SHEET_ID.effortSeg}>
+          <div className="mm-effort-h">{TERMS.effort}</div>
+          {p.effortSeg.levels.length > 0 && (
+            <div className="mm-seg" role="radiogroup" aria-label={TERMS.effort}>
+              {p.effortSeg.levels.map((l) => {
+                const on = (p.effortSeg!.value ?? (p.effortSeg!.ultracode?.on ? null : p.effortSeg!.defaultLevel)) === l;
+                return <button key={l} type="button" role="radio" aria-checked={on} data-level={l} className={clsx(on && 'on')} disabled={p.effortSeg!.disabled} title={EFFORT_DESC[l]} onClick={() => { if (!on) p.effortSeg!.onChange(l); }}>{EFFORT_LABEL[l]}</button>;
+              })}
+            </div>
+          )}
+          {p.effortSeg.ultracode && (
+            <button type="button" className="mm-subrow mm-ultra-row" role="menuitemcheckbox" aria-checked={p.effortSeg.ultracode.on} disabled={p.effortSeg.ultracode.disabled} title={ULTRACODE.title} onClick={() => p.effortSeg!.ultracode!.onChange(!p.effortSeg!.ultracode!.on)}>
+              <Icon name="bolt" size={13} />
+              <span className="l">{ULTRACODE.label}</span>
+              <span className="v">{ULTRACODE.desc}</span>
+              <span className={clsx('toggle sm', p.effortSeg.ultracode.on && 'on')} aria-hidden />
+            </button>
+          )}
+        </div>
+      )}
       {p.subagentRow && !p.subagent && (
         <button type="button" className="mm-subrow" data-id={SUBAGENT_MENU_ID.open} onClick={() => { p.onClose(); p.subagentRow!.onOpen(); }} title={tr('主任务用主模型，子代理（Task / 工作流）用这里选的，可以选个便宜的省额度')}>
           <Icon name="agent" size={13} />
@@ -313,7 +350,7 @@ export function ModelMenu(p: ModelMenuProps) {
           <Icon name="chevronRight" size={12} />
         </button>
       )}
-      {p.effortRow && !p.subagent && (
+      {p.effortRow && !p.subagent && !p.effortSeg && (
         <button type="button" className="mm-subrow" data-id={MODEL_MENU_ID.effort} onClick={() => { p.onClose(); p.effortRow!.onOpen(); }}>
           <Icon name="gauge" size={13} />
           <span className="l">{TERMS.effort}</span>

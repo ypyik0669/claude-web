@@ -6,7 +6,7 @@ import type { IconName } from '@/ui/icons';
 import { isArchived } from '@/features/sidebar/filter';
 import { rowStatus } from '@/features/sidebar/status';
 import { basename } from '@/util';
-import { projectFor } from '@/features/paths';
+import { isWithin, projectFor } from '@/features/paths';
 import { nextRunText, scheduleText } from '@/features/automation/schedule-text';
 import { tr, dateLocale } from '@/i18n';
 
@@ -18,13 +18,34 @@ export const GREETING = tr('今天想做点什么？');
 // ---------------------------------------------------------------------------------------------------- starters
 
 export interface Starter { id: string; icon: IconName; label: string; text: string }
-/** Four ways to begin (spec §5.8). A click only puts the text in the box: nothing is sent. */
+/**
+ * Three ways to begin (redesign 2026-11 #pages 首页). A click only puts the text in the box: nothing is sent. They
+ * are shown only while the project in the box has no conversations yet (`projectHasConversations`).
+ */
 export const STARTERS: Starter[] = [
   { id: 'explain', icon: 'read', label: tr('讲讲这个项目的结构'), text: tr('讲讲这个项目的结构：有哪些主要目录、入口在哪、各部分怎么配合。') },
   { id: 'bug', icon: 'search', label: tr('找一个 bug 并修好'), text: tr('找一个 bug 并修好：先说清楚问题在哪、怎么复现，再动手改。') },
   { id: 'tests', icon: 'todo', label: tr('给最近的改动补测试'), text: tr('给最近的改动补测试：看看最近的提交和未提交的改动，找出没被测到的地方。') },
-  { id: 'plan', icon: 'plan', label: tr('先出方案再动手'), text: tr('先出一个方案给我看，我同意之后再动手：') },
 ];
+
+/**
+ * Has the project the new conversation is about to start in had a conversation? (the starters go once it has.) Its
+ * folder or one under it, on the same machine (`peer`: a federation peer's id, '' = this computer); a conversation
+ * listed under the project by its group folder counts too. No folder chosen → nothing to say yet (true: no starters).
+ */
+export function projectHasConversations(o: { cwd: string; peer?: string }, sessions: readonly SessionSummary[], meta?: Record<string, SessionMeta>): boolean {
+  if (!o.cwd) return true;
+  return sessions.some((s) => (o.peer ? s.peer?.id === o.peer : !s.peer) && (isWithin(s.cwd ?? '', o.cwd) || isWithin(meta?.[s.sessionId]?.groupCwd ?? '', o.cwd)));
+}
+
+/**
+ * The first time: no conversation on this computer yet (the CLI's own history counts — someone who used Claude Code
+ * before is not new). The 入门清单 is shown only then (redesign 2026-11: 「入门卡只在第一次出现」); before the list has
+ * come it is not known (false).
+ */
+export function firstTime(o: { listed: boolean; sessions: readonly SessionSummary[] }): boolean {
+  return o.listed && !o.sessions.some((s) => !s.peer);
+}
 
 /** The box after a starter is clicked: it fills an empty box (or replaces another starter); typed text is kept. */
 export function applyStarter(current: string, text: string): string {

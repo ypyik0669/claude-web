@@ -14,6 +14,12 @@ export const SUBAGENT_MENU_ID = { same: 'subagent-same', default: 'subagent-defa
 /** The menu of the chip next to the model's (models/EffortChip.tsx): the levels' group, and 深度编排's row. */
 export const EFFORT_MENU_ID = { effort: 'effort', ultracode: 'ultracode' } as const;
 
+/**
+ * A phone's own sheet rows (redesign 2026-11 #phone): the five levels inside the 「模型 · 强度」 sheet. Not in the reach
+ * table (that walks the desktop's composer); ui-smoke's phone section opens them.
+ */
+export const PHONE_SHEET_ID = { effortSeg: 'model-effort-seg', ctxSheet: 'ctx-sheet' } as const;
+
 /** Project chip menu rows (recent projects are `[data-dir]`). */
 export const PROJECT_MENU_ID = { browse: 'browse', worktree: 'worktree' } as const;
 

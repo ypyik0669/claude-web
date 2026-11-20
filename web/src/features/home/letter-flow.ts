@@ -7,14 +7,23 @@
 
 /**
  * 背景动画 (外观, spec 2026-10-24 A6 — the user: 「就做动画或者无在外观里面设置就好」): on → the new-conversation page
- * moves (a character theme's own backdrop, 字流 on the classic themes), off → still. Not set yet: the old
- * `ui.welcomeBackdrop` decides ('off' / false was off; 字流 / 字场 were on).
+ * moves (a character theme's own backdrop, 字流 on the classic themes), off → still. **Off unless turned on**
+ * (redesign 2026-11 #pages 首页: 「背景默认不动」): not set, only an explicit pick of the old `ui.welcomeBackdrop`
+ * (字流 / 字场 / true) still counts as on.
  */
 export function backdropOn(settings: Record<string, unknown>): boolean {
   const v = settings['ui.backdropMotion'];
   if (typeof v === 'boolean') return v;
   const old = settings['ui.welcomeBackdrop'];
-  return !(old === false || old === 'off');
+  return old !== undefined && old !== null && old !== false && old !== 'off';
+}
+
+/** 背景动画 switched off on purpose (now or in the old setting) — not merely left at its default. */
+export function backdropOff(settings: Record<string, unknown>): boolean {
+  const v = settings['ui.backdropMotion'];
+  if (typeof v === 'boolean') return !v;
+  const old = settings['ui.welcomeBackdrop'];
+  return old === false || old === 'off';
 }
 
 export interface Mote {

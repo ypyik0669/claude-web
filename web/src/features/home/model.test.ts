@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '@shared';
 import {
-  CHECKLIST, CHECKLIST_KEY, STARTERS, agoText, applyStarter, checklistView, engineNotice, homeRows, homeTabs, initialCwd, readChecklist, reconcileChecklist, waitingText,
+  CHECKLIST, CHECKLIST_KEY, STARTERS, agoText, applyStarter, checklistView, engineNotice, firstTime, homeRows, homeTabs, initialCwd, projectHasConversations, readChecklist, reconcileChecklist, waitingText,
 } from './model';
 import { nextRunText } from '@/features/automation/schedule-text';
 
@@ -9,10 +9,28 @@ const NOW = Date.UTC(2026, 8, 28, 12, 0, 0);
 const min = 60_000, hour = 3600_000, day = 86400_000;
 const S = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => ({ sessionId: id, title: `t-${id}`, cwd: 'C:/code/app', lastModified: NOW - hour, ...over });
 
-describe('starters (spec §5.8: four, only filled in, never sent)', () => {
-  it('are the four of the spec, in order', () => {
-    expect(STARTERS.map((s) => s.label)).toEqual(['讲讲这个项目的结构', '找一个 bug 并修好', '给最近的改动补测试', '先出方案再动手']);
+describe('starters (redesign 2026-11: three, only filled in, never sent, only for a project with no conversation)', () => {
+  it('are the three of the mockup, in order', () => {
+    expect(STARTERS.map((s) => s.label)).toEqual(['讲讲这个项目的结构', '找一个 bug 并修好', '给最近的改动补测试']);
     for (const s of STARTERS) expect(s.text.length).toBeGreaterThan(s.label.length - 1);
+  });
+  it('show while the project in the box has no conversation (its folder or one under it, on that machine)', () => {
+    const list = [S('a', { cwd: String.raw`C:\code\app\web` }), S('b', { cwd: '/srv/x', peer: { id: 'mac', name: 'Mac' } as SessionSummary['peer'] })];
+    expect(projectHasConversations({ cwd: 'C:/code/app' }, list)).toBe(true);
+    expect(projectHasConversations({ cwd: String.raw`c:\Code\App\web` }, list)).toBe(true);
+    expect(projectHasConversations({ cwd: 'C:/code/other' }, list)).toBe(false);
+    expect(projectHasConversations({ cwd: '/srv/x' }, list)).toBe(false); // that one is the Mac's
+    expect(projectHasConversations({ cwd: '/srv/x', peer: 'mac' }, list)).toBe(true);
+    // listed under the project by its group folder
+    expect(projectHasConversations({ cwd: 'D:/proj' }, [S('c', { cwd: 'E:/tmp/wt' })], { c: { groupCwd: 'D:/proj' } })).toBe(true);
+    // no folder chosen: nothing to say (no starters)
+    expect(projectHasConversations({ cwd: '' }, [])).toBe(true);
+  });
+  it('the 入门清单 is the first time’s: no conversation on this computer yet, once the list has come', () => {
+    expect(firstTime({ listed: false, sessions: [] })).toBe(false);
+    expect(firstTime({ listed: true, sessions: [] })).toBe(true);
+    expect(firstTime({ listed: true, sessions: [S('a')] })).toBe(false);
+    expect(firstTime({ listed: true, sessions: [S('b', { peer: { id: 'mac', name: 'Mac' } as SessionSummary['peer'] })] })).toBe(true);
   });
   it('fill an empty box, replace another starter, and never throw away what was typed', () => {
     const [a, b] = STARTERS;

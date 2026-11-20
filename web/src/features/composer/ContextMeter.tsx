@@ -4,10 +4,12 @@ import { useSettledSession, useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
 import { clsx } from '@/util';
 import { useDropdown } from '@/ui/menus';
+import { ActionSheet } from '@/ui/ActionSheet';
 import { leftInside } from '@/features/models/place';
-import { estimateContext, meterMode, ringLevel, sessionTotals, usageLines } from './stats';
+import { convStats } from '@/model/conv-stats';
+import { estimateContext, meterMode, ringLevel, sessionTotals, usageCard, type UsageCard } from './stats';
 import { resumeView } from '@/store/reopen';
-import { BAR_ID } from './ids';
+import { BAR_ID, PHONE_SHEET_ID } from './ids';
 import { tr } from '@/i18n';
 import type { ContextUsage } from '@/model/conversation';
 
@@ -42,19 +44,40 @@ export function useContextUsage(sessionId: string): ContextUsage | undefined {
   }, [o?.version, o?.info?.compactWindow, o?.info?.contextWindow, providers, recorded]);
 }
 
+/** The card's body: the context with its bar, the numbers, the footnote (the hover card and a phone's sheet). */
+function CardBody({ card }: { card: UsageCard }) {
+  const c = card.context;
+  return (
+    <>
+      {c ? (
+        <div className="ctx-card-ctx">
+          <div className="ctx-card-h"><b>{c.estimated ? tr('上下文 {pct}%（按上一轮估）', { pct: c.pct }) : tr('上下文 {pct}%', { pct: c.pct })}</b><span className="w">{c.used} / {c.window}</span></div>
+          <div className="ctx-bar" aria-hidden><i style={{ width: `${Math.min(100, Math.max(0, c.pct))}%` }} /></div>
+        </div>
+      ) : <div className="ctx-card-h"><b>{tr('本对话用量')}</b></div>}
+      <dl className="ctx-rows">
+        {card.rows.map(([k, v]) => <div key={k} className="ctx-row"><dt className="k">{k}</dt><dd className="v">{v}</dd></div>)}
+      </dl>
+      {c && <small className="ctx-note">{tr('快满时 Claude Code 会自动压缩')}</small>}
+    </>
+  );
+}
+
 /**
- * The composer's bottom-right context ring (spec §4.2 统计栏 / §5.4): only once the context is filling up (≥ 60 %,
- * spec §5.4 — final review I3: a ring or an unlabelled stats icon always in the corner was one control too many);
- * the percentage from 60 %, ink and bold from 80 %, the error colour from 95 %. On hover, focus or click it shows
- * every number the old stats bar under the composer showed (turns, tokens, cache, cost, last turn, context,
- * background tasks). The same card is always one menu away: the header's ··· 「本对话用量」 opens it here, anchored
- * to the ring or, without one, to this corner of the row.
+ * The context ring at the end of the line under the box (redesign 2026-11 「输入框下面这一行」 ⑥): always with its
+ * percentage (it used to wait for 60 %); darker from 60 %, bold from 80 %, the error colour from 95 %. On hover, focus
+ * or click a card: the context used of the window, 输入 / 输出, 缓存命中, 速度, 轮数 · 步数, 费用, 上一轮用时 — what the row
+ * drops when it is narrow is all here. The header's ··· 「本对话用量」 opens the same card, anchored to the ring or,
+ * without one, to this corner of the row. A phone: a tap opens the numbers as a sheet (no hover there).
  */
 export function ContextMeter({ sessionId }: { sessionId: string }) {
   const o = useSettledSession(sessionId);
   const pane = usePaneCtx();
+  const mobile = useStore((s) => s.mobile);
   const [pinned, setPinned] = useState(false);
   const [hover, setHover] = useState(false);
+  // a phone's sheet of the numbers
+  const [sheet, setSheet] = useState(false);
   // asked for from the header's ··· (stays until a click outside, Esc or another menu)
   const [asked, setAsked] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
@@ -76,7 +99,10 @@ export function ContextMeter({ sessionId }: { sessionId: string }) {
     return () => document.removeEventListener('mousedown', down, true);
   }, [hover, pinned, asked]);
   useEffect(() => {
-    const on = (e: Event) => { if (pane && (e as CustomEvent<UsageCardDetail>).detail.tileId === pane.tileId) setAsked(true); };
+    const on = (e: Event) => {
+      if (!pane || (e as CustomEvent<UsageCardDetail>).detail.tileId !== pane.tileId) return;
+      if (useStore.getState().mobile) setSheet(true); else setAsked(true);
+    };
     window.addEventListener(USAGE_CARD_EVENT, on);
     return () => window.removeEventListener(USAGE_CARD_EVENT, on);
   }, [pane?.tileId]);
@@ -89,20 +115,20 @@ export function ContextMeter({ sessionId }: { sessionId: string }) {
     if (w && w !== cardW) setCardW(w);
   });
   const totals = useMemo(() => (o ? sessionTotals(o.conv.items) : null), [o?.version]);
+  const stats = useMemo(() => (o ? convStats(o.conv.items) : null), [o?.version]);
   const cu = useContextUsage(sessionId);
   const pct = cu?.percentage;
   const level = ringLevel(pct);
   if (!o || !totals) return null;
   const ring = meterMode(pct) === 'ring';
   const tasks = [...o.conv.tasks.values()].filter((t) => t.status === 'running').length;
-  const lines = usageLines(totals, { lastMs: o.conv.lastResult?.durationMs, context: cu ? { percentage: cu.percentage, totalTokens: cu.totalTokens, maxTokens: cu.maxTokens, estimated: cu.estimated } : undefined, tasks });
-  const show = pinned || hover || asked;
+  const data = usageCard(totals, stats, { lastMs: o.conv.lastResult?.durationMs, context: cu ? { percentage: cu.percentage, totalTokens: cu.totalTokens, maxTokens: cu.maxTokens, estimated: cu.estimated } : undefined, tasks });
+  const show = !mobile && (pinned || hover || asked);
   const r = 6, c = 2 * Math.PI * r, p = Math.min(100, Math.max(0, pct ?? 0));
   // the ring when there is one; else the right-hand group of the row (the card's corner is the same)
   const rect = show ? (ring ? btn.current : anchor.current?.parentElement)?.getBoundingClientRect() : undefined;
   // right-aligned to the ring (or the row's corner) when there is room to its left; else moved right, 8px in from the
-  // window's edge — on a phone the ring is mid-row and the card stuck out on the left (2026-11-17). It still grows
-  // from the ring: the origin follows it along the bottom edge
+  // window's edge. It still grows from the ring: the origin follows it along the bottom edge
   const vw = window.innerWidth;
   const left = rect ? leftInside(rect.right, cardW, vw) : 0;
   const origin = rect && cardW ? `${Math.round(Math.max(0, Math.min(cardW, (rect.left + rect.right) / 2 - left)))}px 100%` : undefined;
@@ -110,21 +136,30 @@ export function ContextMeter({ sessionId }: { sessionId: string }) {
     <>
       <span ref={anchor} className="ctx-anchor" aria-hidden />
       {ring && (
-        <button ref={btn} type="button" data-id={BAR_ID.meter} className={clsx('ctx-meter', level)} aria-label={tr('本对话用量，上下文 {pct}%', { pct })} aria-expanded={show}
-          onClick={() => setPinned((v) => !v)} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} onFocus={() => setHover(true)} onBlur={() => { setHover(false); setPinned(false); }}>
+        <button ref={btn} type="button" data-id={BAR_ID.meter} className={clsx('ctx-meter', level)} aria-label={tr('本对话用量，上下文 {pct}%', { pct })} aria-expanded={show || sheet} aria-haspopup={mobile ? 'dialog' : undefined}
+          onClick={() => (mobile ? setSheet(true) : setPinned((v) => !v))} onMouseEnter={() => { if (!mobile) setHover(true); }} onMouseLeave={() => setHover(false)} onFocus={() => { if (!mobile) setHover(true); }} onBlur={() => { setHover(false); setPinned(false); }}>
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
             <circle cx="8" cy="8" r={r} fill="none" stroke="var(--edge-strong)" strokeWidth="2" />
             <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeWidth={level === 'quiet' || level === 'note' ? 2 : 2.6} strokeDasharray={`${(p / 100) * c} ${c}`} strokeLinecap="round" transform="rotate(-90 8 8)" />
           </svg>
-          {level !== 'quiet' && <span className="pct">{pct}%</span>}
+          {/* always the number (redesign 2026-11: it used to wait for 60 %) */}
+          <span className="pct">{pct}%</span>
         </button>
       )}
       {show && rect && createPortal(
         <div ref={card} className="ctx-card" role={asked ? 'dialog' : 'tooltip'} aria-label={tr('本对话用量')} style={{ position: 'fixed', left, bottom: window.innerHeight - rect.top + 6, transformOrigin: origin }}>
-          <div className="ctx-card-h">{tr('本对话用量')}</div>
-          {lines.map(([k, v]) => <div key={k} className="ctx-row"><span className="k">{k}</span><span className="v">{v}</span></div>)}
+          <CardBody card={data} />
         </div>,
         document.body,
+      )}
+      {/* a phone (the mockup's 「点上下文小环」): the same numbers in a sheet from the bottom */}
+      {sheet && mobile && (
+        <ActionSheet onClose={() => setSheet(false)}>
+          <div className="menu ctx-sheet" role="dialog" aria-label={tr('这个对话')} data-id={PHONE_SHEET_ID.ctxSheet}>
+            <div className="ctx-sheet-h">{tr('这个对话')}</div>
+            <CardBody card={data} />
+          </div>
+        </ActionSheet>
       )}
     </>
   );

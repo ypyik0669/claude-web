@@ -2,7 +2,7 @@
 // same keys from meta.json before the server is up (desktop/src/opening-pack.ts `openingSettings`) — the defaults here
 // and there must agree: Claude Web 娘, each day's first start, full length, no sound, the loop kept at 30%.
 import type { OpeningInfo } from '@shared';
-import { backdropOn } from '@/features/home/letter-flow';
+import { backdropOff } from '@/features/home/letter-flow';
 
 export const OPENING_KEYS = {
   pack: 'ui.opening.pack',
@@ -39,7 +39,8 @@ export const soundOf = (s: Record<string, unknown>) => s[OPENING_KEYS.sound] ===
  */
 export function keepOn(s: Record<string, unknown>): boolean {
   const v = s[OPENING_KEYS.keep];
-  return typeof v === 'boolean' ? v : backdropOn(s);
+  // (背景动画 is off by default since redesign 2026-11: only one switched off on purpose holds this back)
+  return typeof v === 'boolean' ? v : !backdropOff(s);
 }
 
 /** 浓淡: how much of the background shows through the shell (0–60 %, 30 by default). */

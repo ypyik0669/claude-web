@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeNoise } from './ascii-noise';
-import { MAX_MOTES, MIN_MOTES, PART_R, ambient, backdropOn, current, moteAlpha, moteCount, splash, step, typed } from './letter-flow';
+import { MAX_MOTES, MIN_MOTES, PART_R, ambient, backdropOff, backdropOn, current, moteAlpha, moteCount, splash, step, typed } from './letter-flow';
 
 const seeded = (s = 1) => () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
 const noise = makeNoise(7);
@@ -72,10 +72,16 @@ describe('背景动画 (A6)', () => {
     expect(backdropOn({ 'ui.backdropMotion': false })).toBe(false);
     expect(backdropOn({ 'ui.backdropMotion': true, 'ui.welcomeBackdrop': 'off' })).toBe(true);
   });
-  it('unset: the old setting decides (off / false → off; flow / field / unset → on)', () => {
+  it('unset: still by default (redesign 2026-11); only an explicit old pick of 字流 / 字场 moves', () => {
     expect(backdropOn({ 'ui.welcomeBackdrop': 'off' })).toBe(false);
     expect(backdropOn({ 'ui.welcomeBackdrop': false })).toBe(false);
     expect(backdropOn({ 'ui.welcomeBackdrop': 'field' })).toBe(true);
-    expect(backdropOn({})).toBe(true);
+    expect(backdropOn({})).toBe(false);
+  });
+  it('switched off on purpose is not the same as left alone', () => {
+    expect(backdropOff({})).toBe(false);
+    expect(backdropOff({ 'ui.backdropMotion': false })).toBe(true);
+    expect(backdropOff({ 'ui.welcomeBackdrop': 'off' })).toBe(true);
+    expect(backdropOff({ 'ui.backdropMotion': true })).toBe(false);
   });
 });
