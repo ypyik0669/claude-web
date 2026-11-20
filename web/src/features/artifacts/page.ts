@@ -47,3 +47,13 @@ export function filterArtifacts(items: ArtifactRef[], f: ArtifactFilter, query =
   const q = query.trim().toLowerCase();
   return items.filter((a) => (f === 'all' || artifactKind(a.path) === f) && (!q || a.path.toLowerCase().includes(q) || (a.title ?? '').toLowerCase().includes(q)));
 }
+
+/**
+ * The kinds the Artifacts page lists (server/src/library/artifacts.ts KINDS — keep the two together): a written file
+ * worth looking at again, not source code.
+ */
+const ARTIFACT_EXTS = new Set(['html', 'htm', 'md', 'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'csv']);
+export function isArtifactPath(p: string): boolean {
+  const m = /\.([a-z0-9]+)$/i.exec(p);
+  return !!m && ARTIFACT_EXTS.has(m[1].toLowerCase());
+}

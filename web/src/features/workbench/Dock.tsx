@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { OfficePanel } from '@/features/office/OfficePanel';
 import { hideSheet, useScopedSession, useStore } from '@/store';
-import { PANELS, PANEL_ICONS, PANEL_TITLES, defaultDockPanel, dockView, workbenchOn, type DockTab, type PanelId } from '@/model/layout';
+import { CORE_PANELS, PANELS, PANEL_ICONS, PANEL_TITLES, defaultDockPanel, dockView, workbenchOn, type DockTab, type PanelId } from '@/model/layout';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { TERMS } from '@/ui/terms';
@@ -25,8 +25,9 @@ import { Popover } from '@/features/composer/Popover';
 import { useRightPanel } from './right-panel';
 import { SHELL_GAP, countText, fixedShort, panelColumnWidth, rowStacked, shortFixedWidth, tempTabWidth, tempsFolded, type RowMeasure } from './tab-row';
 import { BrowserPanel } from '@/features/browser/BrowserPanel';
+import { ArtifactsPanel, useConversationArtifacts } from '@/features/panels/ArtifactsPanel';
 import { getZoom } from '@/ui/zoom';
-import { modKey } from './shortcuts';
+import { SHORTCUTS, keyLabel, modKey } from './shortcuts';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { reducedMotion } from '@/ui/input-intent';
 import { RP_OUT_MS, panelFadesOut, type DockSeen } from './dock-closing';
@@ -87,10 +88,70 @@ function PanelContent({ id, visible, host }: { id: PanelId; visible: boolean; ho
     case 'cafe': return <OfficePanel />;
     // one browser per window: its pages live in the right panel's copy (a second set of webviews would be other pages)
     case 'browser': return host === 'dock' ? <BrowserPanel visible={visible} /> : <div className="empty">{tr('浏览器在右侧面板里。')}</div>;
+    case 'artifacts': return <ArtifactsPanel />;
   }
 }
 
-const NONE: PanelId[] = [];
+/**
+ * The default right panel's picker (redesign 2026-11 #pages 「对话，旁边打开 Artifact」 ③; a phone's bottom panel the
+ * same — problem 16): one thing at a time, its name at the panel's top-left. The menu: the five (任务 · 终端 · 改动 ·
+ * 浏览器 · 文件 — the conversation header's tools, Ctrl 1–5), this conversation's Artifacts, any other panel that is
+ * open (with its ×), and the rest of the panels that open here (目标, 编排, 用量, Issue 与 PR…). The 5 fixed tabs and
+ * 「更多」 it replaces are gone; nothing here unmounts a panel but its × (the Dock's discipline).
+ */
+function PanelPicker({ active, mounted, reviewCount, onPick, onClose }: { active: PanelId | null; mounted: PanelId[]; reviewCount: number; onPick: (id: PanelId) => void; onClose: (id: PanelId) => void }) {
+  const [open, setOpen] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const sid = useScopedSession()?.sessionId ?? null;
+  const arts = useConversationArtifacts(sid);
+  const close = useCallback((refocus: boolean) => { setOpen(false); if (refocus) btn.current?.focus(); }, []);
+  const cur: PanelId = active ?? CORE_PANELS[0];
+  const others = mounted.filter((id) => !CORE_PANELS.includes(id) && id !== 'artifacts');
+  const rest = MORE_PANELS.filter((p) => !mounted.includes(p.id) && p.id !== 'artifacts');
+  const pick = (id: PanelId) => { setOpen(false); onPick(id); };
+  const keyOf = (id: PanelId) => { const k = SHORTCUTS.find((x) => x.id === `panel.${id}`); return k ? keyLabel(k).split(' / ')[0] : ''; };
+  const count = (id: PanelId) => (id === 'files' && reviewCount > 0 ? <span className="n">{countText(reviewCount)}</span> : id === 'artifacts' && arts.length > 0 ? <span className="n">{arts.length}</span> : null);
+  const row = (id: PanelId, opts: { x?: boolean } = {}) => (
+    <div key={id} className="dock-more-open" data-open={id}>
+      <button role="menuitemradio" aria-checked={active === id} data-mi data-panel={id} onClick={() => pick(id)}>
+        <Icon name={PANEL_ICONS[id]} size={14} /><span className="grow">{PANEL_TITLES[id]}</span>{count(id)}
+        {CORE_PANELS.includes(id) && <span className="kbd">{keyOf(id)}</span>}
+        <span className="ck">{active === id && <Icon name="check" size={13} />}</span>
+      </button>
+      {opts.x && <button className="x" role="menuitem" data-mi title={tr('关闭{v}', { v: PANEL_TITLES[id] })} aria-label={tr('关闭{v}', { v: PANEL_TITLES[id] })} onClick={() => { onClose(id); if (others.length <= 1) close(true); }}><Icon name="close" size={12} /></button>}
+    </div>
+  );
+  return (
+    <>
+      <button ref={btn} type="button" className={clsx('dock-pick', open && 'open')} data-panel={cur} aria-haspopup="menu" aria-expanded={open} title={tr('右侧面板显示什么')} onClick={() => setOpen((o) => !o)}>
+        <Icon name={PANEL_ICONS[cur]} size={15} />
+        <span className="t">{PANEL_TITLES[cur]}</span>
+        {count(cur)}
+        <Icon name="chevronDown" size={12} className="caret" />
+      </button>
+      {open && (
+        <Popover anchor={btn} onClose={close} prefer="down" align="left" className="dock-pick-menu dock-more-menu" label={tr('右侧面板显示什么')}>
+          {CORE_PANELS.map((id) => row(id))}
+          {row('artifacts')}
+          {others.length > 0 && (
+            <>
+              <div className="menu-sep" />
+              <div className="menu-label">{tr('已打开')}</div>
+              {others.map((id) => row(id, { x: true }))}
+            </>
+          )}
+          {rest.length > 0 && (
+            <>
+              <div className="menu-sep" />
+              <div className="menu-label">{tr('更多面板')}</div>
+              {rest.map((p) => row(p.id))}
+            </>
+          )}
+        </Popover>
+      )}
+    </>
+  );
+}
 
 /**
  * The fixed tabs' widths with their names, and in their short form — whichever the group is drawn in right now: the
@@ -104,65 +165,6 @@ function fixedWidths(group: HTMLElement | null): { fixed: number; fixedShort?: n
   const tabs = [...group.children].map((c) => c.getBoundingClientRect().width);
   if (was) group.classList.add('short');
   return { fixed, fixedShort: shortFixedWidth(fixed, tabs) };
-}
-
-/**
- * The default right panel's 「更多」 menu: the extra-tier panels, opened as temporary tabs (spec §5.6). When the row has
- * no room for the temporary strip (`tab-row.ts`), the open temporary tabs are here too, on top — switch to one or
- * close it — and the button says how many there are (and is marked while one of them is in front).
- */
-function MoreMenu({ mounted, open: temps, active, onPick, onClose }: { mounted: PanelId[]; open: PanelId[]; active: PanelId | null; onPick: (id: PanelId) => void; onClose: (id: PanelId) => void }) {
-  const dispatch = useStore((s) => s.dispatchLayout);
-  const [open, setOpen] = useState(false);
-  const btn = useRef<HTMLButtonElement>(null);
-  const close = useCallback((refocus: boolean) => { setOpen(false); if (refocus) btn.current?.focus(); }, []);
-  const front = !!active && temps.includes(active);
-  const names = temps.map((id) => PANEL_TITLES[id]).join('、');
-  // closing one from 「已打开」 (the × was focused — a keyboard user): the focus moves to the next open row, else the
-  // one before it; with none left the menu closes and the focus goes back to 「更多」 (never left on <body>, where
-  // neither the arrows nor Esc reach the menu)
-  const closeOpen = (id: PanelId) => {
-    const i = temps.indexOf(id);
-    const next = temps[i + 1] ?? temps[i - 1];
-    onClose(id);
-    if (!next) { close(true); return; }
-    requestAnimationFrame(() => document.querySelector<HTMLElement>(`.dock-more-menu .dock-more-open[data-open="${next}"] > button[data-panel]`)?.focus());
-  };
-  const title = temps.length ? tr('更多面板 · 已打开：{names}', { names }) : tr('更多面板：目标、编排、用量、Issue 与 PR…');
-  return (
-    <>
-      <button ref={btn} className={clsx('icon-btn dock-more', (open || front) && 'active')} title={title} aria-label={temps.length ? tr('更多面板（已打开 {tempsCount} 个）', { tempsCount: temps.length }) : tr('更多面板')} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Icon name="plus" size={15} />
-        {temps.length > 0 && <span className="dock-more-n" aria-hidden>{temps.length}</span>}
-      </button>
-      {open && (
-        <Popover anchor={btn} onClose={close} prefer="down" align="right" className="dock-more-menu" label={tr('更多面板')}>
-          {temps.length > 0 && (
-            <>
-              <div className="menu-label">{tr('已打开')}</div>
-              {temps.map((id) => (
-                <div key={id} className="dock-more-open" data-open={id}>
-                  <button role="menuitemradio" aria-checked={active === id} data-mi data-panel={id} onClick={() => { onPick(id); setOpen(false); }}>
-                    <Icon name={PANEL_ICONS[id]} size={14} /><span className="grow">{PANEL_TITLES[id]}</span>{active === id && <Icon name="check" size={13} />}
-                  </button>
-                  <button className="x" role="menuitem" data-mi title={tr('关闭{v}', { v: PANEL_TITLES[id] })} aria-label={tr('关闭{v}', { v: PANEL_TITLES[id] })} onClick={() => closeOpen(id)}><Icon name="close" size={12} /></button>
-                </div>
-              ))}
-              <div className="menu-sep" />
-            </>
-          )}
-          <div className="menu-label">{tr('在右侧面板打开')}</div>
-          {MORE_PANELS.map((p) => (
-            <button key={p.id} role="menuitem" data-mi data-panel={p.id} onClick={() => { dispatch({ t: 'dock.show', panel: p.id }); setOpen(false); }}>
-              <Icon name={p.icon} size={14} /><span className="grow">{p.title}</span>{mounted.includes(p.id) && <Icon name="check" size={13} />}
-            </button>
-          ))}
-          <div className="menu-sep" />
-          <div className="menu-note">{tr('总览、记忆、配置中心等在命令面板（{modKey}+K）里，或在设置里打开「{workbench}」', { modKey, workbench: TERMS.workbench })}</div>
-        </Popover>
-      )}
-    </>
-  );
 }
 
 /**
@@ -212,8 +214,8 @@ export function Dock() {
   const stacked = simple && place.stacked;
   // no room for every fixed tab's name: only the one in front keeps it
   const short = simple && place.short;
-  // no room for a strip: the temporary tabs are listed in 「更多」 (default look only; workbench tabs are icons)
-  const folded = simple && place.folded && temps.length > 0;
+  // the default look has no tab strip any more: the picker names the panel in front and lists every other one
+  const folded = false;
   // …and one of them is in front: nothing in the row names it, so the panel gets a title row with its ×
   const foldedFront = folded && !!active && temps.some((t) => t.id === active);
 
@@ -379,7 +381,10 @@ export function Dock() {
   return (
     <div className={clsx('dock', min && 'min', !workbench && 'simple')} hidden={!shown}>
       {!min && <div className="resizer" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onDoubleClick={() => dispatch({ t: 'dock.set', patch: { width: DOCK_DEFAULT_WIDTH } })} title={tr('拖动调整 · 双击复位')} />}
-      <div className={clsx('dock-tabs', stacked && 'stacked')} ref={row}>
+      <div className={clsx('dock-tabs', stacked && 'stacked', simple && 'picked')} ref={row}>
+        {simple ? (
+          <span className="dock-fixed dock-picker" ref={fixedRef}><PanelPicker active={active} mounted={mounted} reviewCount={reviewCount} onPick={pick} onClose={close} /></span>
+        ) : (
         <div className="dock-tabgroups" role="tablist" aria-label={TERMS.dock}>
           {fixed.length > 0 && <div className={clsx('dock-fixed', short && 'short')} ref={fixedRef}>{fixed.map(tab)}</div>}
           {fixed.length > 0 && temps.length > 0 && !folded && <span className="dock-sep" aria-hidden />}
@@ -392,9 +397,9 @@ export function Dock() {
             </div>
           )}
         </div>
+        )}
         <span className="grow" />
         <span className="dock-ctl" ref={ctlRef}>
-          {simple && <MoreMenu mounted={mounted} open={folded ? temps.map((t) => t.id) : NONE} active={active} onPick={pick} onClose={close} />}
           {(workbench || min) && !mobile && (
             <button className="icon-btn" title={min ? tr('还原{dock} ({modKey}+Shift+J)', { dock: TERMS.dock, modKey }) : tr('最小化 ({modKey}+Shift+J)', { modKey })} onClick={() => dispatch({ t: 'dock.set', patch: { minimized: !min } })}>
               <Icon name={min ? 'restore' : 'minimize'} size={16} />

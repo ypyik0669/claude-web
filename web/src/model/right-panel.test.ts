@@ -10,11 +10,11 @@ describe('panel tiers', () => {
     for (const p of PANELS) expect(['core', 'extra', 'workbench']).toContain(p.tier);
   });
 
-  it('the fixed tabs are 审阅 · 文件 · 终端 · 浏览器 · 任务, in that order', () => {
-    expect(CORE_PANELS).toEqual(['files', 'explorer', 'terminal', 'browser', 'tasks']);
+  it('the five are 任务 · 终端 · 改动 · 浏览器 · 文件, in that order (the header’s tools, the picker, Ctrl 1–5)', () => {
+    expect(CORE_PANELS).toEqual(['tasks', 'terminal', 'files', 'browser', 'explorer']);
     expect(PANELS.filter((p) => p.tier === 'core').map((p) => p.id).sort()).toEqual([...CORE_PANELS].sort());
     const title = (id: string) => PANELS.find((p) => p.id === id)!.title;
-    expect(CORE_PANELS.map(title)).toEqual(['审阅', '文件', '终端', '浏览器', '任务']);
+    expect(CORE_PANELS.map(title)).toEqual(['任务', '终端', '改动', '浏览器', '文件']);
     // the two that hold something alive (a pty; pages an Agent may be working in) are hidden, never closed
     expect(PANELS.filter((p) => p.keepAlive).map((p) => p.id).sort()).toEqual(['browser', 'terminal']);
   });
@@ -27,7 +27,7 @@ describe('panel tiers', () => {
 describe('dockView: the tab row', () => {
   it('default mode: the fixed tabs always, mounted only once opened; other panels are temporary tabs after them', () => {
     const v = dockView(dock({ tabs: ['goals', 'terminal'], active: 'terminal' }), { workbench: false, inspect: false });
-    expect(v.tabs.map((t) => t.id)).toEqual(['files', 'explorer', 'terminal', 'browser', 'tasks', 'goals']);
+    expect(v.tabs.map((t) => t.id)).toEqual(['tasks', 'terminal', 'files', 'browser', 'explorer', 'goals']);
     expect(v.tabs.filter((t) => t.fixed).map((t) => t.id)).toEqual(CORE_PANELS);
     expect(v.tabs.filter((t) => t.mounted).map((t) => t.id)).toEqual(['terminal', 'goals']);
     expect(v.active).toBe('terminal');

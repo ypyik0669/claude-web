@@ -282,7 +282,6 @@ describe('default screens outside settings speak the interface vocabulary (phase
     'features/home/model.ts',
     'features/home/Checklist.tsx',
     'features/home/EngineNotice.tsx',
-    'features/home/HomeLists.tsx',
     'features/onboarding/Onboarding.tsx',
     'features/onboarding/steps.ts',
     'features/automation/AutomationPage.tsx',
@@ -306,11 +305,15 @@ describe('default screens outside settings speak the interface vocabulary (phase
     'features/composer/Composer.tsx',
     'features/models/ModelMenu.tsx',
     'features/models/route.ts',
+    // the conversation header's ⋯ (a phone's six-grid and pages too), a message's sheet, the Artifacts panel (redesign 2026-11 stage 4)
+    'features/workbench/tiles/ConvMenu.tsx',
+    'features/chat/MessageSheet.tsx',
+    'features/panels/ArtifactsPanel.tsx',
     'ui/EmptyState.tsx',
     'ui/terms.ts',
   ];
-  /** Parts of bigger files: the session header's ··· (its views, 终端 / 任务 on a phone). */
-  const PARTS: [string, string[]][] = [['features/workbench/tiles/ChatTile.tsx', ['HeaderMenu']]];
+  /** Parts of bigger files: the conversation header (its five tools for the right panel). */
+  const PARTS: [string, string[]][] = [['features/workbench/tiles/ChatTile.tsx', ['TOOLS', 'SessionHeader']]];
   const SERVER_CATALOG = '../../server/src/models/catalog.ts';
 
   it('none of them uses an implementation word where it can be seen', () => {

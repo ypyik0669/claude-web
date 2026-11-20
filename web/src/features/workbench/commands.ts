@@ -95,6 +95,8 @@ export function runCommand(id: string): boolean {
       return true;
     }
     case 'files.search': openExplorer('search'); return true;
+    // 对话信息栏 (the header ⋯, Ctrl+I): the column beside a conversation on a wide screen
+    case 'info.toggle': void st.setSetting('ui.infoPanel', st.settings['ui.infoPanel'] === false); return true;
     case 'group.new': d({ t: 'group.new' }); return true;
     case 'group.close': d({ t: 'group.close', id: st.layout.activeGroupId }); return true;
     case 'group.next': d({ t: 'group.next', dir: 1 }); return true;

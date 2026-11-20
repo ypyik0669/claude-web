@@ -9,9 +9,20 @@ beforeAll(async () => {
 const ev = (o: Partial<KeyboardEvent>) => ({ ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, target: null, code: '', ...o }) as unknown as KeyboardEvent;
 
 describe('matchBrowserKey', () => {
-  it('Ctrl+Shift+digit: e.key is the shifted symbol, the physical digit decides', () => {
+  it('Ctrl+Shift+digit: e.key is the shifted symbol, the physical digit decides — the panel\'s five in the header\'s order', () => {
     expect(matchBrowserKey(ev({ key: '!', code: 'Digit1', ctrlKey: true, shiftKey: true }))).toBe('panel.tasks');
-    expect(matchBrowserKey(ev({ key: '@', code: 'Digit2', ctrlKey: true, shiftKey: true }))).toBe('panel.files');
+    expect(matchBrowserKey(ev({ key: '@', code: 'Digit2', ctrlKey: true, shiftKey: true }))).toBe('panel.terminal');
+    expect(matchBrowserKey(ev({ key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true }))).toBe('panel.files');
+    expect(matchBrowserKey(ev({ key: '$', code: 'Digit4', ctrlKey: true, shiftKey: true }))).toBe('panel.browser');
+    expect(matchBrowserKey(ev({ key: '%', code: 'Digit5', ctrlKey: true, shiftKey: true }))).toBe('panel.explorer');
+    // a plain Ctrl+digit is the browser's own tab switching (the desktop app's menu has Ctrl 1–5)
+    expect(matchBrowserKey(ev({ key: '1', code: 'Digit1', ctrlKey: true }))).toBeNull();
+  });
+
+  it('Ctrl+I: the info column — not in the code editor or the terminal', () => {
+    const inside = (sel: string) => ({ closest: (q: string) => (q.split(', ').includes(sel) ? {} : null), tagName: 'DIV' });
+    expect(matchBrowserKey(ev({ key: 'i', code: 'KeyI', ctrlKey: true }))).toBe('info.toggle');
+    expect(matchBrowserKey(ev({ key: 'i', code: 'KeyI', ctrlKey: true, target: inside('.monaco-editor') as any }))).toBeNull();
   });
 
   it('macOS Option chords produce other characters (or dead keys)', () => {
