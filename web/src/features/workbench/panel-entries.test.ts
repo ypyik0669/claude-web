@@ -26,20 +26,24 @@ describe('every panel is reachable in ≤ 2 clicks', () => {
     });
   }
 
-  it('the fixed tabs are one header button + one tab away; 审阅 and 终端 also have their own header button', () => {
-    for (const id of CORE_PANELS) expect(panelEntries(id)).toContain('panelButton');
+  it('the five are one header tool away (任务 · 终端 · 改动 · 浏览器 · 文件); 改动 also behind 「+N −M」', () => {
+    expect(CORE_PANELS).toEqual(['tasks', 'terminal', 'files', 'browser', 'explorer']);
+    for (const id of CORE_PANELS) expect(panelEntries(id)).toContain('headerTool');
+    expect(ENTRY_CLICKS.headerTool).toBe(1);
     expect(panelEntries('files')).toContain('changesButton');
-    expect(panelEntries('terminal')).toContain('terminalButton');
     expect(ENTRY_CLICKS.changesButton).toBe(1);
+    // the header's ⋯ opens Issue 与 PR and Android 屏幕 itself
+    expect(panelEntries('board')).toContain('headerMore');
+    expect(panelEntries('android')).toContain('headerMore');
   });
 
   it('the palette label: a fixed tab in view is hidden with nothing “running in the background”; the terminal is', () => {
     const d: Dock = { open: true, minimized: false, width: 440, tabs: ['files', 'terminal'], active: 'files' };
     const p = (id: string) => PANELS.find((x) => x.id === id)!;
-    expect(panelCommandLabel(d, p('files'), false)).toBe('隐藏审阅面板');
+    expect(panelCommandLabel(d, p('files'), false)).toBe('隐藏改动面板');
     expect(panelCommandLabel({ ...d, active: 'terminal' }, p('terminal'), false)).toBe('隐藏终端面板（继续在后台运行）');
     expect(panelCommandLabel(d, p('tasks'), false)).toBe('打开任务面板');
-    expect(panelCommandLabel(d, p('files'), true)).toBe('关闭审阅面板');
+    expect(panelCommandLabel(d, p('files'), true)).toBe('关闭改动面板');
   });
 
   it('the sidebar\'s entries (same ids as sidebar/entries.ts): 自动化 → its five tabs (目标 / 编排 among them), account → 用量与账本, 2 clicks', () => {
@@ -65,7 +69,7 @@ describe('every panel is reachable in ≤ 2 clicks', () => {
     expect(viewEntries('schedules')).toContain('sidebarAutomation');
   });
 
-  it('the 「更多」 menu holds exactly the extra tier (never a fixed tab)', () => {
+  it('the picker’s 「更多面板」 holds exactly the extra tier (never one of the five)', () => {
     expect(MORE_PANELS.map((p) => p.id)).toEqual(PANELS.filter((p) => p.tier === 'extra').map((p) => p.id));
     for (const p of MORE_PANELS) expect(CORE_PANELS).not.toContain(p.id);
   });
@@ -74,19 +78,20 @@ describe('every panel is reachable in ≤ 2 clicks', () => {
 describe('the old 8 workbench tabs', () => {
   const views = WORKBENCH_TABS.filter((t) => t !== 'live');
 
-  it('each is still a view with an entry in ≤ 2 clicks (header ··· / palette)', () => {
+  it('each is still a view with an entry in ≤ 2 clicks (a header tool / the header ⋯ / the palette)', () => {
     expect(WB_VIEWS.map((v) => v.id).sort()).toEqual(views.slice().sort());
+    const want: Record<string, string[]> = { changes: ['headerTool', 'palette'], files: ['headerTool', 'palette'], board: ['headerMore', 'palette'], schedules: ['palette', 'sidebarAutomation'] };
     for (const v of views) {
-      expect(viewEntries(v)).toEqual(v === 'schedules' ? ['headerMore', 'palette', 'sidebarAutomation'] : ['headerMore', 'palette']);
+      expect(viewEntries(v)).toEqual(want[v] ?? ['palette']);
       expect(minClicks(viewEntries(v))).toBeLessThanOrEqual(2);
     }
   });
 
-  it('the entries come from the menus’ own tables: a conversation on another machine only offers 生成的文件', () => {
+  it('a conversation on another machine: only what the palette offers for it (生成的文件)', () => {
     // (定时任务 are this machine's: 自动化 opens them on the automation page)
-    const header = (v: (typeof views)[number]) => viewEntries(v, true).filter((e) => e !== 'sidebarAutomation');
-    expect(views.filter((v) => header(v).length)).toEqual(['artifacts']);
-    for (const v of views) if (v !== 'artifacts') expect(header(v)).toEqual([]);
+    const own = (v: (typeof views)[number]) => viewEntries(v, true).filter((e) => e !== 'sidebarAutomation');
+    expect(views.filter((v) => own(v).length)).toEqual(['artifacts']);
+    expect(own('artifacts')).toEqual(['palette']);
   });
 
   it('they open in the right panel (spec §4.2; the bottom drawer on a phone) — 定时任务 on the automation page', () => {

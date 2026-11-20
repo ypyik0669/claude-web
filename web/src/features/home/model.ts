@@ -1,14 +1,10 @@
-// The start page (redesign phase 7, spec §5.8 / mock-home.png): the four starters, the 入门清单, the three lists
-// under the composer, the project the composer starts on and the login / runtime notice. Pure — the components in
-// this folder and workbench/Welcome.tsx only draw it.
-import type { Schedule, SessionMeta, SessionSummary } from '@shared';
+// The start page (redesign 2026-11 stage 4; first spec §5.8): the greeting, the three starters, the 入门清单, the
+// project the composer starts on and the login / runtime notice. Pure — the components in this folder and
+// workbench/Welcome.tsx only draw it. (The lists under the box are gone: the sidebar has the conversations.)
+import type { SessionMeta, SessionSummary } from '@shared';
 import type { IconName } from '@/ui/icons';
-import { isArchived } from '@/features/sidebar/filter';
-import { rowStatus } from '@/features/sidebar/status';
-import { basename } from '@/util';
-import { projectFor } from '@/features/paths';
-import { nextRunText, scheduleText } from '@/features/automation/schedule-text';
-import { tr, dateLocale } from '@/i18n';
+import { isWithin } from '@/features/paths';
+import { tr } from '@/i18n';
 
 // ---------------------------------------------------------------------------------------------------- greeting
 
@@ -18,13 +14,34 @@ export const GREETING = tr('今天想做点什么？');
 // ---------------------------------------------------------------------------------------------------- starters
 
 export interface Starter { id: string; icon: IconName; label: string; text: string }
-/** Four ways to begin (spec §5.8). A click only puts the text in the box: nothing is sent. */
+/**
+ * Three ways to begin (redesign 2026-11 #pages 首页). A click only puts the text in the box: nothing is sent. They
+ * are shown only while the project in the box has no conversations yet (`projectHasConversations`).
+ */
 export const STARTERS: Starter[] = [
   { id: 'explain', icon: 'read', label: tr('讲讲这个项目的结构'), text: tr('讲讲这个项目的结构：有哪些主要目录、入口在哪、各部分怎么配合。') },
   { id: 'bug', icon: 'search', label: tr('找一个 bug 并修好'), text: tr('找一个 bug 并修好：先说清楚问题在哪、怎么复现，再动手改。') },
   { id: 'tests', icon: 'todo', label: tr('给最近的改动补测试'), text: tr('给最近的改动补测试：看看最近的提交和未提交的改动，找出没被测到的地方。') },
-  { id: 'plan', icon: 'plan', label: tr('先出方案再动手'), text: tr('先出一个方案给我看，我同意之后再动手：') },
 ];
+
+/**
+ * Has the project the new conversation is about to start in had a conversation? (the starters go once it has.) Its
+ * folder or one under it, on the same machine (`peer`: a federation peer's id, '' = this computer); a conversation
+ * listed under the project by its group folder counts too. No folder chosen → nothing to say yet (true: no starters).
+ */
+export function projectHasConversations(o: { cwd: string; peer?: string }, sessions: readonly SessionSummary[], meta?: Record<string, SessionMeta>): boolean {
+  if (!o.cwd) return true;
+  return sessions.some((s) => (o.peer ? s.peer?.id === o.peer : !s.peer) && (isWithin(s.cwd ?? '', o.cwd) || isWithin(meta?.[s.sessionId]?.groupCwd ?? '', o.cwd)));
+}
+
+/**
+ * The first time: no conversation on this computer yet (the CLI's own history counts — someone who used Claude Code
+ * before is not new). The 入门清单 is shown only then (redesign 2026-11: 「入门卡只在第一次出现」); before the list has
+ * come it is not known (false).
+ */
+export function firstTime(o: { listed: boolean; sessions: readonly SessionSummary[] }): boolean {
+  return o.listed && !o.sessions.some((s) => !s.peer);
+}
 
 /** The box after a starter is clicked: it fills an empty box (or replaces another starter); typed text is kept. */
 export function applyStarter(current: string, text: string): string {
@@ -86,39 +103,7 @@ export function checklistView(stored: ChecklistStore): { items: { id: ChecklistI
   return { items, done, total: IDS.length, next, visible: !stored.dismissed && next !== null };
 }
 
-// ---------------------------------------------------------------------------------------------------- the lists
-
-export type HomeTab = 'recent' | 'schedules' | 'archived';
-export function homeTabs(o: { schedules: number }): { id: HomeTab; label: string; n?: number }[] {
-  return [
-    { id: 'recent', label: tr('最近任务') },
-    { id: 'schedules', label: tr('定时任务'), n: o.schedules || undefined },
-    { id: 'archived', label: tr('已归档') },
-  ];
-}
-
-/** What sits at the right of a row: the sidebar's status in words (a wider row), a schedule's next run. */
-export type HomeStatus =
-  | { kind: 'confirm' | 'ask' | 'error' | 'running' | 'paused'; label: string; title: string }
-  | { kind: 'diff'; label: string; title: string; added: number; removed: number }
-  | { kind: 'time'; label: string; title: string };
-
-export interface HomeRow { id: string; title: string; where: string; agent?: string; when: string; whenTitle?: string; status: HomeStatus | null }
-
-/** The runner state this window knows about a conversation (open sessions), for the row's status. */
-export interface KnownStatus { state?: string; pending?: readonly { toolName: string }[]; error?: string; diff?: { added: number; removed: number } | null }
-
-export interface HomeInput {
-  sessions: SessionSummary[];
-  meta: Record<string, SessionMeta>;
-  workspaces: { path: string; name: string }[];
-  agents?: { kind: string; name: string }[];
-  schedules?: Schedule[];
-  status?: Record<string, KnownStatus>;
-  now?: number;
-}
-
-export const HOME_PAGE = 5;
+// ---------------------------------------------------------------------------------------------------- times
 
 /** 刚刚 / 10 分钟前 / 3 小时前 / 昨天 / 4 天前 / 9/20 — the second line of a row. */
 export function agoText(ts: number, now = Date.now()): string {
@@ -131,75 +116,6 @@ export function agoText(ts: number, now = Date.now()): string {
   if (d < 7 * 86400_000) return tr('{d} 天前', { d: Math.floor(d / 86400_000) });
   const t = new Date(ts);
   return `${t.getMonth() + 1}/${t.getDate()}`;
-}
-
-/** A waiting request in words: which kind of thing Claude waits on. */
-export function waitingText(pending: readonly { toolName: string }[]): string {
-  if (!pending.length) return tr('等你确认');
-  if (pending.every((p) => p.toolName === 'AskUserQuestion')) return tr('有问题问你');
-  if (pending.length > 1) return tr('等你确认 {pendingCount} 个操作', { pendingCount: pending.length });
-  const t = pending[0].toolName;
-  if (t === 'Bash' || t === 'PowerShell') return tr('等你确认一条命令');
-  if (t === 'Edit' || t === 'MultiEdit' || t === 'Write' || t === 'NotebookEdit') return tr('等你确认一处修改');
-  if (t === 'ExitPlanMode') return tr('等你确认方案');
-  return tr('等你确认');
-}
-
-function projectOf(cwd: string, workspaces: HomeInput['workspaces']): string {
-  const w = projectFor(cwd, workspaces);
-  return w?.name ?? (basename(cwd) || cwd);
-}
-
-export function homeStatus(s: SessionSummary, k: KnownStatus | undefined): HomeStatus | null {
-  const st = rowStatus({ state: (k?.state ?? s.live) as never, pending: k?.pending, error: k?.error, diff: k?.diff, lastModified: s.lastModified });
-  switch (st.kind) {
-    case 'confirm': return { kind: 'confirm', label: waitingText(k?.pending ?? []), title: st.title };
-    case 'ask': return { kind: 'ask', label: tr('有问题问你'), title: st.title };
-    case 'error': return { kind: 'error', label: tr('出错'), title: st.title };
-    case 'running': return { kind: 'running', label: tr('运行中'), title: st.title };
-    case 'diff': return { kind: 'diff', label: st.label, title: st.title, added: st.added ?? 0, removed: st.removed ?? 0 };
-    default: return null; // the time and the agent are on the second line already
-  }
-}
-
-/** The rows of one tab (at most HOME_PAGE) and how many more there are. */
-export function homeRows(tab: HomeTab, o: HomeInput): { rows: HomeRow[]; more: number } {
-  const now = o.now ?? Date.now();
-  if (tab === 'schedules') {
-    // in the order the automation page lists them
-    const list = o.schedules ?? [];
-    const rows = list.slice(0, HOME_PAGE).map((sc): HomeRow => {
-      const period = scheduleText(sc);
-      return {
-        id: sc.id,
-        title: sc.name || sc.prompt.slice(0, 30),
-        where: sc.cwd ? projectOf(sc.cwd, o.workspaces) : '',
-        when: period.text,
-        ...(period.title ? { whenTitle: period.title } : {}),
-        status: sc.lastError ? { kind: 'error', label: tr('出错'), title: sc.lastError }
-          : !sc.enabled ? { kind: 'paused', label: tr('已暂停'), title: tr('没有启用') }
-          : sc.nextRunAt ? { kind: 'time', label: nextRunText(sc.nextRunAt, now), title: tr('下次运行：{v}', { v: new Date(sc.nextRunAt).toLocaleString(dateLocale()) }) }
-          : null,
-      };
-    });
-    return { rows, more: Math.max(0, list.length - rows.length) };
-  }
-  const list = o.sessions
-    .filter((s) => !s.parentId && (tab === 'archived') === isArchived(s, o.meta))
-    .sort((a, b) => b.lastModified - a.lastModified);
-  const agentName = (k?: string) => (k && k !== 'claude' ? o.agents?.find((a) => a.kind === k)?.name ?? k : undefined);
-  const rows = list.slice(0, HOME_PAGE).map((s): HomeRow => {
-    const where = projectOf(s.cwd, o.workspaces);
-    return {
-      id: s.sessionId,
-      title: s.title,
-      where: s.peer ? `${s.peer.name} · ${where}` : where,
-      agent: agentName(s.agent),
-      when: agoText(s.lastModified, now),
-      status: homeStatus(s, o.status?.[s.sessionId]),
-    };
-  });
-  return { rows, more: Math.max(0, list.length - rows.length) };
 }
 
 // ---------------------------------------------------------------------------------------------------- the composer's project

@@ -54,6 +54,8 @@ export const MOVED: Moved[] = [
 
 /** The rail's ··· names of the panels that stayed panels (the palette's panel commands carry them as keywords). */
 export const PANEL_OLD_NAMES: Partial<Record<PanelId, string[]>> = {
+  // 改动 was 审阅 until redesign 2026-11 stage 4
+  files: [tr('审阅')],
   usage: [tr('用量与账本'), tr('账本')],
   memory: [tr('共享记忆')],
   mission: [tr('总览')],

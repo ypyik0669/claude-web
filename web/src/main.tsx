@@ -25,6 +25,7 @@ import './styles/gateway-sources.css';
 import './styles/hub.css';
 import './styles/bots.css';
 import './styles/opening.css';
+import './styles/redesign-chat.css';
 import { loadEnglish } from '@/i18n';
 
 // The page's first paint: theme, the desktop flag, the styles above. Nothing reached from this file calls `tr()` —

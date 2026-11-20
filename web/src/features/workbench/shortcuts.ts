@@ -24,7 +24,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'group.new', label: tr('新分组'), desktop: 'Ctrl+T', browser: 'Alt+T', group: tr('分组') },
   { id: 'group.close', label: tr('关闭分组'), desktop: 'Ctrl+Shift+W', browser: 'Alt+Shift+W', group: tr('分组') },
   { id: 'group.rename', label: tr('重命名分组 / 标签页'), desktop: 'F2', browser: 'F2', group: tr('分组') },
-  { id: 'group.jump', label: tr('跳到分组 1..9'), desktop: 'Ctrl+1..9', browser: 'Ctrl+Alt+1..9', group: tr('分组') },
+  // Ctrl 1–5 are the right panel's five since redesign 2026-11: the groups moved to Ctrl+Alt (the browser's key already)
+  { id: 'group.jump', label: tr('跳到分组 1..9'), desktop: 'Ctrl+Alt+1..9', browser: 'Ctrl+Alt+1..9', group: tr('分组') },
   { id: 'group.next', label: tr('下一个分组'), desktop: 'Ctrl+Tab', browser: 'Alt+PageDown', group: tr('分组') },
   { id: 'group.prev', label: tr('上一个分组'), desktop: 'Ctrl+Shift+Tab', browser: 'Alt+PageUp', group: tr('分组') },
   { id: 'pane.splitRight', label: tr('向右分屏'), desktop: 'Ctrl+D', browser: 'Ctrl+D', group: tr('分屏') },
@@ -41,11 +42,16 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'dock.toggle', label: tr('显示 / 隐藏右侧面板'), desktop: 'Ctrl+J', browser: 'Ctrl+J', group: tr('面板') },
   { id: 'dock.minimize', label: tr('右侧面板收成图标栏'), desktop: 'Ctrl+Shift+J', browser: 'Ctrl+Shift+J', group: tr('面板') },
   { id: 'panel.mission', label: tr('总览（Mission Control）'), desktop: 'Ctrl+Shift+M', browser: 'Ctrl+Shift+M', group: tr('面板') },
-  { id: 'panel.tasks', label: tr('任务面板'), desktop: 'Ctrl+Shift+1', browser: 'Ctrl+Shift+1', group: tr('面板') },
-  { id: 'panel.files', label: tr('审阅面板（改动）'), desktop: 'Ctrl+Shift+2', browser: 'Ctrl+Shift+2', group: tr('面板') },
-  { id: 'panel.usage', label: tr('用量面板'), desktop: 'Ctrl+Shift+3', browser: 'Ctrl+Shift+3', group: tr('面板') },
+  // the right panel's five, in the order of the header's tools and the panel's picker (redesign 2026-11): Ctrl 1–5 in
+  // the desktop app (a browser keeps Ctrl+digit for its own tabs: Ctrl+Shift there, and in the desktop app too)
+  { id: 'panel.tasks', label: tr('任务'), desktop: 'Ctrl+1', browser: 'Ctrl+Shift+1', group: tr('面板') },
+  { id: 'panel.terminal', label: tr('终端'), desktop: 'Ctrl+2 / Ctrl+`', browser: 'Ctrl+Shift+2 / Ctrl+`', group: tr('面板') },
+  { id: 'panel.files', label: tr('改动'), desktop: 'Ctrl+3', browser: 'Ctrl+Shift+3', group: tr('面板') },
+  { id: 'panel.browser', label: tr('浏览器'), desktop: 'Ctrl+4', browser: 'Ctrl+Shift+4', group: tr('面板') },
+  { id: 'panel.explorer', label: tr('文件'), desktop: 'Ctrl+5', browser: 'Ctrl+Shift+5', group: tr('面板') },
+  { id: 'info.toggle', label: tr('对话信息栏'), desktop: 'Ctrl+I', browser: 'Ctrl+I', group: tr('面板') },
   { id: 'settings', label: tr('设置（可搜索）'), desktop: 'Ctrl+,', browser: 'Ctrl+,', group: tr('面板') },
-  { id: 'panel.terminal', label: tr('终端'), desktop: 'Ctrl+`', browser: 'Ctrl+`', group: tr('面板') },
+  { id: 'panel.usage', label: tr('用量面板'), desktop: tr('命令面板'), browser: tr('命令面板'), group: tr('面板') },
   { id: 'interrupt', label: tr('中断当前轮'), desktop: 'Ctrl+Shift+C / Esc', browser: 'Esc', group: tr('对话') },
   { id: 'close', label: tr('结束当前对话的进程'), desktop: 'Ctrl+Shift+Q', browser: tr('命令面板'), group: tr('对话') },
   { id: 'side', label: tr('旁聊：问一个不进对话的小问题'), desktop: 'Ctrl+;', browser: 'Ctrl+;', group: tr('对话') },
@@ -77,6 +83,9 @@ function codeKey(code: string | undefined): string | undefined {
   return CODE_KEYS[code];
 }
 
+/** Ctrl(+Shift) 1–5: the right panel's five, the order of the header's tools (model/layout.ts CORE_PANELS). */
+export const PANEL_KEYS = ['tasks', 'terminal', 'files', 'browser', 'explorer'] as const;
+
 /** Map a browser keydown to a command id (browser column; desktop uses menu accelerators). */
 export function matchBrowserKey(e: KeyboardEvent): string | null {
   const ctrl = e.ctrlKey || e.metaKey;
@@ -102,8 +111,10 @@ export function matchBrowserKey(e: KeyboardEvent): string | null {
   if (ctrl && !alt && shift && lower === 'd') return 'pane.splitDown';
   if (ctrl && shift && k === 'Enter') return 'pane.zoom';
   if (ctrl && !alt && !shift && (k === '\\' || e.code === 'Backslash')) return 'pane.close';
-  // Ctrl+Shift+4 was 配置中心 (gone in the redesign 2026-11 stage 2: 自定义 + 设置 › 高级): nothing now
-  if (ctrl && shift && /^[1-35]$/.test(k)) return `panel.${['tasks', 'files', 'usage', '', 'terminal'][Number(k) - 1]}`;
+  // the right panel's five (the desktop app's menu gives Ctrl 1–5 the same: desktop/src/main.ts)
+  if (ctrl && shift && !alt && /^[1-5]$/.test(k)) return `panel.${PANEL_KEYS[Number(k) - 1]}`;
+  // 对话信息栏 — not in the code editor or the terminal (their own Ctrl+I)
+  if (ctrl && !alt && !shift && lower === 'i' && !(e.target as HTMLElement)?.closest?.('.monaco-editor, .xterm')) return 'info.toggle';
   if (ctrl && !alt && !shift && k === ',') return 'settings';
   if (ctrl && !alt && !shift && k === '`') return 'panel.terminal';
   if (ctrl && alt && /^[1-9]$/.test(k)) return `group.jump.${Number(k) - 1}`;

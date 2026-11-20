@@ -79,16 +79,33 @@ export function estimateContext(items: readonly ConvItem[], o: { provider?: Pick
   return undefined;
 }
 
-export function usageLines(t: Totals, o: { lastMs?: number; context?: { percentage: number; totalTokens: number; maxTokens: number; model?: string; estimated?: boolean }; tasks?: number }): [string, string][] {
-  const lines: [string, string][] = [
-    [tr('轮数'), String(t.turns)],
-    [tr('输入 / 输出'), `↑${fmtTok(t.inp + t.cache + t.write)} ↓${fmtTok(t.out)}`],
-  ];
+/** 「44 tok/s」: whole numbers from 10 up, one decimal below (the row under the box, the ring's card). */
+export function speedText(tps: number): string {
+  return `${tps >= 9.95 ? Math.round(tps) : tps.toFixed(1)} tok/s`;
+}
+
+/** What the ring's card shows (and a phone's 「这个对话」 sheet): the context on top, the numbers under it. */
+export interface UsageCard {
+  context?: { pct: number; used: string; window: string; estimated?: boolean };
+  rows: [string, string][];
+}
+
+/**
+ * The ring's card (redesign 2026-11 「输入框下面这一行」 ⑥; the phone's 「点上下文小环」): the context — share, used /
+ * window — on top, then 输入 / 输出 · 缓存命中 · 速度 · 轮数 · 步数 · 费用 · 上一轮用时 (and 后台任务 while any run). The turns,
+ * steps, speed and cache are the row's own numbers (`convStats`, summed over the turns' results); the tokens and the
+ * cost are the answers' (`sessionTotals`). A field without data is left out.
+ */
+export function usageCard(t: Totals, s: { turns: number; steps: number; tokPerSec: number | null; cacheHit: number | null } | null, o: { lastMs?: number; context?: { percentage: number; totalTokens: number; maxTokens: number; estimated?: boolean }; tasks?: number }): UsageCard {
+  const rows: [string, string][] = [[tr('输入 / 输出'), `↑${fmtTok(t.inp + t.cache + t.write)} ↓${fmtTok(t.out)}`]];
   // same formula as the line under each answer and the ledger (cache writes count as input)
-  if (t.cache > 0) lines.push([tr('缓存命中'), pct(hitRate({ input: t.inp, cacheRead: t.cache, cacheWrite: t.write }))]);
-  if (t.cost > 0 || t.costUnknown > 0) lines.push([tr('费用'), fmtCost(t.cost, t.costUnknown)]);
-  if (o.lastMs) lines.push([tr('上一轮用时'), fmtMs(o.lastMs)]);
-  if (o.context) lines.push([o.context.estimated ? tr('上下文（按上一轮估）') : tr('上下文'), `${o.context.percentage}% · ${fmtTok(o.context.totalTokens)} / ${fmtTok(o.context.maxTokens)}`]);
-  if (o.tasks) lines.push([tr('后台任务'), tr('{tasks} 个运行中', { tasks: o.tasks })]);
-  return lines;
+  const hit = s?.cacheHit ?? (t.cache > 0 ? hitRate({ input: t.inp, cacheRead: t.cache, cacheWrite: t.write }) : null);
+  if (hit !== null) rows.push([tr('缓存命中'), pct(hit)]);
+  if (s?.tokPerSec != null) rows.push([tr('速度'), speedText(s.tokPerSec)]);
+  rows.push(s ? [tr('轮数 · 步数'), tr('{turns} 轮 · {steps} 步', { turns: s.turns, steps: s.steps })] : [tr('轮数'), String(t.turns)]);
+  if (t.cost > 0 || t.costUnknown > 0) rows.push([tr('费用'), fmtCost(t.cost, t.costUnknown)]);
+  if (o.lastMs) rows.push([tr('上一轮用时'), fmtMs(o.lastMs)]);
+  if (o.tasks) rows.push([tr('后台任务'), tr('{tasks} 个运行中', { tasks: o.tasks })]);
+  const c = o.context;
+  return { rows, ...(c ? { context: { pct: c.percentage, used: fmtTok(c.totalTokens), window: fmtTok(c.maxTokens), ...(c.estimated ? { estimated: true } : {}) } } : {}) };
 }

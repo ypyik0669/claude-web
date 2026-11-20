@@ -4,7 +4,7 @@
 import type { IconName } from '@/ui/icons';
 import { tr } from '@/i18n';
 
-export type PanelId = 'tasks' | 'files' | 'explorer' | 'usage' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra' | 'board' | 'browser' | 'cafe';
+export type PanelId = 'tasks' | 'files' | 'explorer' | 'usage' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra' | 'board' | 'browser' | 'cafe' | 'artifacts';
 /** A chat tile's view: the conversation (`live`) or one of the per-session workbench views. */
 export const WORKBENCH_TABS = ['live', 'changes', 'git', 'files', 'search', 'schedules', 'artifacts', 'board'] as const;
 export type WorkbenchTab = (typeof WORKBENCH_TABS)[number];
@@ -30,8 +30,8 @@ export const PANELS: { id: PanelId; title: string; icon: IconName; tier: PanelTi
   { id: 'orchestra', title: tr('编排'), icon: 'orchestra', tier: 'extra', rail: true },
   { id: 'memory', title: tr('记忆'), icon: 'memory', tier: 'workbench', rail: true },
   { id: 'tasks', title: tr('任务'), icon: 'tasks', tier: 'core', rail: true },
-  // 审阅 grew out of the 文件改动 panel and keeps its id: `panel.files` / Ctrl+Shift+2 and saved layouts still open it
-  { id: 'files', title: tr('审阅'), icon: 'diff', tier: 'core', rail: true },
+  // 改动 (it was 审阅, which grew out of the 文件改动 panel) keeps its id: `panel.files` and saved layouts still open it
+  { id: 'files', title: tr('改动'), icon: 'diff', tier: 'core', rail: true },
   { id: 'explorer', title: tr('文件'), icon: 'folder', tier: 'core' },
   { id: 'usage', title: tr('用量'), icon: 'usage', tier: 'extra' },
   // keepAlive: the tab holds a live process (a pty) — toggling it off hides the panel instead of closing the tab
@@ -42,9 +42,15 @@ export const PANELS: { id: PanelId; title: string; icon: IconName; tier: PanelTi
   { id: 'board', title: tr('Issue 与 PR'), icon: 'board', tier: 'extra' },
   { id: 'cafe', title: tr('网吧'), icon: 'cafe', tier: 'extra' },
   { id: 'android', title: 'Android', icon: 'android', tier: 'workbench' },
+  // this conversation's Artifacts (redesign 2026-11: the right panel's picker and a phone's ⋯ list them); the full
+  // Artifact viewer is a later release — a row opens the file in a document tab
+  { id: 'artifacts', title: 'Artifacts', icon: 'works', tier: 'extra' },
 ];
-/** The fixed tabs of the default right panel, in row order (审阅 · 文件 · 终端 · 浏览器 · 任务). */
-export const CORE_PANELS: PanelId[] = ['files', 'explorer', 'terminal', 'browser', 'tasks'];
+/**
+ * The default right panel's five (redesign 2026-11 #pages: 任务 · 终端 · 改动 · 浏览器 · 文件) — the conversation header's
+ * five tools, the first five rows of the panel's picker, Ctrl 1–5, in that order.
+ */
+export const CORE_PANELS: PanelId[] = ['tasks', 'terminal', 'files', 'browser', 'explorer'];
 export const PANEL_IDS = PANELS.map((p) => p.id);
 export const PANEL_TITLES = Object.fromEntries(PANELS.map((p) => [p.id, p.title])) as Record<PanelId, string>;
 export const PANEL_ICONS = Object.fromEntries(PANELS.map((p) => [p.id, p.icon])) as Record<PanelId, IconName>;

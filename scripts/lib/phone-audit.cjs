@@ -14,8 +14,9 @@
 //  - off: controls sticking out of the window sideways (not inside a box that scrolls sideways)
 //  - zoomInputs: text boxes under 16px (iOS zooms the page into them)
 //  - tiny: text under 12px (counted, a few samples)
-// A control counts when it is on screen: displayed, not transparent, not inert / aria-hidden, not disabled, and its
-// centre is inside every box that clips it (a row scrolled out of its list is not on screen).
+// A control counts when it is on screen: displayed, not transparent, not inert / aria-hidden, not disabled, bigger
+// than a pixel (a visually-hidden one is for a screen reader), and its centre is inside every box that clips it (a
+// row scrolled out of its list is not on screen).
 'use strict';
 
 function auditJs(scope, opts = {}) {
@@ -35,7 +36,8 @@ function auditJs(scope, opts = {}) {
         if (p.hasAttribute('inert') || p.getAttribute('aria-hidden') === 'true') return false;
       }
       const r = e.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
+      // (a control clipped to a pixel is the visually-hidden pattern — there for a screen reader, not for a finger)
+      return r.width > 1 && r.height > 1;
     };
     // the part of the window a point must be in to be seen: every ancestor that clips (overflow other than visible)
     const clipBox = (e) => {

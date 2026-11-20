@@ -9,6 +9,7 @@ import { parsePeerId, type SessionSummary } from '@shared';
 import { PANELS } from '@/model/layout';
 import { useOrch } from '@/features/orchestra/state';
 import { SHORTCUTS, keyLabel } from '@/features/workbench/shortcuts';
+import { isKeyCombo } from '@/ui/kbd';
 import { runCommand } from '@/features/workbench/commands';
 import { viewCommands, type WbView } from '@/features/workbench/wb-views';
 import { openSessionView } from '@/features/workbench/right-panel';
@@ -34,9 +35,6 @@ import { KIND_INFO, artifactKind } from '@/features/artifacts/page';
 import { artifactHits, loadArtifacts } from './artifacts';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; keywords?: string[]; run: () => void }
-
-/** A command's `sub` that names keys (a shortcut): a phone shows none (no keyboard there). */
-const KEY_HINT = /Ctrl|Alt|Shift|Cmd|⌘|⌥|⇧|⌃/;
 
 /** What a moved entry's command opens (moved.ts: where the icon rail's entries are now). */
 function goTo(t: MovedTarget): void {
@@ -120,7 +118,8 @@ function PaletteBody() {
       ...MOVED.map<Cmd>((m) => ({ id: m.id, label: m.label, ic: m.icon, group: tr('前往'), keywords: m.old, run: () => goTo(m.target) })),
       { id: 'sidebar', label: st.sidebarOpen ? tr('收起侧栏') : tr('展开侧栏'), sub: 'Ctrl+B', ic: 'sidebar', group: tr('视图'), run: () => useStore.setState((s) => ({ sidebarOpen: !s.sidebarOpen })) },
       { id: 'archived', label: st.showArchived ? tr('隐藏已归档的对话') : tr('显示已归档的对话'), ic: 'archive', group: tr('视图'), run: () => useStore.getState().setShowArchived(!useStore.getState().showArchived) },
-      { id: 'keys', label: tr('键盘快捷键'), sub: 'Ctrl+/', ic: 'keyboard', group: tr('视图'), run: () => useStore.setState({ shortcutsOpen: true }) },
+      // no keyboard on a phone: no 键盘快捷键 there (the phone rules; ui/kbd.ts)
+      ...(useStore.getState().mobile ? [] : [{ id: 'keys', label: tr('键盘快捷键'), sub: 'Ctrl+/', ic: 'keyboard' as const, group: tr('视图'), run: () => useStore.setState({ shortcutsOpen: true }) }]),
       { id: 'whatsNew', label: tr('更新内容'), ic: 'sparkle', group: tr('视图'), run: () => openWhatsNew() },
       { id: 'settings', label: tr('设置…'), sub: 'Ctrl+,', ic: 'settings', group: tr('视图'), run: () => st.openSettings() },
       // 界面缩放: the desktop app's whole-window zoom (a browser has its own)
@@ -219,15 +218,15 @@ function PaletteBody() {
                   <span className="ic" title={it.kind === 'sess' ? it.s.agent ?? 'claude' : undefined}><Icon name={it.kind === 'cmd' ? it.c.ic ?? 'chevronRight' : AGENT_ICONS[it.s.agent ?? 'claude'] ?? 'agent'} size={15} /></span>
                   <span className="t">{it.kind === 'cmd' ? it.c.label : it.s.title}</span>
                   {it.kind === 'sess' && <span className="dir" title={it.s.cwd}>{basename(it.s.cwd ?? '')}</span>}
-                  <span className="sub">{it.kind === 'cmd' ? (st.mobile && KEY_HINT.test(it.c.sub ?? '') ? '' : it.c.sub ?? '') : it.snippet ? `…${it.snippet}…` : ago(it.s.lastModified)}</span>
+                  {/* a command's key is a keyboard hint: not on a phone (ui/kbd.ts) */}
+                  <span className="sub" data-kbd={it.kind === 'cmd' && isKeyCombo(it.c.sub) ? '' : undefined}>{it.kind === 'cmd' ? it.c.sub ?? '' : it.snippet ? `…${it.snippet}…` : ago(it.s.lastModified)}</span>
                 </div>
               </div>
             );
           })}
           {!items.length && <div className="empty">{tr('没有匹配')}</div>}
         </div>
-        {/* (no keyboard on a phone: no keys to name) */}
-        {!st.mobile && <div className="foot"><span>{tr('↑↓ 选择')}</span><span>{tr('Enter 执行')}</span><span>{tr('Esc 关闭')}</span><span>{tr('> 只看命令')}</span></div>}
+        <div className="foot" data-kbd><span>{tr('↑↓ 选择')}</span><span>{tr('Enter 执行')}</span><span>{tr('Esc 关闭')}</span><span>{tr('> 只看命令')}</span></div>
       </div>
     </div>
   );

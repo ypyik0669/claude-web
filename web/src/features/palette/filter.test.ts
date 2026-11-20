@@ -59,6 +59,6 @@ describe('palette command filter', () => {
   });
 
   it('a panel is found by its own name', () => {
-    expect(commandHits(panels, '审阅').named.map((c) => c.label)).toEqual(['打开审阅面板']);
+    expect(commandHits(panels, '改动').named.map((c) => c.label)).toEqual(['打开改动面板']);
   });
 });

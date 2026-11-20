@@ -1,35 +1,37 @@
 // Where every right-panel panel and every per-session view is reached in the default (quiet) UI — redesign phase 2,
-// spec §4.2 / §5.6. The right panel's 「更多」 menu is built from MORE_PANELS, the header ··· views and the palette
-// route through `viewTarget`; `panel-entries.test.ts` asserts that nothing is more than 2 clicks away. The click
-// counts are a declared table: `scripts/ui-smoke.cjs` walks the same entries in the DOM (the palette opens every
-// panel, every ··· view lands where `viewTarget` says, the header's terminal button, a tool row's 详情).
+// spec §4.2 / §5.6, and redesign 2026-11 stage 4: the header's five tools, the panel's picker (built from CORE_PANELS
+// and MORE_PANELS), the header's ⋯ and the palette, whose views route through `viewTarget`; `panel-entries.test.ts`
+// asserts that nothing is more than 2 clicks away. The click counts are a declared table: `scripts/ui-smoke.cjs` walks
+// the same entries in the DOM (the palette opens every panel, the header's tools, the picker, a tool row's 详情).
 import { PANELS, panelToggleEffect, type Dock, type PanelId } from '@/model/layout';
 import { panelToggleLabel } from '@/ui/terms';
 import type { ReviewScope } from './review-model';
-import { WB_VIEWS, viewCommands, viewsFor, type WbView } from './wb-views';
+import { viewCommands, type WbView } from './wb-views';
 import { ACCOUNT_PANELS, AUTOMATION_PANELS } from '@/features/sidebar/entries';
 
-export type EntryVia = 'changesButton' | 'terminalButton' | 'toolDetail' | 'panelButton' | 'headerMore' | 'palette' | 'panelMore' | 'sidebarAutomation' | 'accountMenu';
+export type EntryVia = 'changesButton' | 'headerTool' | 'toolDetail' | 'headerMore' | 'palette' | 'panelPicker' | 'sidebarAutomation' | 'accountMenu';
 
 /** Clicks from a conversation with the right panel closed. */
 export const ENTRY_CLICKS: Record<EntryVia, number> = {
-  changesButton: 1, // the session header's 「+N −M」 → 审阅
-  terminalButton: 1, // the session header's terminal button → 终端
+  changesButton: 1, // the session header's 「+N −M」 → 改动 (while the info column is not showing it)
+  headerTool: 1, // the session header's five tools (redesign 2026-11): 任务 · 终端 · 改动 · 浏览器 · 文件
   toolDetail: 1, // a tool row's 详情 → 详情
-  panelButton: 2, // the session header's right-panel button → one of the fixed tabs
-  headerMore: 2, // the session header's ··· → an item
+  headerMore: 2, // the session header's ⋯ → an item (对话信息栏, Issue 与 PR, Android 屏幕…)
   palette: 2, // the sidebar's 搜索 (command palette) → an item; every panel is listed there
-  panelMore: 3, // right-panel button → 「更多」 → an item (2 once the panel is open)
+  panelPicker: 3, // a header tool → the panel's picker → an item (2 once the panel is open)
   sidebarAutomation: 2, // the sidebar's 自动化 → one of its five tabs, 目标 / 编排 among them (1 when it is the tab shown last)
   accountMenu: 2, // the sidebar's account row → 用量与账本 (sidebar/entries.ts ACCOUNT_PANELS)
 };
+
+/** The panels the header's ⋯ opens itself (ConvMenu.tsx: Issue 与 PR, Android 屏幕). */
+export const HEADER_MORE_PANELS: readonly PanelId[] = ['board', 'android'];
 
 const SIDEBAR_AUTOMATION: readonly PanelId[] = Object.values(AUTOMATION_PANELS);
 const ACCOUNT_MENU: readonly PanelId[] = Object.values(ACCOUNT_PANELS);
 
 export const minClicks = (entries: EntryVia[]) => Math.min(...entries.map((e) => ENTRY_CLICKS[e]));
 
-/** The default right panel's 「更多」 menu: the extra tier, opened as temporary tabs. */
+/** The right panel picker's 「更多面板」: the extra tier (this conversation's Artifacts sit right under the five). */
 export const MORE_PANELS = PANELS.filter((p) => p.tier === 'extra');
 
 /** What the file view opens on. */
@@ -60,12 +62,14 @@ export function viewTarget(view: WbView, o: { mobile: boolean; remote: boolean }
 }
 
 /**
- * Where a view is offered, read from the same tables the menus are built from: the header ··· grid renders
- * `viewsFor(remote)` and the palette `viewCommands(remote)` (`s.<view>`) — drop a view from either and this shrinks.
+ * Where a view is offered (redesign 2026-11): 改动 and 文件 are two of the header's five tools; Issue 与 PR is a row of
+ * the header's ⋯; every view is in the palette (`viewCommands(remote)`, `s.<view>` — drop one there and this
+ * shrinks); 定时任务 is also 自动化's. A conversation on another machine: only what the palette offers for it.
  */
 export function viewEntries(view: WbView, remote = false): EntryVia[] {
   const out: EntryVia[] = [];
-  if (viewsFor(remote).some((v) => v.id === view)) out.push('headerMore');
+  if (!remote && (view === 'changes' || view === 'files')) out.push('headerTool');
+  if (!remote && view === 'board') out.push('headerMore');
   if (viewCommands(remote).some((c) => c.view === view)) out.push('palette');
   // 自动化 → 定时任务: the automation page, with or without a conversation, on a desktop and a phone
   if (view === 'schedules') out.push('sidebarAutomation');
@@ -82,14 +86,12 @@ export function panelEntries(id: PanelId): EntryVia[] {
   const p = PANELS.find((x) => x.id === id);
   if (!p) return [];
   const out: EntryVia[] = ['palette'];
-  if (p.tier === 'core') out.push('panelButton');
-  if (p.tier === 'extra') out.push('panelMore');
+  if (p.tier === 'core') out.push('headerTool');
+  if (p.tier === 'extra') out.push('panelPicker');
   if (id === 'files') out.push('changesButton');
-  if (id === 'terminal') out.push('terminalButton');
   if (id === 'inspector') out.push('toolDetail');
   if (SIDEBAR_AUTOMATION.includes(id)) out.push('sidebarAutomation');
   if (ACCOUNT_MENU.includes(id)) out.push('accountMenu');
-  // a panel a header ··· view opens (审阅, 文件, Issue 与 PR)
-  if (WB_VIEWS.some((v) => { const t = viewTarget(v.id, { mobile: false, remote: false }); return t.to === 'panel' && t.panel === id; })) out.push('headerMore');
+  if (HEADER_MORE_PANELS.includes(id)) out.push('headerMore');
   return out;
 }

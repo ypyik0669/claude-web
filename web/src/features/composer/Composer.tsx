@@ -38,7 +38,7 @@ import { activeGroup } from '@/model/layout';
 import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, handOver, type ReferenceDetail } from '@/features/sidebar/session-actions';
-import { ModelChip } from '@/features/models/ModelMenu';
+import { ModelChip, type EffortSeg } from '@/features/models/ModelMenu';
 import { EffortChip, type EffortChipProps } from '@/features/models/EffortChip';
 import { SubagentChip, subagentLabel } from '@/features/models/SubagentChip';
 import { subagentModelFor } from '../../../../server/src/models/subagent';
@@ -145,7 +145,11 @@ function fastOffText(reason: string): string {
  * permissions), so no model / 子代理 / 强度 / permission chips, no Shift+Tab mode step, and the + menu keeps only what
  * goes into the message (files, folder, a reference, 录屏, 斜杠命令).
  */
-export function Composer({ welcome = false, target, disabled = false, visible = true, variant }: { welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean; visible?: boolean; variant?: 'bot' }) {
+export function Composer({ welcome = false, target, disabled = false, visible = true, variant, onProject }: {
+  welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean; visible?: boolean; variant?: 'bot';
+  /** the new-conversation page: the folder (and machine: a peer's id, '' = this computer) it is about to start in */
+  onProject?: (p: { cwd: string; peer: string }) => void;
+}) {
   const bot = variant === 'bot' && !welcome;
   const active = useScopedSession();
   // a bot's conversation: the box speaks to the bot by name, not to 「Claude」
@@ -212,17 +216,21 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const wPeer = wm.kind === 'peer' ? wm.id : '';
   const wWsl = wm.kind === 'wsl' ? wm.distro : '';
   const [wslDistros, setWslDistros] = useState<WslDistro[]>([]);
+  // the start page shows its starters only for a project with no conversation yet (workbench/Welcome.tsx)
+  useEffect(() => { if (welcome) onProject?.({ cwd: cwd.trim(), peer: wPeer }); }, [welcome, cwd, wPeer]);
   const [addSsh, setAddSsh] = useState(false);
   const wslOf = (d: string) => wslDistros.find((x) => x.name === d);
   /** the machine menu opened (Windows desktop): the distros, then a check of each as it comes back */
-  const loadWsl = () => {
+  const loadWsl = (check = true) => {
     if (!desktop || !/win/i.test(desktop.platform ?? '')) return;
     ws.request<{ available: boolean; distros: WslDistro[] }>({ kind: 'wsl.list' }).then((r) => {
       if (!r?.available) { setWslDistros([]); return; }
       setWslDistros((cur) => r.distros.map((d) => cur.find((c) => c.name === d.name && c.claude !== null) ?? d));
-      for (const d of r.distros) ws.request<WslDistro>({ kind: 'wsl.check', distro: d.name }).then((c) => setWslDistros((cur) => cur.map((x) => (x.name === c.name ? c : x)))).catch(() => {});
+      if (check) for (const d of r.distros) ws.request<WslDistro>({ kind: 'wsl.check', distro: d.name }).then((c) => setWslDistros((cur) => cur.map((x) => (x.name === c.name ? c : x)))).catch(() => {});
     }).catch(() => setWslDistros([]));
   };
+  // whether there is another computer at all (「本机」 joins the folder only then): the distros' names, once
+  useEffect(() => { if (welcome) loadWsl(false); }, [welcome]);
   const installWsl = async (d: string) => {
     const c = await installClaudeInWsl(d).catch((e) => { toast(String(e?.message ?? e)); return null; });
     if (c) setWslDistros((cur) => cur.map((x) => (x.name === c.name ? c : x)));
@@ -1207,13 +1215,12 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     ultraOn = wUltracode && wUltra;
     effort = (
       <EffortChip
-        compact={mobile}
         intelligence={{ levels: wEfforts, value: wEffortOk, defaultLevel: wView.defaultLevel, mode: wView.mode, onChange: (effort) => { const next = mergeResume({ effort: wEffort || undefined, ultracode: wUltra }, { effort }); setWEffort(effort); setWUltra(!!next.ultracode); } }}
         ultracode={wUltracode ? { on: wUltra, onChange: setWUltra } : undefined}
       />
     );
     permCycle.current = () => { modeTouched.current = true; setWMode(nextPermissionMode(wMode)); };
-    permission = <PermissionChip mode={wMode} compact={mobile} onPick={(m) => { modeTouched.current = true; setWMode(m); }} />;
+    permission = <PermissionChip mode={wMode} onPick={(m) => { modeTouched.current = true; setWMode(m); }} />;
   } else if (liveOk) {
     const ultraOk = info.supportsUltracode !== false && !!CATALOG[liveAgent]?.supportsUltracode;
     const liveView = claudeEffortView({ agent: liveAgent, providers, providerId: remote ? 'claude' : liveProvider, model: info.model, runtime: info.runtime });
@@ -1247,14 +1254,13 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     ultraOn = ultraOk && !!info.ultracode;
     effort = (
       <EffortChip
-        compact={mobile}
         disabled={swapping}
         intelligence={{ levels: liveEfforts, value: info.effort, defaultLevel: defaultEffort, mode: liveModel?.effortMode ?? liveView.mode, onChange: setEffort }}
         ultracode={ultraOk ? { on: !!info.ultracode, onChange: setUltracode } : undefined}
       />
     );
     permCycle.current = () => setMode(nextPermissionMode(info.permissionMode ?? 'default'));
-    permission = <PermissionChip mode={info.permissionMode ?? 'default'} compact={mobile} onPick={setMode} />;
+    permission = <PermissionChip mode={info.permissionMode ?? 'default'} onPick={setMode} />;
   } else if (active && !disabled && active.state !== 'starting') {
     // not running (history, reaped, crashed — every conversation after a restart): the chips show what the next
     // send resumes it with, and a pick there changes that (final review §9 #1)
@@ -1293,22 +1299,20 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     ultraOn = rUltraOk && !!v.ultracode;
     effort = (
       <EffortChip
-        compact={mobile}
         disabled={swapping}
         intelligence={{ levels: rEfforts, value: v.effort, defaultLevel: rView.defaultLevel, mode: rView.mode, onChange: (effort) => setResume(sid, { effort }) }}
         ultracode={rUltraOk ? { on: v.ultracode, onChange: (on) => setResume(sid, { ultracode: on }) } : undefined}
       />
     );
     permCycle.current = () => setResume(sid, { permissionMode: nextPermissionMode(v.permissionMode) });
-    permission = <PermissionChip mode={v.permissionMode} compact={mobile} onPick={(m) => { setModeNotice(null); setResume(sid, { permissionMode: m }); }} />;
+    permission = <PermissionChip mode={v.permissionMode} onPick={(m) => { setModeNotice(null); setResume(sid, { permissionMode: m }); }} />;
     shownMode.current = v.permissionMode;
-    status = modeNotice?.sid === sid
-      ? <span className="cb-status mode-notice" role="status">{modeNotice.text}</span>
-      : <span className="cb-status opt" title={tr('对话没在运行，发送后按这里选的模型和权限继续')}>{tr('发送后继续')}</span>;
+    // (no 「发送后继续」 any more: the box's placeholder says it — redesign 2026-11 「输入框下面这一行」 ⑦)
+    status = modeNotice?.sid === sid ? <span className="cb-status mode-notice" role="status">{modeNotice.text}</span> : null;
   } else if (active) {
     status = <span className="cb-status">{disabled ? tr('对话已删除') : tr('启动中…')}</span>;
   }
-  // a bot's conversation: none of what it runs with is picked here (the 「发送后继续」 note speaks of those chips too)
+  // a bot's conversation: none of what it runs with is picked here
   if (bot) {
     model = subagent = effort = permission = null;
     permCycle.current = null;
@@ -1341,20 +1345,33 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
 
   // the light around the box while this conversation runs (the stop button also shows while it waits or starts)
   const glow = glowing({ welcome, state: active?.state, visible });
-  // a conversation on a wide screen: the chips go on a line under the box (phase 6 §3); a phone keeps one row. The
-  // new-conversation page too (the official one: computer · folder · permission under the box, the model on the right),
-  // unless 设置 → 新对话页的输入框 puts them back in the box
-  const welcomeUnder = welcome && !mobile && settings['ui.welcomeLayout'] !== 'inbox';
-  const under = (!welcome && !mobile) || welcomeUnder;
-  const projectChips = welcome ? <><MachineChip peers={peers} wsl={wslDistros} value={wMachine} onPick={pickMachine} onAddSsh={() => setAddSsh(true)} onInstall={(d) => void installWsl(d)} onOpen={loadWsl} hideWhenAlone={mobile} /><ProjectChip cwd={cwd} recent={recentDirs} onPick={setCwd} onBrowse={() => (wPeer ? toast(tr('别的电脑上的文件夹，从它最近用过的里面选')) : void pickDir())} worktree={wWorktree} onWorktree={setWWorktree} /></> : null;
+  // Where the chips go (redesign 2026-11 #pages 「输入框下面这一行」): on a line under the box, every one with its words —
+  // a conversation, the new-conversation page (unless 设置 › 新对话页的输入框 puts them back in the box: a desktop only),
+  // and a phone always (the box there keeps + · the words · send, the mockup's 框下一行).
+  const welcomeUnder = welcome && (mobile || settings['ui.welcomeLayout'] !== 'inbox');
+  const under = !welcome || welcomeUnder;
+  // 「本机」 joins the folder only when there are other computers (peers, WSL distros): one item, 本机 · acme-shop
+  const otherMachines = welcome && (peers.some((p) => p.enabled) || wslDistros.length > 0 || !!wMachine);
+  const machineChip = welcome ? <MachineChip peers={peers} wsl={wslDistros} value={wMachine} onPick={pickMachine} onAddSsh={() => setAddSsh(true)} onInstall={(d) => void installWsl(d)} onOpen={loadWsl} hideWhenAlone /> : null;
+  const folderChip = welcome ? <ProjectChip cwd={cwd} recent={recentDirs} onPick={setCwd} onBrowse={() => (wPeer ? toast(tr('别的电脑上的文件夹，从它最近用过的里面选')) : void pickDir())} worktree={wWorktree} onWorktree={setWWorktree} /> : null;
+  const projectChips = welcome ? (otherMachines ? <span className="cb-where">{machineChip}<span className="cb-where-sep" aria-hidden>·</span>{folderChip}</span> : <>{machineChip}{folderChip}</>) : null;
   const branchChip = welcome && !mobile && !wPeer && !wWsl ? <BranchChip cwd={cwd} /> : null;
-  // the official title bar's 💬 / </> switch: here it is 只聊天 (no tools) or not, for the conversation about to start
-  const modeSwitch = welcomeUnder && claudeHere && !wPeer && !wWsl ? (
-    <span className="seg cmp-mode" role="radiogroup" aria-label={tr('对话方式')}>
-      <button role="radio" aria-checked={!wChatOnly} className={clsx(!wChatOnly && 'active')} data-mode="code" title={tr('Claude 可以读写文件、运行命令')} onClick={() => setWChatOnly(false)}><Icon name="code" size={13} /> {tr('代码')}</button>
-      <button role="radio" aria-checked={wChatOnly} className={clsx(wChatOnly && 'active')} data-mode="chat" title={tr('只聊天：这个新对话不给 Claude 任何工具')} onClick={() => setWChatOnly(true)}><Icon name="chat" size={13} /> {tr('聊天')}</button>
-    </span>
-  ) : null;
+  // a phone (the mockup's 「模型 · 强度」): the level rides on the model chip, whose sheet has the five levels and the
+  // subagents' model; the 子代理 chip stays mounted out of sight (its sheet is what that row opens)
+  let offstage: React.ReactNode = null;
+  if (mobile && isValidElement<EffortChipProps>(effort) && isValidElement(model)) {
+    const ep = effort.props;
+    const lv = ep.intelligence?.value ?? ep.intelligence?.defaultLevel;
+    const word = ep.ultracode?.on ? ULTRACODE.label : lv ? EFFORT_LABEL[lv] : '';
+    const mp = (model as React.ReactElement<{ label: string }>).props;
+    model = cloneElement(model as React.ReactElement<{ label: string; effortSeg?: EffortSeg; effortRow?: unknown }>, {
+      label: word ? `${mp.label} · ${word}` : mp.label,
+      effortSeg: ep.intelligence?.levels.length || ep.ultracode ? { levels: ep.intelligence?.levels ?? [], value: ep.ultracode?.on ? null : lv ?? null, defaultLevel: ep.intelligence?.defaultLevel, onChange: (l) => ep.intelligence?.onChange(l), ultracode: ep.ultracode, disabled: ep.disabled } : undefined,
+      effortRow: undefined,
+    });
+    effort = null;
+  }
+  if (mobile && subagent) { offstage = subagent; subagent = null; }
 
   if (!welcome && active && handedOff) return <div className="composer"><div className="composer-inner"><HandedOffBar sessionId={active.sessionId} cwd={active.cwd} info={handedOff} /></div></div>;
   return (
@@ -1499,7 +1516,10 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
             rows={1}
             value={text}
             disabled={disabled}
-            placeholder={suggestion ? `${suggestion}   ${tr('Tab 采用')}` : disabled ? tr('对话已被删除，不能继续') : docked ? dockPlaceholder(docked, dockAgent) : welcome && !ultraOn ? tr('描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件') : busy ? tr('Enter 排到这一轮之后，Ctrl+Enter 马上插话 · Esc 中断') : ultraOn ? ULTRACODE.placeholder : botName ? tr('跟「{name}」说点什么… 输入 / 查看命令，拖入文件作为附件', { name: botName }) : active?.state === 'history' ? tr('发送即可继续这个对话…') : tr('回复 {agentName}… 输入 / 查看命令，拖入文件作为附件', { agentName: info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude' })}
+            // a phone (problem 4): a placeholder that fits one line, and never a key — 想做点什么？ / 回复… / 或者告诉 Claude 换个做法
+            placeholder={mobile
+              ? (suggestion ? suggestion : disabled ? tr('对话已被删除，不能继续') : docked ? tr('或者告诉 Claude 换个做法') : welcome ? tr('想做点什么？') : tr('回复…'))
+              : suggestion ? `${suggestion}   ${tr('Tab 采用')}` : disabled ? tr('对话已被删除，不能继续') : docked ? dockPlaceholder(docked, dockAgent) : welcome && !ultraOn ? tr('描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件') : busy ? tr('Enter 排到这一轮之后，Ctrl+Enter 马上插话 · Esc 中断') : ultraOn ? ULTRACODE.placeholder : botName ? tr('跟「{name}」说点什么… 输入 / 查看命令，拖入文件作为附件', { name: botName }) : active?.state === 'history' ? tr('发送即可继续这个对话…') : tr('回复 {agentName}… 输入 / 查看命令，拖入文件作为附件', { agentName: info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude' })}
             onChange={(e) => { setCaret(e.target.selectionStart ?? e.target.value.length); onChange(e.target.value); }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={onKey}
@@ -1510,8 +1530,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); if (remote && fl.some((f) => !f.type.startsWith('image/'))) { toast(REMOTE_ATTACH); e.target.value = ''; return; } setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
           <ComposerBar
             plus={plus}
-            project={welcomeUnder ? null : projectChips}
-            branch={welcomeUnder ? null : branchChip}
+            project={under ? null : projectChips}
+            branch={under ? null : branchChip}
             status={under ? undefined : status}
             meter={under ? undefined : meter}
             model={under ? undefined : model}
@@ -1524,7 +1544,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
           />
         </div>
         {!welcome && active?.info?.wsl && active.info.wsl.dropped.length > 0 && <div className="sub cmp-wsl-note">{tr('Windows 互通已关：记忆、联网、操控电脑在这个对话里不可用')}</div>}
-        {under && <ComposerUnder lead={welcomeUnder ? <>{modeSwitch}{projectChips}{branchChip}</> : undefined} permission={permission} stats={!welcome && active ? <ConvStatsLine sessionId={active.sessionId} /> : undefined} status={status} model={model} subagent={subagent} effort={effort} meter={meter} />}
+        {under && <ComposerUnder lead={welcomeUnder ? <>{projectChips}{branchChip}</> : undefined} permission={permission} stats={!welcome && active && !mobile ? <ConvStatsLine sessionId={active.sessionId} /> : undefined} status={status} model={model} subagent={subagent} effort={effort} meter={meter} offstage={offstage} />}
       </div>
       {addSsh && <Suspense fallback={null}><AddSshDialog onClose={() => setAddSsh(false)} onJoined={(id) => { ws.request<PeerInfo[]>({ kind: 'peers.list' }).then((l) => setPeers(Array.isArray(l) ? l : [])).catch(() => {}); pickMachine(id); }} /></Suspense>}
     </div>

@@ -1,0 +1,226 @@
+/* Redesign 2026-11, stage 4 (docs/notes/ui-redesign-2026-11-stage4.md): the start page, the line under the box, the
+   right panel's picker, the conversation header and its ⋯, and the phone's conversation. Loaded last (main.tsx), so a
+   rule here wins over the same selector in an earlier sheet.
+
+     .welcome > .home-col > .home-mark · h1.greet · .composer · [.starters] · [.home-notice] · [.guide]
+     .composer-under.cb[data-wrap] > .cb-left (.cb-where? · .branch-chip · .perm-chip) · .cb-mid > .conv-stats · .cb-right
+     .dock.simple > .dock-tabs > .dock-pick (the picker) … .dock-ctl
+     .sess-head .sh-actions > .sh-diff? · .sh-tools > .icon-btn[data-tool] × 5 · .sh-more
+*/
+
+/* ============================================================ the start page ============================================================ */
+/* the app's own mark over the greeting (the mockup: 40px, centred), no orange asterisk */
+.welcome .home-mark { display: flex; justify-content: center; margin: 0 0 14px; }
+.welcome .home-mark > svg { display: block; border-radius: 23%; }
+.welcome .greet { gap: 0; }
+/* under the box, and only for a project with no conversation yet (workbench/Welcome.tsx) */
+.welcome .starters { margin-top: var(--sp-4); }
+.welcome .home-col > .home-notice, .welcome .home-col > .guide { margin-top: var(--sp-5); }
+
+/* ============================================================ the line under the box ============================================================
+   Every chip keeps its words (the user: 「都写字」, never only an icon). The older rules hid `.opt` words in a narrow
+   row (a 560px container, 700px in English: `html[lang="en"] .cb .opt`, which outranks a plain `.composer-under.cb
+   .opt`; the row inside the box still does); here they win back. Only the model's name shrinks: everything else is
+   `flex: none`. (ComposerBar.tsx measures whether one line still holds it: `data-wrap` puts the right-hand group on a
+   line of its own.) */
+html .composer-under.cb.cb .opt { display: inline; }
+html .composer-under.cb.cb .caret.opt, html .composer-under.cb .mm-anchor > .chip .caret { display: inline-flex; }
+html .composer-under.cb.cb .sub-anchor .mm-chip-label { display: inline; max-width: none; }
+.composer-under.cb > .cb-left { flex: none; }
+.composer-under.cb > .cb-right { flex: 0 1 auto; min-width: 0; }
+html .composer-under.cb.cb > .cb-left, html .composer-under.cb.cb > .cb-right { flex-shrink: 0; }
+html .composer-under.cb.cb > .cb-right { flex-shrink: 1; }
+.composer-under.cb .cb-right > *, .composer-under.cb .cb-left > * { flex: none; }
+html .composer-under.cb .cb-right > .mm-anchor:not(.sub-anchor) { flex: 0 1 auto; min-width: 0; }
+html .composer-under.cb.cb .cb-right .mm-anchor:not(.sub-anchor) .mm-chip-label { max-width: 240px; }
+.composer-under.cb .perm-chip .cc-l, .composer-under.cb .depth-chip .cc-l { overflow: visible; }
+.composer-under.cb[data-wrap] { flex-wrap: wrap; row-gap: 2px; }
+.composer-under.cb[data-wrap] > .cb-mid { display: none; }
+.composer-under.cb[data-wrap] > .cb-right { flex: 1 1 100%; justify-content: flex-start; }
+.composer-under.cb[data-wrap] > .cb-left { flex: 1 1 100%; }
+
+/* 本机 · acme-shop: the machine joined to the folder, one item (only when there are other computers) */
+.cb-where { display: inline-flex; align-items: center; flex: none; min-width: 0; }
+.cb-where > .machine-chip { padding-right: 4px; }
+.cb-where > .cb-where-sep { color: var(--ink-4); }
+.cb-where > .dirpick { padding-left: 4px; }
+
+/* the conversation's numbers: right to left so that the last ones (轮数, then 步数) are the ones that wrap onto the
+   hidden second line; 「缓存命中」 is 「缓存」 in a narrow row */
+.composer-under .cb-mid { flex: 1 1 0; min-width: 0; }
+.composer-under .conv-stats { direction: rtl; flex: 1 1 0; justify-content: flex-end; align-content: flex-start; height: 28px; line-height: 28px; margin: 0 6px; }
+.composer-under .conv-stats > span { direction: ltr; unicode-bidi: isolate; }
+.composer-under .conv-stats > span + span::before { content: none; }
+.composer-under .conv-stats > span + span::after { content: '·'; margin: 0 6px; color: var(--ink-5); }
+.conv-stats .sm { display: none; }
+@container (max-width: 680px) {
+  .composer-under .conv-stats .lg { display: none; }
+  .composer-under .conv-stats .sm { display: inline; }
+}
+
+/* the context ring: always its number; darker from 60 %, bold from 80 %, red from 95 % */
+.ctx-meter.quiet { color: var(--ink-3); }
+.ctx-meter .pct { font-variant-numeric: tabular-nums; }
+
+/* its card: the context and its bar on top, then the numbers (the mockup's hover card) */
+.ctx-card { min-width: min(260px, calc(100vw - 16px)); padding: 12px 14px; }
+.ctx-card-ctx { margin-bottom: 8px; }
+.ctx-card-h { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 0; font-size: var(--fs-base); font-weight: 400; color: var(--ink-1); }
+.ctx-card-h > b { font-weight: var(--fw-strong, 600); }
+.ctx-card-h .w { font-family: var(--mono); font-size: var(--fs-meta); color: var(--ink-3); }
+.ctx-bar { height: 6px; margin-top: 8px; border-radius: 3px; background: var(--edge-strong); overflow: hidden; }
+.ctx-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ink-2); }
+.ctx-rows { margin: 0; }
+.ctx-rows .ctx-row { line-height: 1.8; }
+.ctx-rows .ctx-row > dd { margin: 0; font-family: var(--mono); font-size: var(--fs-meta); }
+.ctx-note { display: block; margin-top: 8px; padding-top: 8px; border-top: var(--hairline) solid var(--edge-subtle); font-size: var(--fs-meta); color: var(--ink-4); }
+
+/* ============================================================ the phone's 「模型 · 强度」 sheet ============================================================ */
+.mm-sheet-h { flex: none; padding: 2px 12px 10px; font-size: var(--fs-lg); font-weight: var(--fw-strong, 600); color: var(--ink-1); }
+.mm-effort { flex: none; margin-top: 6px; padding: 8px 0 2px; border-top: var(--hairline) solid var(--edge-subtle); }
+.mm-effort-h { padding: 4px 12px 8px; font-size: var(--fs-sm); color: var(--ink-4); }
+.mm-seg { display: flex; gap: 2px; margin: 0 4px; padding: 3px; border-radius: var(--r-lg); background: var(--layer-hover); }
+.mm-seg > button { flex: 1 1 0; justify-content: center; min-width: 0; min-height: 44px; padding: 0 4px; border-radius: var(--r-md); font-size: var(--fs-base); color: var(--ink-3); white-space: nowrap; text-align: center; }
+.mm-seg > button.on { background: var(--surface-elev); color: var(--ink-1); box-shadow: 0 0 0 var(--hairline) var(--edge-default), var(--elev-1); font-weight: var(--fw-strong, 600); }
+.mm-effort .mm-ultra-row { width: 100%; }
+
+/* ============================================================ a phone (≤ 760px) ============================================================ */
+/* the model sheet: nothing under 12px (problem 2), every row and button a full target (problem 1) */
+.as-sheet .mm-head .ty, .as-sheet .mm-label .mm-win, .as-sheet .mm-num { font-size: var(--fs-meta); line-height: 18px; }
+.as-sheet .mm-num { display: none; }
+.as-sheet .menu .mm-head button.mm-headlink { min-height: 44px; padding: 0 10px; font-size: var(--fs-sm); }
+.as-sheet .menu.mm .mm-subrow, .as-sheet .menu.mm .mm-subdef { min-height: 48px; padding: 0 12px; font-size: var(--fs-base); }
+.as-sheet .menu.mm .mm-subrow > svg { width: 18px; height: 18px; }
+.as-sheet .menu .mm-search .icon-btn.xs { width: 44px; height: 44px; }
+
+/* the context sheet (a phone's tap on the ring) */
+.as-sheet .ctx-sheet { padding: 0 6px; font-size: var(--fs-base); }
+.ctx-sheet-h { padding: 2px 6px 12px; font-size: var(--fs-lg); font-weight: var(--fw-strong, 600); color: var(--ink-1); }
+.as-sheet .ctx-sheet .ctx-card-ctx { padding: 0 6px; margin-bottom: 10px; }
+.as-sheet .ctx-sheet .ctx-rows .ctx-row { display: flex; justify-content: space-between; min-height: 44px; align-items: center; padding: 0 6px; border-top: var(--hairline) solid var(--edge-subtle); color: var(--ink-3); }
+.as-sheet .ctx-sheet .ctx-rows .ctx-row > dd { font-size: var(--fs-base); color: var(--ink-1); }
+.as-sheet .ctx-sheet .ctx-note { padding: 10px 6px 0; }
+
+/* the line under the phone's box: 项目 · 权限 · 「模型 · 强度」 (· the ring), words in each, 44px targets */
+.app.mobile .composer-under.cb { padding: 6px 0 0; gap: 4px; }
+.app.mobile .composer-under.cb .cchip, .app.mobile .composer-under.cb .dirpick, .app.mobile .composer-under.cb .mm-anchor > .chip { height: 36px; min-height: 36px; padding: 0 10px; font-size: var(--fs-base); color: var(--ink-2); }
+.app.mobile .composer-under.cb .ctx-meter { height: 36px; min-width: 44px; font-size: var(--fs-sm); }
+.app.mobile .composer-under.cb .cb-right > .mm-anchor:not(.sub-anchor) { margin-left: auto; }
+.app.mobile .composer-under.cb > .cb-right { flex: 1 1 auto; justify-content: flex-end; }
+.app.mobile .composer-under .ctx-meter::after { content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+.app.mobile .composer-under .ctx-meter { position: relative; }
+.app.mobile .composer-under .dirpick { position: relative; max-width: 46vw; }
+.app.mobile .composer-under .dirpick::after { content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+.app.mobile .composer-box.one-line { padding: 6px; }
+.app.mobile .composer-box.one-line > textarea { min-height: 44px; padding: 10px 6px; }
+.app.mobile .composer-box.one-line .cb .plus { width: 40px; height: 40px; }
+
+/* the start page on a phone: the mark and the greeting on top, then the starters (one per row), the box at the bottom
+   in the thumb's reach (the mockup) */
+.app.mobile .welcome { padding: var(--sp-5) var(--sp-4) 0; }
+.app.mobile .welcome .home-col { flex: 1 1 auto; min-height: 100%; }
+.app.mobile .welcome .home-mark { margin-top: 12vh; }
+.app.mobile .welcome .home-col > .starters { order: 1; flex-direction: column; align-items: stretch; gap: 8px; margin: var(--sp-5) 0 0; }
+.app.mobile .welcome .home-col > .starters > .chip.starter { justify-content: flex-start; min-height: 48px; padding: 0 16px; gap: 10px; border-radius: var(--r-xl); font-size: var(--fs-base); }
+.app.mobile .welcome .home-col > .home-notice, .app.mobile .welcome .home-col > .guide { order: 2; }
+.app.mobile .welcome .home-col > .composer { order: 3; margin-top: auto; padding: var(--sp-4) 0 max(var(--sp-2), env(safe-area-inset-bottom, 0px)); }
+.app.mobile .welcome .composer textarea { min-height: 44px; }
+
+/* ============================================================ the right panel's picker ============================================================
+   `.dock.simple > .dock-tabs.picked > .dock-picker > .dock-pick`: the panel in front, named at the top-left. Its menu
+   (Popover `.menu.cm.dock-pick-menu`) lists the five (with their keys), Artifacts, what else is open, the other panels */
+.dock.simple:not(.min) .dock-tabs.picked { padding: 0 8px 0 10px; }
+.dock.simple:not(.min) .dock-fixed.dock-picker { gap: 0; padding: 0; border-radius: 0; background: none; box-shadow: none; }
+.dock-pick { display: inline-flex; align-items: center; gap: 7px; height: 32px; max-width: 100%; min-width: 0; padding: 0 10px 0 9px; border-radius: var(--r-md); font-size: var(--fs-base); font-weight: var(--fw-strong, 600); color: var(--ink-1); white-space: nowrap; transition: background-color var(--dur-fast, 120ms) var(--ease-out); }
+.dock-pick:hover, .dock-pick.open { background: var(--layer-hover); }
+.dock-pick > svg:first-child { flex: none; color: var(--ink-3); }
+.dock-pick .t { overflow: hidden; text-overflow: ellipsis; }
+.dock-pick .n { font-size: var(--fs-meta); font-weight: 400; color: var(--ink-4); font-variant-numeric: tabular-nums; }
+.dock-pick .caret { flex: none; color: var(--ink-4); }
+.menu.cm.dock-pick-menu { min-width: 248px; }
+.menu.cm.dock-pick-menu .dock-more-open > button[data-panel] { gap: 8px; }
+.dock-pick-menu .grow { flex: 1 1 auto; min-width: 0; }
+.dock-pick-menu .n { font-size: var(--fs-meta); color: var(--ink-4); font-variant-numeric: tabular-nums; }
+.dock-pick-menu .ck { display: inline-flex; flex: none; width: 14px; justify-content: center; color: var(--ink-2); }
+
+/* the Artifacts panel: this conversation's, one row each, the gallery of all of them at the foot */
+.arts-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: auto; padding: 6px 8px; }
+.arts-panel-list { display: flex; flex-direction: column; gap: 2px; }
+.arts-panel-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 8px; border-radius: var(--r-lg); text-align: left; color: var(--ink-1); }
+.arts-panel-row:hover { background: var(--layer-hover); }
+.arts-panel-row .arts-th { flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: var(--r-md); background: var(--layer-hover); color: var(--ink-3); }
+.arts-panel-row .arts-tx { display: flex; flex-direction: column; min-width: 0; }
+.arts-panel-row .arts-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-base); }
+.arts-panel-row .arts-d { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-meta); color: var(--ink-4); }
+.arts-panel-foot { margin-top: auto; padding: 10px 8px 4px; }
+.arts-panel-foot .link { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; font-size: var(--fs-sm); }
+
+/* ============================================================ the conversation header ============================================================ */
+.sess-head .sh-tools { display: inline-flex; align-items: center; gap: 2px; }
+.sess-head .sh-tools > .icon-btn.active { background: var(--layer-selected); color: var(--ink-1); }
+
+/* its ⋯ (ConvMenu.tsx) on a desktop: a short menu, keys and ticks at the right */
+.menu.conv-menu { min-width: 236px; }
+.menu.conv-menu .grow { flex: 1 1 auto; min-width: 0; }
+.menu.conv-menu .kbd { flex: none; }
+.menu.conv-menu .cm-ck { display: inline-flex; flex: none; width: 14px; justify-content: center; }
+.menu.conv-menu .cm-more { margin: 0 0 4px 12px; padding-left: 6px; }
+
+/* on a phone: the title, the six-grid (a tap pulls the bottom panel up on it), five rows; a › opens its page in place */
+.menu.conv-menu.phone .cm-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 0 12px 12px; }
+.menu.conv-menu.phone .cm-title > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lg); font-weight: var(--fw-strong, 600); color: var(--ink-1); }
+.menu.conv-menu.phone .cm-title > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--ink-4); }
+.menu.conv-menu.phone .cm-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 0 4px 6px; }
+.as-sheet .menu.conv-menu.phone .cm-tiles > .cm-tile { flex-direction: column; justify-content: center; gap: 4px; min-height: 76px; padding: 8px 4px; border-radius: var(--r-xl); background: var(--layer-hover); color: var(--ink-1); font-size: var(--fs-base); line-height: 20px; text-align: center; }
+.as-sheet .menu.conv-menu.phone .cm-tiles > .cm-tile:active { background: var(--layer-active); }
+.as-sheet .menu.conv-menu.phone .cm-tiles > .cm-tile > svg { width: 22px; height: 22px; color: var(--ink-2); }
+.menu.conv-menu.phone .cm-tile > small { font-size: var(--fs-meta); line-height: 16px; color: var(--ink-4); font-variant-numeric: tabular-nums; }
+.menu.conv-menu.phone .cm-tile .add { color: var(--ok); }
+.menu.conv-menu.phone .cm-tile .del { color: var(--err); }
+.menu.conv-menu.phone .grow { flex: 1 1 auto; min-width: 0; }
+.menu.conv-menu.phone .cm-push .menu-value { max-width: 40%; }
+.as-sheet .menu.conv-menu.phone > button.cm-back { font-weight: var(--fw-strong, 600); color: var(--ink-2); }
+
+/* a message's sheet (MessageSheet.tsx): the message quoted on top, the five actions under it */
+.msg-sheet-quote { display: -webkit-box; margin: 0 12px 8px; padding: 10px 12px; overflow: hidden; border-radius: var(--r-lg); background: var(--layer-hover); font-size: var(--fs-sm); line-height: 20px; color: var(--ink-3); -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; white-space: pre-wrap; word-break: break-word; }
+.menu.msg-sheet .grow { flex: 1 1 auto; min-width: 0; }
+.menu.msg-sheet .menu-sub { font-size: var(--fs-sm); color: var(--ink-4); }
+
+/* ============================================================ the phone's conversation ============================================================ */
+/* no row of icons under every message (problem 7): a long press opens their sheet (and the ⋯ › 更多 has the same
+   actions). The buttons stay in the page, visually hidden, for a screen reader and a keyboard: a focus inside shows them */
+.app.mobile :is(.msg.user, .assistant-wrap, .turn-answer) > .msg-actions:not(:focus-within),
+.app.mobile .msg.user .msg-actions:not(:focus-within) { position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; opacity: 1; }
+/* a long press is ours, not the browser's text selection / callout */
+.app.mobile :is(.msg.user[data-item-id], .assistant-wrap[data-item-id]) { -webkit-touch-callout: none; }
+
+/* the header: ☰ · the title · ⋯ — the five tools and 「+N −M」 live in the ⋯ sheet's grid on a phone */
+.app.mobile .sess-head :is(.sh-tools, .sh-diff) { display: none; }
+
+/* the bottom panel: pulled to the top it is the whole screen (minus the status bar); its picker names the panel in full */
+@media (max-width: 760px) {
+  .app.mobile .rpanel[data-detent='full'] { --sheet-share: 1; border-radius: 0; }
+  /* the handle is a tap target too (a tap: half ⇄ full height): a 44px strip, the pill near its top */
+  .app.mobile .rpanel > .sheet-grip { height: 44px; }
+  .app.mobile .rpanel .dock.simple .dock-tabs.picked { min-height: 48px; }
+}
+.app.mobile .dock.simple .dock-tabs.picked { min-height: 52px; padding: 0 4px 0 6px; }
+.app.mobile .dock-pick { height: 44px; padding: 0 12px; font-size: var(--fs-lg); }
+
+/* tap targets on a phone (problem 1): a code block's buttons are 44 × 44 (the head grows to hold them) */
+.app.mobile .code-head { min-height: 44px; padding-top: 0; gap: 0; }
+.app.mobile .code-head .code-btn { width: 44px; height: 44px; border-radius: var(--r-md); }
+.app.mobile .code-head .code-btn > svg { width: 16px; height: 16px; }
+/* …the box (44px tall, one line), 「添加来源」 over it, a tag's × in it (a 44px target around the small ×) */
+.app.mobile .composer-box.one-line > textarea, .app.mobile .welcome .composer textarea { min-height: 44px; padding-block: 10px; }
+.app.mobile .cmp-add-source .link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; }
+.app.mobile .cap-tag > button { position: relative; }
+.app.mobile .cap-tag > button::after { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+/* …the start page's notice (接一个模型 / 用 Claude 账号登录 / 重新检查) */
+.app.mobile .home-notice :is(.btn, .link) { min-height: 44px; }
+/* …the model sheet's search box */
+.as-sheet .mm-search input { align-self: stretch; height: auto; min-height: 44px; }
+/* …the bottom panel: its 收起, 改动's 全部还原 / 全部暂存, 任务's 定时任务 line */
+.app.mobile .rpanel .dock-ctl .icon-btn { width: 44px; height: 44px; }
+.app.mobile .rv-main > .rv-bar > .btn { min-height: 44px; }
+.app.mobile .tasks-link { min-height: 44px; }

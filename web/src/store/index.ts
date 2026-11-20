@@ -87,6 +87,8 @@ const genUuid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().t
 interface State {
   connected: boolean;
   sessions: SessionSummary[];
+  /** the first `sessions.list` answer has come (an empty list before it is not 「no conversations yet」: the start page) */
+  sessionsListed: boolean;
   open: Record<string, OpenSession>;
   activeId: string | null;
   tab: 'chat' | 'trajectory';
@@ -423,6 +425,7 @@ const resumeModeSeq = new Map<string, number>();
 export const useStore = create<State>((set, get) => ({
   connected: false,
   sessions: [],
+  sessionsListed: false,
   open: {},
   activeId: deriveActive(initialLayoutState),
   tab: 'chat',
@@ -778,8 +781,8 @@ export const useStore = create<State>((set, get) => ({
     if (back.length) {
       const d = { ...get().deletedSessions };
       for (const id of back) delete d[id];
-      set({ sessions, deletedSessions: d });
-    } else set({ sessions });
+      set({ sessions, deletedSessions: d, sessionsListed: true });
+    } else set({ sessions, sessionsListed: true });
     // an open conversation that was opened before the list had it (a goal's new conversation) takes its folder now
     for (const x of sessions ?? []) {
       const o = get().open[x.sessionId];

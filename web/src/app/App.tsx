@@ -5,6 +5,7 @@ import { Workbench } from '@/features/workbench/Workbench';
 import { Dock } from '@/features/workbench/Dock';
 import { ShortcutsModal } from '@/features/workbench/ShortcutsModal';
 import { matchBrowserKey } from '@/features/workbench/shortcuts';
+import { MessageSheet } from '@/features/chat/MessageSheet';
 import { runCommand } from '@/features/workbench/commands';
 import { claimSession } from '@/features/workbench/windows';
 import { showPanel } from '@/features/workbench/right-panel';
@@ -106,6 +107,9 @@ export function App() {
   useEffect(() => { startNavHistory(); }, []);
   // (before the paint: a phone never shows the drawer — or its scrim, which would fade — open for a frame on the way)
   useLayoutEffect(() => { if (mobile) useStore.setState({ sidebarOpen: false }); }, [mobile]);
+  // `html.phone`: what is portalled to <body> (action sheets, cards) knows it is on a phone too — no keyboard hints
+  // anywhere there (ui/kbd.ts, styles/phone.css), the phone's sizes for the sheets
+  useLayoutEffect(() => { document.documentElement.classList.toggle('phone', mobile); }, [mobile]);
   // the palette / the shortcut sheet opened from the keyboard on a phone: the drawer (z 60) makes way (final review M4)
   useEffect(() => useStore.subscribe((s, p) => { if (drawerYields(p, s)) useStore.setState({ sidebarOpen: false }); }), []);
   useEffect(() => installOrchestra(), []);
@@ -297,7 +301,7 @@ export function App() {
       if (!id) return;
       if (id === 'files.search' && imeComposing(e)) return;
       // on desktop the menu accelerators own the Ctrl-only chords; browser-only (Alt) chords still run here
-      if (desktop && (e.ctrlKey || e.metaKey) && !e.altKey && !['pane.splitRight', 'pane.splitDown', 'pane.zoom', 'dock.toggle', 'dock.minimize', 'view.cycle', 'side', 'menu.effort', 'pane.close', 'shortcuts'].includes(id) && !id.startsWith('panel.') && !/^group\.jump/.test(id)) return;
+      if (desktop && (e.ctrlKey || e.metaKey) && !e.altKey && !['pane.splitRight', 'pane.splitDown', 'pane.zoom', 'dock.toggle', 'dock.minimize', 'view.cycle', 'side', 'menu.effort', 'pane.close', 'shortcuts', 'info.toggle'].includes(id) && !id.startsWith('panel.') && !/^group\.jump/.test(id)) return;
       e.preventDefault();
       runCommand(id);
     };
@@ -330,6 +334,8 @@ export function App() {
       <ErrorBoundary area={tr('设置')} floating onReset={() => useStore.setState({ settingsOpen: null })}><SettingsModal /></ErrorBoundary>
       <ErrorBoundary area={tr('首次引导')} floating><Onboarding /></ErrorBoundary>
       <ErrorBoundary area={tr('图片查看')} floating><ImageViewer /></ErrorBoundary>
+      {/* a phone's long press on a message (features/chat/MessageSheet.tsx) */}
+      <ErrorBoundary area={tr('消息操作')} floating><MessageSheet /></ErrorBoundary>
       <ErrorBoundary area={tr('文件菜单')} floating><FileMenu /></ErrorBoundary>
       <ErrorBoundary area={tr('接一个模型')} floating><ConnectModelHost /></ErrorBoundary>
       <ErrorBoundary area={tr('添加来源')} floating><AddSourceLazy /></ErrorBoundary>
