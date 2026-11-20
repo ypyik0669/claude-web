@@ -62,6 +62,8 @@ export function OverPage(p: {
   onEscape?(): boolean;
   /** false: no head row on a desktop (the page's columns carry their own heads — the Bot page); a phone keeps it */
   head?: boolean;
+  /** a family page's own control at the end of the family's tab row (运行中's 列表 / 网吧) */
+  tabsEnd?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const mobile = useStore((s) => s.mobile);
@@ -135,7 +137,7 @@ export function OverPage(p: {
         </div>
         <button className="icon-btn over-close" title={tr('关闭 (Esc)')} aria-label={tr('关闭{label}', { label: frame ? frame.title : p.label })} onClick={p.onClose}><Icon name="close" size={16} /></button>
       </div>}
-      {frame && <frame.Tabs />}
+      {frame && <div className="fam-line"><frame.Tabs />{p.tabsEnd}</div>}
       {sub && <div className={clsx('over-desc fam-sub', `${n}-desc`)} title={sub}>{sub}</div>}
       {showTabs && (
         <div className={clsx('utabs over-tabs', `${n}-tabs`)} role="tablist" aria-label={p.label}>

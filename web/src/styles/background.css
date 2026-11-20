@@ -94,34 +94,6 @@
 .bg-graph { position: relative; min-width: 0; }
 .bg-graph-more { text-align: end; font-size: var(--fs-micro); color: var(--ink-4); padding: 4px 6px 0; }
 
-/* ---- the cards (AgentCards.tsx): the one at work glows in its colour ---- */
-.bg-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: var(--sp-2); }
-.bg-card { --c: var(--ink-3); position: relative; min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 9px 11px 8px; border-radius: var(--r-lg); background: var(--fill-subtle); box-shadow: inset 0 0 0 var(--hairline) var(--edge-subtle); color: var(--ink-2); font: inherit; text-align: left; transition: box-shadow var(--dur-base) var(--ease-out), background-color var(--dur-fast) var(--ease-out), transform var(--dur-instant) var(--ease-out); }
-.bg-card.shell { --c: var(--office-machine); }
-button.bg-card { cursor: pointer; }
-button.bg-card:hover { background: var(--layer-hover); }
-button.bg-card:active { transform: scale(0.985); }
-.bg-card.is-running { box-shadow: inset 0 0 0 1px var(--c), 0 0 0 1px color-mix(in oklab, var(--c) 28%, transparent), 0 0 18px -6px var(--c); }
-.bg-card-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.bg-card-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); font-weight: 600; color: color-mix(in oklab, var(--c) 72%, var(--ink-1)); }
-.bg-card.shell .bg-card-name { color: var(--ink-1); font-family: var(--mono); font-size: var(--fs-meta); font-weight: 400; }
-.bg-card-phase { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-meta); color: var(--ink-4); }
-.bg-card-state { align-self: flex-end; margin-top: 2px; font-size: var(--fs-lg); font-weight: 600; line-height: 1.25; color: color-mix(in oklab, var(--c) 72%, var(--ink-1)); }
-.bg-card:is(.is-queued, .is-stopped) .bg-card-state { color: var(--ink-4); }
-.bg-card.is-failed .bg-card-state { color: var(--err); }
-.bg-card.shell.is-running .bg-card-state { color: var(--ink-1); }
-.bg-bar { position: relative; height: 3px; margin: 4px 0 3px; overflow: hidden; border-radius: 2px; background: var(--layer-selected); }
-.bg-bar > span { position: absolute; inset: 0; border-radius: inherit; background: var(--c); transform-origin: left center; transition: transform var(--dur-slower) var(--ease-out); }
-.bg-card.is-failed .bg-bar > span { background: var(--err); }
-.bg-card.is-stopped .bg-bar > span { background: var(--ink-4); }
-.bg-bar.indet > span { animation: bg-indet 1.6s var(--ease-in-out) infinite; }
-@keyframes bg-indet { from { transform: translateX(-40%) scaleX(0.4); } to { transform: translateX(100%) scaleX(0.4); } }
-.bg-card-foot { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--fs-meta); color: var(--ink-3); }
-.bg-card-foot .tx { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bg-card-foot .meta { flex: none; color: var(--ink-4); font-variant-numeric: tabular-nums; }
-.bg-card-more { align-items: center; justify-content: center; min-height: 96px; color: var(--ink-3); font-size: var(--fs-base); }
-.bg-card-more:hover { color: var(--ink-1); }
-
 /* ---- the ticker (EventFeed.tsx): newest first; only lines that arrive while it is open fade in ---- */
 .bg-feed { list-style: none; margin: 0; padding: 4px 0; display: flex; flex-direction: column; font-family: var(--mono); font-size: var(--fs-meta); line-height: 1.5; }
 .bg-feed-row { width: 100%; min-width: 0; display: flex; align-items: baseline; gap: 6px; padding: 3px 8px; border-radius: var(--r-sm); color: var(--ink-2); font: inherit; text-align: left; white-space: nowrap; }
@@ -139,15 +111,13 @@ button.bg-feed-row:hover { background: var(--layer-hover); }
 @keyframes bg-feed-in { from { opacity: 0; transform: translateY(-4px); } }
 
 /* ---- 减少动画 (the setting, or the system's): nobody bobs or walks, no line flows or flashes, nothing pulses ---- */
-:root[data-reduce-motion='1'] :is(.bg-bob, .bg-beat, .bg-feed-new, .bg-bar.indet > span, .bg-machine.on .bg-cursor, .bg-machine.on .bg-machine-led) { animation: none; }
+:root[data-reduce-motion='1'] :is(.bg-bob, .bg-beat, .bg-feed-new, .bg-machine.on .bg-cursor, .bg-machine.on .bg-machine-led) { animation: none; }
 :root[data-reduce-motion='1'] :is(.bg-walk, .bg-place) { transition: none; }
 :root[data-reduce-motion='1'] .bg-beat { stroke-dasharray: none; }
 :root[data-reduce-motion='1'] .bg-flash { display: none; }
-:root[data-reduce-motion='1'] button.bg-card:active { transform: none; }
 @media (prefers-reduced-motion: reduce) {
-  :root :is(.bg-bob, .bg-beat, .bg-feed-new, .bg-bar.indet > span, .bg-machine.on .bg-cursor, .bg-machine.on .bg-machine-led) { animation: none; }
+  :root :is(.bg-bob, .bg-beat, .bg-feed-new, .bg-machine.on .bg-cursor, .bg-machine.on .bg-machine-led) { animation: none; }
   :root :is(.bg-walk, .bg-place) { transition: none; }
   :root .bg-beat { stroke-dasharray: none; }
   :root .bg-flash { display: none; }
-  :root button.bg-card:active { transform: none; }
 }

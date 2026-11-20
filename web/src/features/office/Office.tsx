@@ -35,6 +35,16 @@ export interface OfficeProps {
   onOpenChat: (sessionId: string) => void;
   /** 跑过的 → 在网吧里回放: a finished run played again in place of what runs now (one show at a time) */
   replay?: { session: BgSession; title: string; bar: ReactNode; onStop: () => void };
+  /** the page's handle on the cafe's own tools: a phone puts them in the page's ⋯ instead of over the canvas */
+  controls?: React.MutableRefObject<OfficeControls | null>;
+}
+
+/** What the page's ⋯ does to the cafe on a phone (day / night is a setting: the menu sets it itself). */
+export interface OfficeControls {
+  /** zoom in (> 1) or out (< 1) by this factor */
+  zoom(by: number): void;
+  /** back to the whole cafe (no zone in focus, no card) */
+  whole(): void;
 }
 
 const zoneName = (f: { letter: string }) => tr('{z}区', { z: f.letter });
@@ -102,8 +112,11 @@ function Chip({ f, sm }: { f: OfficeZone; sm?: boolean }) {
   return <span className={clsx('of-chip', sm && 'sm')} style={{ '--c': agentColor(f.color) } as CSSProperties}>{f.letter}</span>;
 }
 
-export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat, replay }: OfficeProps) {
+export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat, replay, controls }: OfficeProps) {
   const live = useBackground((s) => s.sessions);
+  // a phone's page: the cafe's tools are in the page's ⋯ and a person is picked on the canvas itself (the scene's
+  // pick), not on the HTML button over them — people sit closer together than a finger is wide
+  const phone = useStore((s) => s.mobile) && !compact;
   // the replay's bar ticks with its clock; its picture changes only when a state does
   const shown = replay?.session;
   const replaying = !!replay;
@@ -430,6 +443,12 @@ export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat, repl
 
   const zoomBy = (f: number) => { const sc = scene.current; if (sc) sc.setZoom(Math.max(0.45, Math.min(3.5, sc.zoom() * f))); };
   const setLight = (v: 'day' | 'night' | null) => void useStore.getState().setSetting('office.light', v);
+  // the page's ⋯ (a phone) reaches the zoom and the whole cafe through this handle
+  useEffect(() => {
+    if (!controls) return;
+    controls.current = { zoom: zoomBy, whole: () => chooseFloor(undefined) };
+    return () => { controls.current = null; };
+  });
 
   // 跑过的 → 在网吧里回放: which run plays, its clock, and the way back to what runs now
   const replayBanner = replay && (
@@ -442,7 +461,7 @@ export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat, repl
 
   if (broken) {
     return (
-      <div className={clsx('office office-flat', compact && 'compact')} onKeyDown={onKey}>
+      <div className={clsx('office office-flat', compact && 'compact', phone && 'phone')} onKeyDown={onKey}>
         {pill}
         {replayBanner}
         {!model.zones.length ? <><EmptyState e={EMPTY.background} /><RecentRuns compact={compact} /></> : (
@@ -473,7 +492,7 @@ export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat, repl
   );
 
   return (
-    <div className={clsx('office', compact && 'compact', night ? 'night' : 'day')} ref={wrap} onKeyDown={onKey}>
+    <div className={clsx('office', compact && 'compact', phone && 'phone', night ? 'night' : 'day')} ref={wrap} onKeyDown={onKey}>
       <canvas
         ref={can}
         className="office-canvas"
@@ -505,7 +524,8 @@ export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat, repl
         {model.zones.filter((f) => !focusFloor || f === focusFloor).flatMap((f) => f.bots.filter((b) => seated.has(b.id)).map((b) => {
           const near = focusSid === f.sessionId;
           return (
-            <button key={b.id} type="button" className={clsx('office-bot', b.status, near && 'near', sel === b.id && 'sel')} data-anchor={`bot:${b.id}`} data-status={b.status} aria-label={botLabel(b, f)} title={botLabel(b, f)} onClick={() => chooseBot(b.id)}>
+            <button key={b.id} type="button" className={clsx('office-bot', b.status, near && 'near', sel === b.id && 'sel')} data-anchor={`bot:${b.id}`} data-status={b.status} aria-label={botLabel(b, f)} title={botLabel(b, f)} onClick={() => chooseBot(b.id)}
+              {...(phone ? { tabIndex: -1, 'aria-hidden': true } : {})}>
               <Bubble b={b} near={near} />
               {near && (sel === b.id || b.lead) && <span className="ob-name">{b.name}</span>}
             </button>
@@ -517,22 +537,23 @@ export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat, repl
       {botCard || floorCard}
       {!model.zones.length && <div className="office-empty"><EmptyState e={EMPTY.background} /><RecentRuns compact={compact} /></div>}
       {replayBanner}
-      <div className="office-bottom">
+      {/* (a phone: the bar and the tools are in the page's ⋯ — over a 390 px canvas they covered the counts) */}
+      {!phone && <div className="office-bottom">
         {bread}
         {!compact && <span className="office-hint">{tr('拖动旋转 · 右键拖动平移 · 滚轮缩放')}</span>}
         <span className="office-zoom">
           <button type="button" className="icon-btn sm" aria-label={tr('缩小')} title={tr('缩小')} onClick={() => zoomBy(1 / 1.25)}><Icon name="minus" size={13} /></button>
           <button type="button" className="icon-btn sm" aria-label={tr('放大')} title={tr('放大')} onClick={() => zoomBy(1.25)}><Icon name="plus" size={13} /></button>
         </span>
-      </div>
-      <div className="office-tools">
+      </div>}
+      {!phone && <div className="office-tools">
         <div className="office-seg" role="group" aria-label={tr('白天 / 夜里')}>
           <button type="button" className={clsx(!light && 'on')} aria-pressed={!light} title={tr('跟着主题')} onClick={() => setLight(null)}><Icon name="monitor" size={12} /></button>
           <button type="button" className={clsx(light === 'day' && 'on')} aria-pressed={light === 'day'} title={tr('白天')} onClick={() => setLight('day')}><Icon name="sun" size={12} />{!compact && <span className="l">{tr('白天')}</span>}</button>
           <button type="button" className={clsx(light === 'night' && 'on')} aria-pressed={light === 'night'} title={tr('夜里')} onClick={() => setLight('night')}><Icon name="moon" size={12} />{!compact && <span className="l">{tr('夜里')}</span>}</button>
         </div>
         {!compact && <button type="button" className="btn sm office-lib" onClick={openLibrary}><Icon name="user" size={13} /><span className="l">{tr('角色库')}</span></button>}
-      </div>
+      </div>}
     </div>
   );
 }

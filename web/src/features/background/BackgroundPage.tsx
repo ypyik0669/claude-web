@@ -1,76 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { BgSession, BgTask } from '@shared';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
+import type { BgSession } from '@shared';
 import { useStore } from '@/store';
-import { ws } from '@/ws/client';
 import { clsx } from '@/util';
-import { Icon } from '@/ui/icons';
+import { Icon, type IconName } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
-import { OverPage, type OverTab } from '@/features/sections/OverPage';
-import { AgentCards } from './AgentCards';
+import { Menu } from '@/features/sidebar/menus';
+import { OverPage } from '@/features/sections/OverPage';
+import { openLibrary } from '@/features/cafe/state';
+import type { OfficeControls } from '@/features/office/Office';
 import { AgentDrawer } from './AgentDrawer';
-import { CommandGraph } from './CommandGraph';
-import { EventFeed } from './EventFeed';
-import { lazy, Suspense } from 'react';
-import { BG_TITLE, clock, hasLive, KIND_LABEL, liveCounts, orderedTasks, sortSessions, taskStateText, taskTitle, tokensText } from './model';
-import { closeAgent, closeBackground, openAgent, openChat, selectBackground, setBgView, stopTask, useBackground, useTitleOf } from './state';
+import { BG_TITLE, liveCounts } from './model';
+import { liveSummary, type RunView } from './run-list';
+import { closeAgent, closeBackground, openAgent, openChat, selectBackground, setBgView, setRunView, useBackground, useRunView } from './state';
 import { sessionAt } from './history-model';
 import { pickHistory, useHistory } from './history-state';
 import { playPause, seekReplay, setReplaySpeed, stopReplay, useReplay } from './replay';
 import { HistoryView } from './HistoryView';
 import { ReplayBar } from './ReplayBar';
+import { RunList } from './RunList';
 import { tr } from '@/i18n';
 
 // the cafe is a three.js scene: loaded when the page first shows it (the first screen's entry stays small)
 const Office = lazy(() => import('@/features/office/Office').then((m) => ({ default: m.Office })));
-
-const EMPTY_SESSION = (sessionId: string): BgSession => ({ sessionId, updatedAt: 0, tasks: [], events: [] });
-
-export { useTitleOf };
-
-/** A ticking clock while something runs (the header's 运行中 3:12). */
-function useNow(on: boolean): number {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!on) return;
-    // the page stays mounted while closed: on reopening, the time it was last closed would show for a second
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [on]);
-  return now;
-}
-
-/** One finished run read from disk, shown as if it were the conversation's only task. */
-function useRun(sessionId: string | undefined, runId: string | undefined): BgTask | null | undefined {
-  const [run, setRun] = useState<BgTask | null | undefined>(undefined);
-  useEffect(() => {
-    setRun(undefined);
-    if (!sessionId || !runId) return;
-    let live = true;
-    ws.request<BgTask | null>({ kind: 'background.run', sessionId, runId }).then((t) => { if (live) setRun(t); }).catch(() => { if (live) setRun(null); });
-    return () => { live = false; };
-  }, [sessionId, runId]);
-  return run;
-}
-
-function TaskChips({ session, taskId }: { session: BgSession; taskId?: string }) {
-  const tasks = orderedTasks(session);
-  if (tasks.length < 2) return null;
-  return (
-    <div className="bg-chips" role="tablist" aria-label={tr('后台任务')}>
-      <button role="tab" aria-selected={!taskId} className={clsx('bg-chip', !taskId && 'on')} onClick={() => selectBackground(session.sessionId)}>{tr('全部 · {tasksCount}', { tasksCount: tasks.length })}</button>
-      {tasks.map((t) => (
-        <span key={t.id} className={clsx('bg-chip', taskId === t.id && 'on', t.status === 'running' && 'live')} data-task={t.id}>
-          <button role="tab" aria-selected={taskId === t.id} className="bg-chip-b" title={`${KIND_LABEL[t.kind]} · ${taskStateText(t)}`} onClick={() => selectBackground(session.sessionId, { taskId: t.id })}>
-            <Icon name={t.kind === 'workflow' ? 'workflow' : t.kind === 'shell' ? 'terminal' : 'agent'} size={13} />
-            <span className="k">{KIND_LABEL[t.kind]}</span>{taskTitle(t)}
-          </button>
-          {t.status === 'running' && <button className="bg-chip-x" title={tr('停止{v}', { v: KIND_LABEL[t.kind] })} aria-label={tr('停止{taskTitle}', { taskTitle: taskTitle(t) })} onClick={() => stopTask(session.sessionId, t.id)}><Icon name="stop" size={11} /></button>}
-        </span>
-      ))}
-    </div>
-  );
-}
 
 /**
  * 跑过的 → 在网吧里回放: the run at the replay's moment, as the cafe's one conversation. A new picture when a state
@@ -96,108 +47,135 @@ function useCafeReplay(): { session: BgSession; title: string; bar: React.ReactN
   };
 }
 
-/** The building of every conversation's background, on top of the page (or the run 跑过的 replays in it). */
-function OfficeBlock({ follow }: { follow?: string }) {
+/** The cafe of every conversation's background (or the run 跑过的 replays in it), filling the page's body. */
+function OfficeBlock({ follow, controls }: { follow?: string; controls: React.MutableRefObject<OfficeControls | null> }) {
   const replay = useCafeReplay();
   return (
-    <div className="bg-office-wrap">
-      <ErrorBoundary area={tr('后台 · 网吧')}>
-        <Suspense fallback={null}>
-          <Office
-            follow={replay ? replay.session.sessionId : follow}
-            replay={replay}
-            onFloor={(sid) => { if (!replay) selectBackground(sid); }}
-            onOpenAgent={(sid, taskId, agentKey) => {
-              if (!replay) { selectBackground(sid); openAgent({ sessionId: sid, taskId, agentKey }); return; }
-              // a replayed run's agent: its conversation read from disk, like 跑过的 does
-              const task = useReplay.getState().show?.task;
-              if (task) openAgent({ sessionId: sid, taskId, agentKey, task });
-            }}
-            onOpenChat={(sid) => openChat(sid)}
-          />
-        </Suspense>
-      </ErrorBoundary>
-    </div>
+    <ErrorBoundary area={tr('后台 · 网吧')}>
+      <Suspense fallback={null}>
+        <Office
+          follow={replay ? replay.session.sessionId : follow}
+          replay={replay}
+          controls={controls}
+          onFloor={(sid) => { if (!replay) selectBackground(sid); }}
+          onOpenAgent={(sid, taskId, agentKey) => {
+            if (!replay) { selectBackground(sid); openAgent({ sessionId: sid, taskId, agentKey }); return; }
+            // a replayed run's agent: its conversation read from disk, like 跑过的 does
+            const task = useReplay.getState().show?.task;
+            if (task) openAgent({ sessionId: sid, taskId, agentKey, task });
+          }}
+          onOpenChat={(sid) => openChat(sid)}
+        />
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
-function Board({ session, live, taskId }: { session: BgSession; live: boolean; taskId?: string }) {
+/** An agent's own conversation beside the list or the cafe (a replayed run's agent comes with its task). */
+function LiveDrawer() {
   const drawer = useBackground((s) => (s.drawer?.from === 'history' ? undefined : s.drawer));
-  const pick = (agentKey: string, tId: string) => openAgent({ sessionId: session.sessionId, taskId: tId, agentKey });
-  // a run the cafe replays is not in the live snapshot: its agent comes with the drawer
-  const dTask = drawer?.task ?? (drawer && drawer.sessionId === session.sessionId ? session.tasks.find((t) => t.id === drawer.taskId) : undefined);
-  const dAgent = dTask?.agents.find((a) => a.key === drawer!.agentKey);
-  return (
-    <div className={clsx('bg-board', dAgent && 'with-drawer')}>
-      <div className="bg-main">
-        {live && <TaskChips session={session} taskId={taskId} />}
-        <ErrorBoundary area={tr('后台 · 卡片')}><AgentCards session={session} taskId={taskId} onPick={pick} /></ErrorBoundary>
-        <div className="bg-graph-wrap"><ErrorBoundary area={tr('后台 · 关系图')}><CommandGraph session={session} taskId={taskId} onPick={pick} /></ErrorBoundary></div>
-        <div className="bg-stage bg-stage-low">
-          <div className="bg-side-col">
-            {session.events.length > 0 && <div className="bg-feed-wrap"><div className="bg-h">{tr('动态')}</div><EventFeed events={taskId ? session.events.filter((e) => e.taskId === taskId) : session.events} onPick={pick} /></div>}
-          </div>
-        </div>
-      </div>
-      {dTask && dAgent && <ErrorBoundary area={tr('后台 · 子代理对话')}><AgentDrawer sessionId={session.sessionId} task={dTask} agent={dAgent} /></ErrorBoundary>}
-    </div>
-  );
+  const sessions = useBackground((s) => s.sessions);
+  const task = drawer?.task ?? (drawer ? sessions[drawer.sessionId]?.tasks.find((t) => t.id === drawer.taskId) : undefined);
+  const agent = task?.agents.find((a) => a.key === drawer!.agentKey);
+  if (!drawer || !task || !agent) return null;
+  return <ErrorBoundary area={tr('后台 · 子代理对话')}><AgentDrawer sessionId={drawer.sessionId} task={task} agent={agent} /></ErrorBoundary>;
 }
 
-/** 在跑 N / 跑过的: what runs now (the cafe, the board) or what every conversation ran. */
-function ViewSwitch({ view, running }: { view: 'live' | 'history'; running: number }) {
+/** 在跑 N / 跑过的: what runs now (the list, the cafe) or what every conversation ran. A phone leaves out the number
+ *  (the 运行中 tab right under it says it; the head of a 360 px screen has no room for it). */
+function ViewSwitch({ view, running, phone }: { view: 'live' | 'history'; running: number; phone: boolean }) {
   return (
     <div className="bg-views" role="tablist" aria-label={tr('在跑 / 跑过的')}>
       <button type="button" role="tab" aria-selected={view === 'live'} data-view="live" className={clsx(view === 'live' && 'on')} onClick={() => setBgView('live')}>
-        {tr('在跑')}{running > 0 && <span className="n">{running}</span>}
+        {tr('在跑')}{running > 0 && !phone && <span className="n">{running}</span>}
       </button>
       <button type="button" role="tab" aria-selected={view === 'history'} data-view="history" className={clsx(view === 'history' && 'on')} onClick={() => setBgView('history')}>{tr('跑过的')}</button>
     </div>
   );
 }
 
+/** 列表 / 网吧 at the end of the tab row (a desktop): the cafe is another way to look at 运行中. Remembered. */
+function RunViewSwitch({ view }: { view: RunView }) {
+  const opt = (v: RunView, icon: IconName, label: string) => (
+    <button type="button" role="radio" aria-checked={view === v} data-view={v} className={clsx(view === v && 'on')} onClick={() => setRunView(v)}><Icon name={icon} size={13} />{label}</button>
+  );
+  return (
+    <div className="bg-runview" role="radiogroup" aria-label={tr('列表 / 网吧')}>
+      {opt('list', 'menu', tr('列表'))}
+      {opt('cafe', 'cafe', tr('网吧'))}
+    </div>
+  );
+}
+
 /**
- * 后台 (spec 2026-10-12-background-office-design.md §3): what a conversation has going besides its turn — the agents
- * of its workflows, its sub-agents, its background commands — as cards, an office, a graph and a feed. The page lies
- * over the main area like 自动化; the section's sidebar (BackgroundSide) picks the conversation, where it is not on
- * screen the page has the conversations as tabs. 跑过的 (2026-11-19): every conversation's finished work, from disk.
+ * A phone's ⋯ on 在跑: 列表 / 3D 网吧 (the cafe is not the default there: it drains a battery), and while the cafe is
+ * shown, its tools — day / night, zoom, the whole cafe, the character library — which on a desktop float over it.
+ */
+function PhoneMore({ view, cafe }: { view: RunView; cafe: React.MutableRefObject<OfficeControls | null> }) {
+  const [open, setOpen] = useState(false);
+  const light = useStore((s) => s.settings['office.light']);
+  const close = () => setOpen(false);
+  const act = (fn: () => void) => () => { close(); fn(); };
+  const setLight = (v: 'day' | 'night' | null) => act(() => void useStore.getState().setSetting('office.light', v));
+  const radio = (on: boolean, id: string, icon: IconName, label: string, pick: () => void) => (
+    <button key={id} type="button" role="menuitemradio" aria-checked={on} data-id={id} className={clsx(on && 'on')} onClick={pick}>
+      <Icon name={icon} size={14} />{label}<Icon name="check" size={14} className="ck" />
+    </button>
+  );
+  return (
+    <span className="bg-more">
+      <button type="button" className="icon-btn" title={tr('更多')} aria-label={tr('更多')} aria-haspopup="menu" aria-expanded={open} data-act="more" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
+        <Icon name="more" size={18} />
+      </button>
+      {open && (
+        <Menu onClose={close} label={tr('运行中')} className="bg-more-menu" align="right">
+          <div className="menu-label">{tr('怎么看')}</div>
+          {radio(view === 'list', 'list', 'menu', tr('列表'), act(() => setRunView('list')))}
+          {radio(view === 'cafe', 'cafe', 'cafe', tr('3D 网吧'), act(() => setRunView('cafe')))}
+          {view === 'cafe' && (
+            <>
+              <div className="menu-label">{tr('网吧')}</div>
+              {radio(!light, 'light-auto', 'monitor', tr('跟着主题'), setLight(null))}
+              {radio(light === 'day', 'light-day', 'sun', tr('白天'), setLight('day'))}
+              {radio(light === 'night', 'light-night', 'moon', tr('夜里'), setLight('night'))}
+              <div className="menu-sep" />
+              <button type="button" data-id="zoom-in" onClick={act(() => cafe.current?.zoom(1.25))}><Icon name="plus" size={14} />{tr('放大')}</button>
+              <button type="button" data-id="zoom-out" onClick={act(() => cafe.current?.zoom(1 / 1.25))}><Icon name="minus" size={14} />{tr('缩小')}</button>
+              <button type="button" data-id="whole" onClick={act(() => cafe.current?.whole())}><Icon name="cafe" size={14} />{tr('整个网吧')}</button>
+              <button type="button" data-id="library" onClick={act(openLibrary)}><Icon name="user" size={14} />{tr('角色库')}</button>
+            </>
+          )}
+        </Menu>
+      )}
+    </span>
+  );
+}
+
+/**
+ * 自动化 › 运行中 (the background page; spec 2026-10-12-background-office-design.md, redesign 2026-11): what every
+ * conversation has going besides its turn — the agents of its workflows, its sub-agents, its background commands.
+ * 在跑 is a list grouped by what each conversation runs (RunList) or the 3D cafe of the same snapshot — 列表 / 网吧,
+ * remembered on a desktop, the list first on a phone. 跑过的 (2026-11-19): every conversation's finished work, from
+ * disk. The page lies over the main area like 自动化's other tabs; the sidebar stays the conversation list.
  */
 export function BackgroundPage() {
   const open = useBackground((s) => s.open);
   const sessions = useBackground((s) => s.sessions);
   const selected = useBackground((s) => s.selected);
-  const taskId = useBackground((s) => s.taskId);
-  const runId = useBackground((s) => s.runId);
-  const drawer = useBackground((s) => !!s.drawer);
+  const drawer = useBackground((s) => !!s.drawer && s.drawer.from !== 'history');
   const view = useBackground((s) => s.view);
   const historySeen = useBackground((s) => s.historySeen);
   const picked = useHistory((s) => !!s.pick);
   const mobile = useStore((s) => s.mobile);
-  const sideNav = useStore((s) => !s.mobile && s.sidebarOpen);
-  const titles = useStore((s) => s.sessions);
-  const title = useTitleOf(selected);
-  const session = selected ? sessions[selected] ?? EMPTY_SESSION(selected) : undefined;
-  const run = useRun(selected, runId);
-  const counts = liveCounts(session);
-  const now = useNow(open && counts.tasks > 0);
-  const list = useMemo(() => sortSessions(Object.values(sessions)), [sessions]);
-  const tabs: OverTab[] = useMemo(() => list.slice(0, 8).map((s) => {
-    const x = titles.find((v) => v.sessionId === s.sessionId);
-    return { id: s.sessionId, label: x?.customTitle || x?.title || tr('对话'), icon: hasLive(s) ? 'office' : 'check', title: hasLive(s) ? tr('在跑') : tr('结束了') };
-  }), [list, titles]);
-
-  const shown: BgSession | undefined = runId ? (run ? { ...EMPTY_SESSION(selected!), tasks: [run] } : undefined) : session;
-  const started = session?.tasks.filter((t) => t.status === 'running').reduce((m, t) => Math.min(m, t.startedAt), Infinity) ?? Infinity;
-  const agentCount = shown ? shown.tasks.reduce((n, t) => n + t.agents.length, 0) : 0;
-  const tokens = shown ? shown.tasks.reduce((n, t) => n + (t.tokens ?? t.agents.reduce((m, a) => m + (a.tokens ?? 0), 0)), 0) : 0;
-  const desc = runId
-    ? (run ? tr('跑过的工作流 · {taskStateText} · {agentsCount} 个子代理 · {tokensText} tok', { taskStateText: taskStateText(run), agentsCount: run.agents.length, tokensText: tokensText(run.tokens) }) : run === null ? tr('读不到这次运行') : tr('读取中…'))
-    : !session ? undefined
-      : counts.tasks ? tr('运行中 {clock} · {agentCount} 个子代理 · {tokensText} tok', { clock: Number.isFinite(started) ? clock(now - started) : '', agentCount, tokensText: tokensText(tokens) })
-        : session.tasks.length ? tr('都结束了 · {agentCount} 个子代理 · {tokensText} tok', { agentCount, tokensText: tokensText(tokens) }) : undefined;
-  const running = session?.tasks.filter((t) => t.status === 'running') ?? [];
-  const runningAll = useMemo(() => Object.values(sessions).reduce((n, s) => n + liveCounts(s).tasks, 0), [sessions]);
+  const runView = useRunView();
   const history = view === 'history';
+  const cafe = !history && runView === 'cafe';
+  // the cafe (three.js, its own chunk) is mounted the first time it is shown, then only hidden like the page
+  const [cafeSeen, setCafeSeen] = useState(false);
+  if (cafe && !cafeSeen) setCafeSeen(true);
+  const controls = useRef<OfficeControls | null>(null);
+  const runningAll = useMemo(() => Object.values(sessions).reduce((n, s) => n + liveCounts(s).tasks, 0), [sessions]);
+  const summary = useMemo(() => liveSummary(sessions), [sessions]);
   return (
     <OverPage
       name="bg"
@@ -205,32 +183,25 @@ export function BackgroundPage() {
       open={open}
       onClose={() => { if (drawer) closeAgent(); else closeBackground(); }}
       // a phone on one run of 跑过的: back to the list first
-      onEscape={() => { if (history && mobile && picked && !drawer) { pickHistory(undefined); return true; } return false; }}
-      title={!history && selected ? title : BG_TITLE}
-      desc={history ? tr('每个对话跑完的工作流、子代理和后台命令') : desc}
-      tab={history ? '' : selected ?? ''}
-      tabs={tabs}
-      showTabs={!history && !sideNav && tabs.length > 1}
-      onTab={(id) => selectBackground(id)}
+      onEscape={() => { if (history && mobile && picked && !useBackground.getState().drawer) { pickHistory(undefined); return true; } return false; }}
+      title={BG_TITLE}
+      desc={history ? tr('每个对话跑完的工作流、子代理和后台命令') : summary}
+      tab=""
+      tabs={[]}
+      showTabs={false}
+      onTab={() => {}}
+      tabsEnd={!history && !mobile ? <RunViewSwitch view={runView} /> : undefined}
       actions={(
         <>
-          {!history && selected && (
-            <>
-              {!runId && running.length > 1 && <button className="btn sm" title={tr('全部停止')} onClick={() => { for (const t of running) stopTask(selected, t.id); }}><Icon name="stop" size={12} /><span className="l">{tr('全部停止')}</span></button>}
-              {!runId && running.length === 1 && <button className="btn sm" title={tr('停止{v}', { v: KIND_LABEL[running[0].kind] })} onClick={() => stopTask(selected, running[0].id)}><Icon name="stop" size={12} /><span className="l">{tr('停止{v}', { v: KIND_LABEL[running[0].kind] })}</span></button>}
-              {runId && <button className="btn sm" title={tr('回到现在')} onClick={() => selectBackground(selected)}><Icon name="office" size={13} /><span className="l">{tr('回到现在')}</span></button>}
-              <button className="btn sm" title={tr('回到对话')} onClick={() => openChat(selected)}><Icon name="chat" size={13} /><span className="l">{tr('回到对话')}</span></button>
-            </>
-          )}
-          <ViewSwitch view={view} running={runningAll} />
+          <ViewSwitch view={view} running={runningAll} phone={mobile} />
+          {mobile && !history && <PhoneMore view={runView} cafe={controls} />}
         </>
       )}
     >
-      <div className="over-body bg-body" hidden={history}>
-        <OfficeBlock follow={selected} />
-        {!shown
-          ? null
-          : <Board session={shown} live={!runId} taskId={runId ? undefined : taskId} />}
+      <div className={clsx('over-body bg-body', cafe ? 'cafe' : 'list', drawer && 'with-drawer')} data-view={runView} hidden={history}>
+        <div className="bg-live-main" hidden={cafe}><ErrorBoundary area={tr('后台 · 列表')}><RunList shown={open && !history && !cafe} /></ErrorBoundary></div>
+        {cafeSeen && <div className="bg-office-wrap" hidden={!cafe}><OfficeBlock follow={selected} controls={controls} /></div>}
+        <LiveDrawer />
       </div>
       {/* 跑过的: mounted once shown, then only hidden (its list, its scroll, its replay stay) */}
       {historySeen && (

@@ -24,17 +24,6 @@ export function liveCounts(s: BgSession | undefined): LiveCounts {
 
 export const hasLive = (s: BgSession | undefined) => liveCounts(s).tasks > 0;
 
-/**
- * The finished run the page shows when it opens again: a conversation asked for (the pill, a card's 在「后台」里看)
- * is its present; back from the rail it is the run looked at last time — unless that was another conversation's, or
- * this one has work running now (a real desktop run, 2026-10-13, reopened onto a finished run while a new workflow ran
- * in the same conversation — the sidebar said 在跑, the page said 完成).
- */
-export function reopenRun(o: { asked?: string; selected?: string; was?: string; runId?: string; sessions: Record<string, BgSession> }): string | undefined {
-  if (o.asked || !o.runId || o.selected !== o.was) return undefined;
-  return hasLive(o.selected ? o.sessions[o.selected] : undefined) ? undefined : o.runId;
-}
-
 /** The composer's pill: null when nothing runs. 「后台 · 1 个工作流 · 2 个在跑」 */
 export function pillText(s: BgSession | undefined): string | null {
   const c = liveCounts(s);
