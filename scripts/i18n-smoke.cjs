@@ -109,7 +109,8 @@ async function driver() {
     await step(`welcome · ${name}`, async () => { await click(sel); await sleep(500); });
     await closeMenus();
   }
-  // the sidebar's brand menu and the account menu with each of its rows that open in place (redesign 2026-11 stage 1)
+  // the sidebar's brand menu and the account menu with each of its › rows (redesign 2026-11 stage 1; stage 3: they fly
+  // out to the right)
   await step('sidebar · app menu', async () => { await click('.sidebar .sb-brand'); await sleep(400); });
   await closeMenus();
   for (const sub of ['', 'language', 'theme', 'help']) {
@@ -119,6 +120,16 @@ async function driver() {
     });
   }
   await closeMenus();
+  // the 显示 menu (stage 3, 图 7) and its submenus: on the 项目 row, or on a project / folder header (shown on hover)
+  for (const sub of ['', 'group-by', 'sort-by', 'show', 'source']) {
+    await step(`sidebar · 显示 menu${sub ? ' · ' + sub : ''}`, async () => {
+      if (!(await js('!!document.querySelector(".menu.sb-view")'))) { await click('.sidebar [data-id="view"], .sidebar [data-id="group-view"]'); await sleep(400); }
+      if (sub) { await click(`.menu.sb-view [data-id="${sub}"]`); await sleep(300); }
+    });
+  }
+  await closeMenus();
+  key('Escape');
+  await sleep(200);
   await step('command palette', async () => { await js('window.__store.setState({ paletteOpen: true })'); await sleep(500); });
   await js('window.__store.setState({ paletteOpen: false })');
 

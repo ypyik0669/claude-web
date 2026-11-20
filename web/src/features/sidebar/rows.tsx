@@ -33,8 +33,9 @@ function SidebarMenuExtra({ s, onClose, onSelect, kids }: { s: SessionSummary; o
   const sections = readSections(st.settings[SECTIONS_KEY]);
   return (
     <>
-      <button data-id={id('open-tab')} onClick={openIn('tab')}><Icon name="board" size={14} /> {tr('在新{tile}打开', { tile: TERMS.tile })}</button>
-      <button data-id={id('open-split')} onClick={act(split)}><Icon name="splitRight" size={14} /> {tr('在右侧{pane}打开', { pane: TERMS.pane })}</button>
+      {/* a phone shows one conversation at a time: no tab strip, no side by side to open it into */}
+      {!st.mobile && <button data-id={id('open-tab')} onClick={openIn('tab')}><Icon name="board" size={14} /> {tr('在新{tile}打开', { tile: TERMS.tile })}</button>}
+      {!st.mobile && <button data-id={id('open-split')} onClick={act(split)}><Icon name="splitRight" size={14} /> {tr('在右侧{pane}打开', { pane: TERMS.pane })}</button>}
       {effectiveCaps(s).resume && <button data-id={id('resume')} onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }).catch((e) => st.toast(e.message)))}><Icon name="play" size={14} /> {tr('恢复运行')}</button>}
       <button data-id={id('pin')} onClick={act(() => st.setSessionMeta(s.sessionId, { pinned: !meta.pinned }))}><Icon name="pin" size={14} /> {meta.pinned ? tr('取消置顶') : tr('置顶')}</button>
       {onSelect && <button data-id={id('select')} title={st.mobile ? undefined : tr('也可以按住 Shift 点对话')} onClick={() => { onClose(); onSelect(); }}><Icon name="checkCircle" size={14} /> {tr('选择')}</button>}

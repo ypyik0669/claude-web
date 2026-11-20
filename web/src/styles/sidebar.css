@@ -36,7 +36,8 @@
 .menu .sb-per .segmented > button { height: 24px; font-size: var(--fs-meta); }
 
 /* ---- the account menu's three submenus (语言 · 主题 · 帮助与反馈) ---- */
-.menu.acct-fly { min-width: 200px; }
+/* (232: 浅色 · 深色 · 跟随系统 side by side, each with its icon, without the last one spilling out of its pill) */
+.menu.acct-fly { min-width: 232px; }
 .menu.acct-fly .ck { color: var(--ink-1); }
 .menu.acct-fly .ck.off { visibility: hidden; }
 .menu.acct-fly .ext { margin-left: auto; }

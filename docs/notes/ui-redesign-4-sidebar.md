@@ -30,6 +30,8 @@ spec §5.1 / §4.2 / `mock-home.png`。全部在 `web/src/features/sidebar/`。
 - 「其它 agent 的对话」关掉时只在来源选「全部」时生效（`filterSessions` 的 `otherAgents`）；来源计数不受它影响，不然别家的 chip 会变成 0。
 - 自建分区：在「已固定」下面，行拖到分区标题上加入（`MIME_SESSION`，对话同时还在原分组里），行上的 × 移出，分区的 ··· / 右键菜单可重命名、删除（删除前确认）。
 - （2026-11 阶段 1 又改了侧栏顶部、账号行、账号菜单和入口表：见「界面改版（2026-11）阶段 1：外壳」。）
+- （2026-11 阶段 3 照图 7 重做了显示菜单（六行 + 往右飞出的子菜单）、分组标题、行尾（不写时间）、子对话缩进和手机抽屉，
+  筛选框挪去搜索和 /、选择多个挪去 Shift + 点和行菜单：见「界面改版（2026-11）阶段 3：侧栏照图 7 重做」。）
 - 入口表（`entries.ts`）：`filter` 改名 `view`；`view` place 新增 `group-by` / `sort-by` / `other-agents` / `per-group` / `new-section` / `reset` / `all`；新 place `custom`（`custom-section` / `custom-rename` / `custom-delete` / `custom-out`）、新 section `custom`；项目菜单加 `edit`（编辑项目，见 `phase03-files-git` 的多根面板）。外框控件计数仍是 16（一个按钮换一个按钮）。
 - ui-smoke：旧选择器 `data-id="filter"` / `.menu.sb-filter` 全部迁到 `data-id="view"` / `.menu.sb-view`（断言没删、只换选择器），`SCOPES` 加 `custom`；侧栏段里新增「显示」菜单的整套检查。
 

@@ -1805,6 +1805,52 @@ function driver() {
           // (redesign 2026-11 stage 1: a search box, then four rows — no 搜索 row, and 派活 is in 新对话)
           const drawerParts = await js(`({ search: !!document.querySelector('.sidebar .sb-search[data-id="search"]'), nav: [...document.querySelectorAll('.sidebar .sb-nav > [data-id]')].map((e) => e.dataset.id).join(' '), account: !!document.querySelector('.sidebar .sb-account [data-id="account"]') })`);
           check('phone: the drawer is the same sidebar — a search box, then 新对话 · Artifacts · 自动化 · 自定义, the account row', drawerParts.search && drawerParts.nav === 'new artifacts automation extensions' && drawerParts.account, JSON.stringify(drawerParts));
+          // redesign 2026-11 stage 3 (图 7 on a phone): the drawer's rows end in their status only — no time, no ··· — and
+          // 显示 is the list's one ≡: the same six-row menu as a sheet, a submenu pushed inside it with 返回 at its top left.
+          // A long press on a row opens its menu (选择 there; no 新标签 / 右侧 — a phone shows one conversation). No
+          // keyboard hints in either sheet
+          {
+            const drawerRows = await js(`(() => { const r = [...document.querySelectorAll('.sidebar .sb-list .sb-row[data-sid]')]; return { n: r.length, more: r.filter((x) => x.querySelector('.more')).length, time: r.filter((x) => x.querySelector('.st.time, [data-kind="time"]') || /(\\d+ (分钟|小时|天|周)|刚刚)$/.test(x.textContent.trim())).length, views: [...document.querySelectorAll('.sidebar [data-id="view"], .sidebar [data-id="group-view"]')].filter((b) => b.getClientRects().length).length, search: document.querySelector('.sidebar .sb-search[data-id="search"]')?.textContent?.trim() ?? null }; })()`);
+            check('phone drawer (stage 3): the rows end in their status only (no time, no ···), one 显示 (≡) for the list, the search box says 搜索对话和 Artifacts', drawerRows.n > 0 && !drawerRows.more && !drawerRows.time && drawerRows.views === 1 && drawerRows.search === '搜索对话和 Artifacts', JSON.stringify(drawerRows));
+            const sheetRows = `[...document.querySelectorAll('.as-sheet .menu.sb-view > button[data-id], .as-sheet .menu.sb-view > .sb-sub > .sb-sub-row')].filter((b) => b.getClientRects().length).map((b) => b.dataset.id).join(' ')`;
+            const hints = `[...document.querySelectorAll('.as-sheet .k, .as-sheet kbd')].filter((k) => k.getClientRects().length).map((k) => k.textContent)`;
+            const pageHead = `document.querySelector('.as-sheet .sb-push-head .t')?.textContent ?? null`;
+            const sheetAway = async () => { for (let i = 0; i < 3 && (await js('!!document.querySelector(".as-sheet .menu")')); i++) { await key('Escape'); await sleep(250); } };
+            await click('.sidebar [data-id="projects"] > .sb-sec-h [data-id="view"]');
+            const sheetUp = await waitFor('!!document.querySelector(".as-sheet .menu.sb-view")', 3000);
+            await sleep(350);
+            const root = { rows: await js(sheetRows), title: await js(`document.querySelector('.as-sheet .sb-sheet-title')?.textContent ?? null`), hints: await js(hints) };
+            await shot('phone-view-sheet');
+            await click('.as-sheet .menu.sb-view [data-id="group-by"]');
+            await waitFor('!!document.querySelector(".as-sheet .menu.sb-view[data-pushed]")', 2000);
+            await sleep(300);
+            const pushed = await js(`({ head: ${pageHead}, rows: ${sheetRows}, opts: [...document.querySelectorAll('.as-sheet .sb-fly [role="menuitemradio"]')].filter((b) => b.getClientRects().length).map((b) => b.textContent.trim()), hints: ${hints} })`);
+            await shot('phone-view-pushed');
+            await click('.as-sheet .sb-push-head button');
+            await sleep(350);
+            const backRows = await js(sheetRows);
+            await click('.as-sheet .menu.sb-view [data-id="show"]');
+            await sleep(350);
+            await click('.as-sheet .menu.sb-view [data-id="source"]');
+            await sleep(350);
+            const deep = await js(`({ head: ${pageHead}, last: [...document.querySelectorAll('.as-sheet .sb-fly button')].filter((b) => b.getClientRects().length).map((b) => b.dataset.id || b.dataset.source || 'all').at(-1) ?? null })`);
+            await click('.as-sheet .sb-push-head button');
+            await sleep(350);
+            const up = await js(pageHead);
+            await sheetAway();
+            const sheetGone = !(await js('!!document.querySelector(".as-sheet .menu.sb-view")'));
+            check('phone ≡ (stage 3): the 显示 sheet titled 对话列表 has the six rows; 分组方式 pushes its four choices in the same sheet with ‹ 分组方式, ‹ goes back; 显示 › 来源 › goes two deep (管理来源 last), ‹ goes back one; no keyboard hints',
+              sheetUp && root.rows === 'group-by sort-by show new-section reset all' && root.title === '对话列表' && pushed.head === '分组方式' && pushed.rows === '' && pushed.opts.join(' ') === '文件夹 项目 日期 不分组' && backRows === root.rows && deep.head === '来源' && deep.last === 'library' && up === '显示' && sheetGone && !root.hints.length && !pushed.hints.length,
+              JSON.stringify({ sheetUp, root, pushed, backRows, deep, up, sheetGone }));
+            // a long press on a row: its menu as a sheet
+            const held = await js(`(async () => { const row = document.querySelector('.sidebar .sb-list .sb-row[data-sid]'); if (!row) return null; const b = row.getBoundingClientRect(); const o = { bubbles: true, cancelable: true, isPrimary: true, pointerType: 'touch', pointerId: 7, clientX: b.left + 40, clientY: b.top + b.height / 2 }; row.dispatchEvent(new PointerEvent('pointerdown', o)); await new Promise((r) => setTimeout(r, 700)); row.dispatchEvent(new PointerEvent('pointerup', o)); await new Promise((r) => setTimeout(r, 400)); const m = document.querySelector('.as-sheet .menu.sess-menu'); return { sheet: !!m, select: !!m?.querySelector('[data-id="select"]'), tab: !!m?.querySelector('[data-id="open-tab"], [data-id="open-split"]'), hints: ${hints} }; })()`);
+            await shot('phone-row-hold');
+            await sheetAway();
+            check('phone: a long press on a drawer row opens its menu as a sheet (选择 in it, no 新标签 / 右侧, no keyboard hints)', !!held && held.sheet && held.select && !held.tab && !held.hints.length, JSON.stringify(held));
+            await js('window.__store.setState({ sidebarOpen: true })');
+            await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
+            await sleep(300);
+          }
           // final review M4: Ctrl+K / `?` from the keyboard with the drawer open — the drawer (z 60) makes way, the
           // palette / the shortcut sheet is what a tap where the drawer was reaches
           const overDrawer = async (open, sel) => {
@@ -2021,7 +2067,46 @@ function driver() {
                 await sleep(400);
                 await audit(`${tag} · account`, '.action-sheet, .as-sheet');
                 if (w === 390) await shot(`phone-check-${theme}-account`);
+                // stage 3: its › rows push their page into the same sheet (‹ at the top left goes back)
+                const pushIn = async (sel) => {
+                  if (!(await js(`!!document.querySelector(${JSON.stringify(sel)})`))) return false;
+                  const depth = await js(`document.querySelectorAll('.as-sheet .menu[data-pushed]').length`);
+                  await js(`document.querySelector(${JSON.stringify(sel)}).click()`);
+                  const ok = await waitFor(`!!document.querySelector('.as-sheet .sb-push-head') && document.querySelectorAll('.as-sheet .menu[data-pushed]').length > ${depth}`, 2000);
+                  await sleep(300);
+                  return ok;
+                };
+                const popOut = async (n) => { for (let i = 0; i < n; i++) { await js(`document.querySelector('.as-sheet .sb-push-head button')?.click()`); await sleep(150); } await waitFor('!document.querySelector(".as-sheet .menu[data-pushed]")', 2000); await sleep(150); };
+                for (const sub of ['language', 'theme', 'help']) {
+                  if (!(await pushIn(`.as-sheet .menu.sb-acct-menu [data-id="${sub}"]`))) { faults.push(`${tag} · account › ${sub}: did not push`); continue; }
+                  await audit(`${tag} · account › ${sub}`, '.as-sheet');
+                  if (w === 390 && sub === 'theme') await shot(`phone-check-${theme}-account-theme`);
+                  await popOut(1);
+                }
                 await putAway();
+                // stage 3: the list's one ≡ — the 显示 sheet, each of its pushed pages (机器 › with another machine faked in
+                // for the look: a conversation of a peer, taken out again right after)
+                const PEER = 'peer_auditpeer~a1';
+                await js(`window.__store.setState((s) => ({ sessions: [...s.sessions.filter((x) => x.sessionId !== ${JSON.stringify(PEER)}), { sessionId: ${JSON.stringify(PEER)}, title: 'audit: 另一台电脑的对话', cwd: '/remote/audit', lastModified: Date.now() - 60000, peer: { id: 'auditpeer', name: 'Audit Box' } }] }))`);
+                await drawerIn();
+                await click('.sidebar [data-id="projects"] > .sb-sec-h [data-id="view"]');
+                if (await waitFor('!!document.querySelector(".as-sheet .menu.sb-view")', 2000)) {
+                  await sleep(350);
+                  await audit(`${tag} · 显示`, '.as-sheet');
+                  if (w === 390) await shot(`phone-check-${theme}-view`);
+                  for (const trail of [['group-by'], ['sort-by'], ['show'], ['show', 'source'], ['show', 'machine']]) {
+                    let deep = 0;
+                    for (const id of trail) { if (await pushIn(`.as-sheet .menu.sb-view [data-id="${id}"]`)) deep++; else break; }
+                    if (deep < trail.length) faults.push(`${tag} · 显示 › ${trail.join(' › ')}: did not push`);
+                    else {
+                      await audit(`${tag} · 显示 › ${trail.join(' › ')}`, '.as-sheet');
+                      if (w === 390 && trail.join() === 'show') await shot(`phone-check-${theme}-view-show`);
+                    }
+                    await popOut(deep);
+                  }
+                } else faults.push(`${tag} · 显示: no sheet`);
+                await putAway();
+                await js(`window.__store.setState((s) => ({ sessions: s.sessions.filter((x) => x.sessionId !== ${JSON.stringify(PEER)}) }))`);
                 // 自动化: its head and tab row on each tab; the bodies (but 运行中's cafe) without the 44 rule
                 await drawerIn();
                 await click('.sidebar .sb-nav [data-id="automation"]');
@@ -2443,6 +2528,17 @@ function driver() {
           const ids = (sel) => js(`[...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => e.dataset.id)`);
           const has = (list, want) => want.every((x) => list.includes(x));
           const closeMenus = async () => { await js('document.body.click()'); await sleep(250); };
+          // the 显示 menu's button (redesign 2026-11 stage 3, 图 7): a desktop's is on each project / folder / date header,
+          // shown with the pointer over the header or the key focus in it; the 项目 row has one only where no header carries
+          // it (no project yet, the flat list) or while it has something to say (its dot)
+          const viewBtn = async () => {
+            const row = '.sidebar [data-id="projects"] > .sb-sec-h [data-id="view"]';
+            if (await js(`!!document.querySelector(${JSON.stringify(row)})`)) return row;
+            await js(`document.querySelector('.sidebar .sb-group-head:has([data-id="group-view"])')?.focus()`);
+            await sleep(150);
+            return '.sidebar .sb-group-head:focus-within [data-id="group-view"]';
+          };
+          const clickView = async () => click(await viewBtn());
           await js('window.__store.setState({ sidebarOpen: true })'); // the phone phase closed it
           await waitFor('!!document.querySelector(".sidebar .sb-nav")', 3000);
           await sleep(300);
@@ -2458,7 +2554,7 @@ function driver() {
             const menusNow = () => js('[...document.querySelectorAll(".menu")].map((m) => m.className)');
             await click('.pane.focused .sess-head .sh-more > button');
             const headerOpen = await waitFor('!!document.querySelector(".menu.sess-menu")', 3000);
-            await click('.sidebar [data-id="view"]');
+            await clickView();
             await sleep(250);
             const m1 = await menusNow();
             check('one menu app-wide: opening the sidebar funnel closes the header ···', headerOpen && m1.length === 1 && /sb-view/.test(m1[0]), JSON.stringify({ headerOpen, m1 }));
@@ -2477,7 +2573,7 @@ function driver() {
               const rightClick = () => js(`(() => { const el = document.querySelector(${JSON.stringify(ftRow)}); if (!el) return false; const b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: b.left + 30, clientY: b.top + 8, button: 2 })); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.left + 30, clientY: b.top + 8, button: 2 })); return true; })()`);
               await rightClick();
               const ftOpen = await waitFor('!!document.querySelector(".menu.ft-menu")', 2000);
-              await click('.sidebar [data-id="view"]');
+              await clickView();
               await sleep(250);
               const m3 = await menusNow();
               check('one menu app-wide: the 文件 right-click menu, then the sidebar funnel → only the funnel is open (polish P2)', ftOpen && m3.length === 1 && /sb-view/.test(m3[0]), JSON.stringify({ ftOpen, m3 }));
@@ -2509,9 +2605,11 @@ function driver() {
             automation: '.over-page:not([hidden]) .fam-tabs [data-id]',
             section: '.sidebar .sb-sec[data-id], .sidebar .sb-group[data-id]',
             head: '.sidebar [data-id="projects"] > .sb-sec-h [data-id]',
+            groupHead: '.sidebar .sb-group-head .acts [data-id]',
+            // (the submenus fly out of the 显示 menu as its own children: their rows are in it)
             view: '.menu.sb-view [data-id]',
             custom: '.sidebar [data-id="custom-section"], .sidebar .sb-custom [data-id], .menu.sb-custom-menu [data-id]',
-            project: '.menu.sb-menu[aria-label^="项目"] [data-id], .sidebar .sb-group-head .acts [data-id]',
+            project: '.menu.sb-menu[aria-label^="项目"] [data-id], .menu.sb-menu[aria-label^="文件夹"] [data-id], .sidebar .sb-group-head .acts [data-id]',
             row: '.sidebar .sb-list [data-id], .sidebar .sb-attn [data-id]',
             rowMenu: '.menu.sess-menu [data-id]',
             account: '.sidebar .sb-account [data-id], .menu.sb-acct-menu [data-id]',
@@ -2522,14 +2620,16 @@ function driver() {
             const got = await js(`(() => { const S = ${JSON.stringify(SCOPES)}; const o = {}; for (const p of Object.keys(S)) o[p] = [...document.querySelectorAll(S[p])].map((e) => e.dataset.id); return o; })()`);
             for (const p of Object.keys(got)) for (const id of got[p]) if ((PLACES[p] || []).includes(id)) (seen[p] = seen[p] || new Set()).add(id);
           };
-          const sb = await js(`({ chipRows: !!document.querySelector('.sidebar .sb-sources, .sidebar .src-chip, .sidebar .lib-banner'), top: [...document.querySelectorAll('.sidebar .sb-top [data-id]')].map((e) => e.dataset.id), nav: [...document.querySelectorAll('.sidebar .sb-nav > [data-id]')].map((e) => e.dataset.id), rail: !!document.querySelector('.rail'), head: [...document.querySelectorAll('.sidebar [data-id="projects"] > .sb-sec-h [data-id]')].map((e) => e.dataset.id), account: [...document.querySelectorAll('.sidebar .sb-account [data-id]')].map((e) => e.dataset.id), row: !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]') })`);
+          const sb = await js(`({ chipRows: !!document.querySelector('.sidebar .sb-sources, .sidebar .src-chip, .sidebar .lib-banner'), top: [...document.querySelectorAll('.sidebar .sb-top [data-id]')].map((e) => e.dataset.id), nav: [...document.querySelectorAll('.sidebar .sb-nav > [data-id]')].map((e) => e.dataset.id), rail: !!document.querySelector('.rail'), head: [...document.querySelectorAll('.sidebar [data-id="projects"] > .sb-sec-h [data-id]')].map((e) => e.dataset.id), groupView: !!document.querySelector('.sidebar .sb-group-head .acts [data-id="group-view"]'), account: [...document.querySelectorAll('.sidebar .sb-account [data-id]')].map((e) => e.dataset.id), row: (() => { const r = document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']'); return !!r && r.querySelectorAll('[data-id="status"]').length <= 1 && !r.querySelector('.st.time, [data-kind="time"]') && r.title.includes('更新于'); })() })`);
           // redesign 2026-11 stage 1: no icon rail; the sidebar's top row is the brand (☰ menu) · 收起 · ← →, then the five
           // places; at its foot the account row (avatar in its quota ring · name · ⚙)
-          check('sidebar: no chip rows, no icon rail; ☰ · 收起 · ← →, then 新对话 · 搜索 · Artifacts · 自动化 · 自定义; funnel + 打开文件夹 on 项目; the account row (connection · account · ⚙) at its foot; the row ends in one status',
-            !sb.chipRows && !sb.rail && has(sb.top, ['app-menu', 'collapse', 'back', 'forward']) && sb.nav.join(' ') === 'new search artifacts automation extensions' && has(sb.head, ['view', 'add-project']) && has(sb.account, ['account', 'connection', 'settings']) && sb.row, JSON.stringify(sb));
+          // (stage 3, 图 7: 显示 on the project / folder headers once there is one; on the 项目 row where none carries it;
+          // a row ends in its status — nothing when there is none to tell, never the time: that is in its tooltip)
+          check('sidebar: no chip rows, no icon rail; ☰ · 收起 · ← →, then 新对话 · 搜索 · Artifacts · 自动化 · 自定义; 显示 (on the 项目 row or the group headers) + 打开文件夹 on 项目; the account row (connection · account · ⚙) at its foot; a row ends in at most one status, never the time (its tooltip has it)',
+            !sb.chipRows && !sb.rail && has(sb.top, ['app-menu', 'collapse', 'back', 'forward']) && sb.nav.join(' ') === 'new search artifacts automation extensions' && has(sb.head, ['add-project']) && (sb.head.includes('view') || sb.groupView) && has(sb.account, ['account', 'connection', 'settings']) && sb.row, JSON.stringify(sb));
           // final review I3: 收起侧栏 shows with the pointer over the sidebar or the key focus on it, not at rest
-          // (and the 项目 header's funnel and +, the same way)
-          const collapseOp = () => js(`['.sb-sec-h [data-id="view"]', '.sb-sec-h [data-id="add-project"]'].map((s) => getComputedStyle(document.querySelector('.sidebar ' + s)).opacity).join(',')`);
+          // (and the 项目 header's 显示 (when it has one) and +, the same way)
+          const collapseOp = () => js(`['.sb-sec-h [data-id="view"]', '.sb-sec-h [data-id="add-project"]'].map((s) => document.querySelector('.sidebar ' + s)).filter(Boolean).map((e) => getComputedStyle(e).opacity).join(',')`);
           wc.sendInputEvent({ type: 'mouseMove', x: 900, y: 400 });
           await sleep(400);
           const opRest = await collapseOp();
@@ -2538,7 +2638,7 @@ function driver() {
           const opHover = await collapseOp();
           wc.sendInputEvent({ type: 'mouseMove', x: 900, y: 400 });
           await sleep(400);
-          check('the funnel and + (打开文件夹) at rest are invisible (still there for Tab and the pointer), shown with the pointer over the sidebar', opRest === '0,0' && opHover === '1,1', JSON.stringify({ opRest, opHover }));
+          check('the funnel and + (打开文件夹) at rest are invisible (still there for Tab and the pointer), shown with the pointer over the sidebar', /^0(,0)?$/.test(opRest) && /^1(,1)?$/.test(opHover) && opRest.length === opHover.length, JSON.stringify({ opRest, opHover }));
           // final review §9 #5: no project yet but conversations in 文件夹 → the empty state points at their folders,
           // whose 「设为项目」 is written out at rest (no second 打开文件夹 button); with a project it is the hover icon again
           {
@@ -2558,24 +2658,42 @@ function driver() {
           }
           await harvest();
           await shot('sidebar');
-          // the funnel: sources, machines (when there are other machines), archived, multi-select, the filter box
-          await click('.sidebar [data-id="view"]');
-          const fm = await ids('.menu.sb-view [data-id]');
-          const fmIn = await js('(() => { const m = document.querySelector(".menu.sb-view"); if (!m) return false; const r = m.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()');
-          check('显示 menu (stage C3, was the funnel): filter box, 分组方式, 排序, 显示已归档, 其它 agent, 每组, sources, 选择多个, 新建分区, 恢复默认, 查看全部, 管理对话来源 — inside the window', has(fm, ['query', 'source', 'group-by', 'sort-by', 'archived', 'other-agents', 'per-group', 'select', 'new-section', 'reset', 'all', 'library']) && fmIn, JSON.stringify({ fm, fmIn }));
+          // the 显示 menu (redesign 2026-11 stage 3, 图 7): six rows — 分组方式 › · 排序 › · 显示 › · 新建分区 · 恢复默认 ·
+          // 查看全部; the submenus fly out to the right of it, one at a time, 来源 › inside 显示 › with 管理来源 at its end.
+          // The stage C menu's filter box and 选择多个 left it (the list's / filter, Shift + click and the row menu's 选择)
+          await clickView();
+          await waitFor('!!document.querySelector(".menu.sb-view:not(.leaving)")', 2000);
+          const vm = await js(`(() => { const m = document.querySelector('.menu.sb-view'); if (!m) return null; const r = m.getBoundingClientRect(); return { rows: [...m.querySelectorAll(':scope > button[data-id], :scope > .sb-sub > .sb-sub-row')].map((b) => b.dataset.id), all: [...m.querySelectorAll('[data-id]')].map((b) => b.dataset.id), inside: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight }; })()`);
+          await click('.menu.sb-view [data-id="show"]');
+          await waitFor(`document.querySelector('.menu.sb-view [data-id="show"]')?.getAttribute('aria-expanded') === 'true'`, 2000);
+          await click('.menu.sb-view .sb-fly [data-id="source"]');
+          await waitFor(`document.querySelector('.menu.sb-view [data-id="source"]')?.getAttribute('aria-expanded') === 'true'`, 2000);
+          await sleep(250);
+          const fly = await js(`(() => { const m = document.querySelector('.menu.sb-view'); if (!m) return null; const f = [...m.querySelectorAll('.sb-fly:not(.leaving)')]; const box = (e) => e.getBoundingClientRect(); const mr = box(m); return { n: f.length, show: f[0] ? [...f[0].querySelectorAll(':scope > [data-id], :scope > .sb-sub > .sb-sub-row')].map((b) => b.dataset.id) : [], source: f[1] ? [...f[1].querySelectorAll('button')].map((b) => b.dataset.id || b.dataset.source || 'all') : [], right: f.length === 2 && box(f[0]).left >= mr.right - 8 && box(f[1]).left >= box(f[0]).right - 8, inside: f.every((x) => { const r = box(x); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; }) }; })()`);
           await harvest();
-          await shot('sidebar-filter');
+          await shot('sidebar-view');
+          check('显示 menu (stage 3, 图 7): six rows 分组方式 › · 排序 › · 显示 › · 新建分区 · 恢复默认 · 查看全部 (no filter box, no 选择多个); 显示 › flies out to the right with 已归档 · 其它 Agent · 每组 · 来源 ›, and 来源 › further right ends in 管理来源 — all inside the window',
+            !!vm && vm.rows.join(' ') === 'group-by sort-by show new-section reset all' && !vm.all.includes('query') && !vm.all.includes('select') && vm.inside && !!fly && has(fly.show, ['archived', 'other-agents', 'per-group', 'source']) && fly.source[0] === 'all' && fly.source.at(-1) === 'library' && fly.right && fly.inside, JSON.stringify({ vm, fly }));
+          // one Esc does one thing: 来源 › goes, then 显示 ›, then the menu
+          const escs = [];
+          for (let i = 0; i < 3; i++) { await key('Escape'); escs.push(await js(`document.querySelector('.menu.sb-view:not(.leaving)') ? document.querySelectorAll('.menu.sb-view .sb-fly:not(.leaving)').length : -1`)); }
+          check('显示 menu: Esc closes 来源 ›, then 显示 ›, then the menu', escs.join(',') === '1,0,-1', JSON.stringify(escs));
+          await closeMenus();
+          // the list's own filter (it was the stage C menu's filter box): / in the sidebar opens a box at the list's top
           if (E.SMOKE_READONLY !== '1') {
+            await js(`document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']')?.focus()`);
+            wc.sendInputEvent({ type: 'keyDown', keyCode: '/' });
+            wc.sendInputEvent({ type: 'keyUp', keyCode: '/' });
+            const slashUp = await waitFor(`!!document.activeElement && document.activeElement === document.querySelector('.sidebar .sb-slash input')`, 2000);
+            const box0 = await js(`document.querySelector('.sidebar .sb-slash input')?.value ?? null`);
             wc.insertText('zzz-no-such-conversation');
             await sleep(400);
-            const filtered = await js('({ summary: document.querySelector(".sidebar .sb-filtered .what")?.textContent || "", rows: document.querySelectorAll(".sidebar .sb-list .sb-row").length })');
-            check('the filter box filters the list and the list says it is filtered', filtered.rows === 0 && filtered.summary.includes('zzz-no-such'), JSON.stringify(filtered));
-            // the 已筛选 row pushed the funnel down: the menu follows its anchor instead of covering it
-            const follow = await js('(() => { const b = document.querySelector(".sidebar [data-id=view]")?.getBoundingClientRect(); const m = document.querySelector(".menu.sb-view")?.getBoundingClientRect(); return !!b && !!m && (m.top >= b.bottom - 1 || m.bottom <= b.top + 1); })()');
-            check('the funnel menu follows its button when the list above it changes', follow);
-            await closeMenus();
-            await click('.sidebar .sb-filtered .link');
-            check('清除 brings the list back', await waitFor(`!document.querySelector('.sidebar .sb-filtered') && !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']')`, 3000));
+            const filtered = await js(`({ box: document.querySelector('.sidebar .sb-slash input')?.value ?? null, rows: document.querySelectorAll('.sidebar .sb-list .sb-row[data-sid]').length, dot: !!document.querySelector('.sidebar [data-id="view"] .fdot') })`);
+            await harvest();
+            await shot('sidebar-filter');
+            await key('Escape');
+            const slashGone = await waitFor(`!document.querySelector('.sidebar .sb-slash') && !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']')`, 3000);
+            check('/ in the sidebar opens the list\'s filter box, focused and empty; it filters the list and 显示 shows its dot; Esc closes it and the list is back', slashUp && box0 === '' && filtered.box === 'zzz-no-such-conversation' && filtered.rows === 0 && filtered.dot && slashGone, JSON.stringify({ slashUp, box0, filtered, slashGone }));
           }
           await closeMenus();
           // redesign phase 7: 自动化 is a page over the main area (spec §5.9); redesign 2026-11 stage 1: one tab row for
@@ -2583,7 +2701,7 @@ function driver() {
           // Opening it closes whatever sidebar menu was open (here: the funnel)
           const dockClosed = `window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`;
           const autoTab = (tab) => `(() => { const p = document.querySelector('.auto-page'); const b = p && p.querySelector('.auto-body[data-body="${tab}"]:not([hidden])'); return !!p && !p.hidden && p.dataset.tab === '${tab}' && !!b && b.getBoundingClientRect().height > 0; })()`;
-          await click('.sidebar [data-id="view"]');
+          await clickView();
           await click('.sidebar .sb-nav [data-id="automation"]');
           // a closed menu leaves an inert fading copy (.leaving, ui/ghost.ts) for ~120ms: not a menu
           await waitFor('!document.querySelector(".menu.sb-menu:not(.leaving), .menu.sess-menu:not(.leaving)")', 1000);
@@ -2723,7 +2841,8 @@ function driver() {
             order.join(' ') === 'settings usage language theme shortcuts help whats-new' && acc.includes('today') && !acc.includes('config') && !acc.includes('palette'), JSON.stringify(acc));
           await harvest();
           await shot('sidebar-account');
-          const subOpen = () => js(`(() => { const m = document.querySelector('.menu.sb-acct-menu'); return m ? { open: [...m.querySelectorAll('.acct-sub-h[aria-expanded="true"]')].map((b) => b.dataset.id), langs: m.querySelectorAll('.acct-sub [data-lang]').length, help: m.querySelectorAll('.acct-sub [data-help]').length, themes: m.querySelectorAll('.acct-sub [data-theme-pick]').length } : null; })()`);
+          // (stage 3, 图 7: the three › rows fly out to the right of the menu, one at a time, instead of opening in place)
+          const subOpen = () => js(`(() => { const m = document.querySelector('.menu.sb-acct-menu'); if (!m) return null; const f = [...m.querySelectorAll('.sb-fly:not(.leaving)')]; const mr = m.getBoundingClientRect(); return { open: [...m.querySelectorAll('.sb-sub-row[aria-expanded="true"]')].map((b) => b.dataset.id), flies: f.length, right: f.length === 1 && f[0].getBoundingClientRect().left >= mr.right - 8 && f[0].getBoundingClientRect().right <= innerWidth, langs: m.querySelectorAll('.sb-fly [data-lang]').length, help: m.querySelectorAll('.sb-fly [data-help]').length, themes: m.querySelectorAll('.sb-fly [data-theme-pick]').length }; })()`);
           await click('.menu.sb-acct-menu [data-id="language"]');
           const sLang = await subOpen();
           await click('.menu.sb-acct-menu [data-id="help"]');
@@ -2731,16 +2850,17 @@ function driver() {
           await click('.menu.sb-acct-menu [data-id="theme"]');
           const sTheme = await subOpen();
           await harvest();
-          check('account menu: 语言 › / 帮助与反馈 › / 主题 › open in place under their row, one at a time (the languages; 使用说明 · 报告问题 · 官网 · 诊断包; 浅色 / 深色 / 跟随系统 + 字符画主题… + 外观…)',
-            !!sLang && sLang.open.join() === 'language' && sLang.langs >= 3 && !!sHelp && sHelp.open.join() === 'help' && sHelp.help === 4 && !!sTheme && sTheme.open.join() === 'theme' && sTheme.themes === 3 && (await exists('.menu.sb-acct-menu [data-id="ascii-themes"]')) && (await exists('.menu.sb-acct-menu [data-id="appearance"]')), JSON.stringify({ sLang, sHelp, sTheme }));
+          await shot('sidebar-account-theme');
+          check('account menu: 语言 › / 帮助与反馈 › / 主题 › fly out to the right of the menu, one at a time (the languages; 使用说明 · 报告问题 · 官网 · 诊断包; 浅色 / 深色 / 跟随系统 + 字符画主题… + 外观…)',
+            !!sLang && sLang.open.join() === 'language' && sLang.flies === 1 && sLang.right && sLang.langs >= 3 && !!sHelp && sHelp.open.join() === 'help' && sHelp.flies === 1 && sHelp.right && sHelp.help === 4 && !!sTheme && sTheme.open.join() === 'theme' && sTheme.flies === 1 && sTheme.right && sTheme.themes === 3 && (await exists('.menu.sb-acct-menu .sb-fly [data-id="ascii-themes"]')) && (await exists('.menu.sb-acct-menu .sb-fly [data-id="appearance"]')), JSON.stringify({ sLang, sHelp, sTheme }));
           // final review §9 #3: dark mode within two clicks — account → 深色 (the popover stays open to show it), and 设置 →
           // 外观 has the themes as swatches, not a dropdown
           if (E.SMOKE_READONLY !== '1') {
             const themeBefore = await js('JSON.stringify(window.__store.getState().settings["ui.theme"] ?? null)');
-            const quick = await js(`[...document.querySelectorAll('.menu.sb-acct-menu .acct-sub [role="radio"]')].map((b) => b.textContent)`);
-            await click('.menu.sb-acct-menu .acct-sub [data-theme-pick="dark"]');
+            const quick = await js(`[...document.querySelectorAll('.menu.sb-acct-menu .sb-fly [role="radio"]')].map((b) => b.textContent)`);
+            await click('.menu.sb-acct-menu .sb-fly [data-theme-pick="dark"]');
             const dark = await waitFor(`document.documentElement.dataset.theme === 'dark' && window.__store.getState().settings['ui.theme'] === 'dark' && document.querySelector('.menu.sb-acct-menu [data-theme-pick="dark"]')?.getAttribute('aria-checked') === 'true'`, 2000);
-            await click('.menu.sb-acct-menu .acct-sub [data-theme-pick="light"]');
+            await click('.menu.sb-acct-menu .sb-fly [data-theme-pick="light"]');
             const light = await waitFor(`document.documentElement.dataset.theme === 'light' && !!document.querySelector('.menu.sb-acct-menu')`, 2000);
             check('account → 主题 › 深色 / 浅色: the theme in three clicks (浅色 / 深色 / 跟随系统), the popover stays open', JSON.stringify(quick) === JSON.stringify(['浅色', '深色', '跟随系统']) && dark && light, JSON.stringify({ quick, dark, light }));
             await closeMenus();
@@ -2836,8 +2956,8 @@ function driver() {
           await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);
           await sleep(300);
           const rm = await ids('.menu.sess-menu [data-id]');
-          check('conversation right-click menu: open in tab / split, resume, pin, folder, VS Code, reference, rename, fork, archive, hand-over, native CLI, copy id, delete',
-            has(rm, ['open-tab', 'open-split', 'resume', 'pin', 'explorer', 'vscode', 'reference', 'rename', 'fork', 'archive', 'handoff', 'native-cli', 'copy-id', 'delete']), JSON.stringify(rm));
+          check('conversation right-click menu: open in tab / split, resume, pin, 选择, folder, VS Code, reference, rename, fork, archive, hand-over, native CLI, copy id, delete',
+            has(rm, ['open-tab', 'open-split', 'resume', 'pin', 'select', 'explorer', 'vscode', 'reference', 'rename', 'fork', 'archive', 'handoff', 'native-cli', 'copy-id', 'delete']), JSON.stringify(rm));
           await harvest();
           await shot('sidebar-row-menu');
           if (E.SMOKE_READONLY !== '1') {
@@ -2855,10 +2975,20 @@ function driver() {
             check('a project (opened folder) groups its conversations; its menu: new here, worktree, terminal, rename, folder, VS Code, remove', proj && has(pm, ['new-here', 'worktree', 'terminal', 'rename', 'explorer', 'vscode', 'remove']), JSON.stringify({ proj, pm }));
             await harvest();
             await closeMenus();
-            // 需要你: a conversation waiting for a permission shows there and at its row's end (the request is faked client-side)
+            // 需要你: a conversation waiting for a permission shows there and at its row's end (the request is faked client-side).
+            // The 显示 menu open meanwhile (from the project's header): 需要你 coming in above pushes the header down, the menu
+            // follows its button instead of covering it
+            await clickView();
+            const viewUp = await waitFor('!!document.querySelector(".menu.sb-view:not(.leaving)")', 2000);
             await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'waiting', pending: [{ requestId: 'smoke-fake', sessionId: ${SID}, toolName: 'Bash', input: { command: 'echo smoke' } }] } } } : {}; })`);
-            const attn = await waitFor(`(() => { const a = document.querySelector('.sidebar [data-id="attention"] [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]'); const r = document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]'); return !!a && a.textContent === '待确认' && r && r.textContent === '待确认'; })()`, 3000);
-            check('需要你 lists a conversation waiting for a permission; its row ends in 待确认', attn);
+            // (stage 3: the row ends in an orange dot, its words are the tooltip and the accessible name)
+            const waitDot = (sel) => `(() => { const e = document.querySelector(${JSON.stringify(sel)}); return !!e && e.dataset.kind === 'confirm' && e.getAttribute('aria-label') === '待确认' && !e.textContent; })()`;
+            const attn = await waitFor(`${waitDot(`.sidebar [data-id="attention"] [data-sid=${SID}] [data-id="status"]`)} && ${waitDot(`.sidebar .sb-list [data-sid=${SID}] [data-id="status"]`)}`, 3000);
+            await sleep(200);
+            const follow = await js(`(() => { const b = [...document.querySelectorAll('.sidebar [data-id="view"], .sidebar [data-id="group-view"]')].find((x) => x.getAttribute('aria-expanded') === 'true')?.getBoundingClientRect(); const m = document.querySelector('.menu.sb-view:not(.leaving)')?.getBoundingClientRect(); return { b: !!b, m: !!m, beside: !!b && !!m && (m.top >= b.top - 8 && m.top <= b.bottom + 8 || m.bottom >= b.top - 8 && m.bottom <= b.bottom + 8) }; })()`);
+            check('the 显示 menu follows its button when the list above it changes (需要你 came in)', viewUp && follow.beside, JSON.stringify({ viewUp, follow }));
+            await closeMenus();
+            check('需要你 lists a conversation waiting for a permission; its row ends in the orange dot of 待确认', attn);
             await harvest();
             await shot('sidebar-needs-you');
             // the same conversation is in 需要你 and in its project: a right-click opens one menu, on the row that was used
@@ -2989,14 +3119,30 @@ function driver() {
             check('library hint: several agents → 「把 <first> 等工具里的对话也列在这里？」, not cut off (up to three lines), every name in the tooltip; 选择… stays whole', !!hintFit && hintFit.text === hintFit.want && !hintFit.clipped && hintFit.lines <= 3 && hintFit.title && hintFit.joinInside, JSON.stringify(hintFit));
             await shot('sidebar-hint-wrap');
             // 文件夹 (2026-10-14): every folder its own group, open — the running conversation is listed in its folder's
-            // group, which offers 在这里新建对话 and 设为项目
-            const other = { row: await exists('.sidebar [data-id="other"] > .sb-group [data-sid="smoke-elsewhere"] .st.run'), acts: await exists('.sidebar [data-id="other"] > .sb-group .acts [data-id="make-project"]') && await exists('.sidebar [data-id="other"] > .sb-group .acts [data-id="new-here"]'), fold: await exists('.sidebar [data-id="other"] > .sb-sec-h[role="button"]') };
-            check('文件夹: the running conversation sits open in its own folder group (no fold over the section), 新建 / 设为项目 on the folder', other.row && other.acts && !other.fold, JSON.stringify(other));
+            // group. Its header (stage 3, 图 7) shows 显示 and ＋ (在这里新建对话) like a project's; 设为项目 and the rest are
+            // in its right-click menu (written out on the header only while there is no project)
+            const folderHead = '.sidebar [data-id="other"] > .sb-group:has([data-sid="smoke-elsewhere"]) > .sb-group-head';
+            const other = { row: await exists('.sidebar [data-id="other"] > .sb-group [data-sid="smoke-elsewhere"] .st.run'), acts: await exists(`${folderHead} .acts [data-id="new-here"]`) && await exists(`${folderHead} .acts [data-id="group-view"]`), fold: await exists('.sidebar [data-id="other"] > .sb-sec-h[role="button"]') };
+            await ctxMenu(folderHead);
+            await sleep(300);
+            const fmenu = await ids('.menu.sb-menu[aria-label^="文件夹"] [data-id]');
             await harvest();
-            // a fork under its parent
+            await closeMenus();
+            check('文件夹: the running conversation sits open in its own folder group (no fold over the section); 显示 / ＋ on the folder\'s header, its right-click menu has 在这里新建对话 · worktree · 终端 · 设为项目 · 资源管理器 · VS Code', other.row && other.acts && !other.fold && has(fmenu, ['new-here', 'worktree', 'terminal', 'make-project', 'explorer', 'vscode']), JSON.stringify({ other, fmenu }));
+            // a fork one level in under its parent (stage 3: shown, up to three of them, without asking); the arrow before
+            // the parent folds it, the parent's menu (a phone's way, it has no arrow) shows it again
+            const kidRow = '.sidebar .sb-list [data-sid="smoke-child"].kid';
+            const kidShown = await waitFor(`!!document.querySelector('${kidRow}')`, 3000);
+            await harvest();
             await click('.sidebar .sb-list [data-sid="smoke-parent"] [data-id="kids"]');
-            check('the arrow before a parent lists its forks underneath', await waitFor('!!document.querySelector(\'.sidebar .sb-list [data-sid="smoke-child"].kid\')', 3000));
+            const kidFolded = await waitFor(`!document.querySelector('.sidebar .sb-list [data-sid="smoke-child"]')`, 3000);
+            await ctxMenu('.sidebar .sb-list [data-sid="smoke-parent"]');
+            await waitFor('!!document.querySelector(".menu.sess-menu [data-id=\\"kids\\"]")', 2000);
+            const kidsItem = await js(`document.querySelector('.menu.sess-menu [data-id="kids"]')?.textContent?.trim() ?? null`);
             await harvest();
+            await click('.menu.sess-menu [data-id="kids"]');
+            const kidBack = await waitFor(`!!document.querySelector('${kidRow}')`, 3000);
+            check('a fork sits one level in under its parent; the arrow folds it, the parent\'s menu 展开 1 个子对话 brings it back', kidShown && kidFolded && kidsItem === '展开 1 个子对话' && kidBack, JSON.stringify({ kidShown, kidFolded, kidsItem, kidBack }));
             // other machines: grouped by machine, 5 rows then 再显示 N 个 / 收起; an offline machine says so
             const peers = { rows: await count('.sidebar [data-group="peer:smokepeer"] .sb-row'), off: await exists('.sidebar [data-group="peer:offpeer"] .badge'), offRow: await exists('.sidebar [data-group="peer:offpeer"] .sb-row.offline') };
             await click('.sidebar [data-group="peer:smokepeer"] [data-id="more"]');
@@ -3004,12 +3150,17 @@ function driver() {
             check('其它电脑: 5 rows, 再显示 shows the rest and 收起; an offline machine is marked and read-only', peers.rows === 5 && peers.off && peers.offRow && peersMore.rows === 7 && peersMore.less, JSON.stringify({ peers, peersMore }));
             await harvest();
             await click('.sidebar [data-group="peer:smokepeer"] [data-id="less"]');
-            // the funnel lists the machines once there is another one (the list just shrank: let it settle first)
+            // 显示 › lists the machines (机器 ›) once there is another one (the list just shrank: let it settle first)
             await sleep(300);
-            await click('.sidebar [data-id="view"]');
+            await clickView();
             await waitFor('!!document.querySelector(".menu.sb-view")', 2000);
+            await click('.menu.sb-view [data-id="show"]');
+            await waitFor(`!!document.querySelector('.menu.sb-view .sb-fly [data-id="machine"]')`, 2000);
+            await click('.menu.sb-view .sb-fly [data-id="machine"]');
+            await waitFor(`document.querySelector('.menu.sb-view [data-id="machine"]')?.getAttribute('aria-expanded') === 'true'`, 2000);
+            const machinesIn = await js(`[...document.querySelectorAll('.menu.sb-view .sb-fly:not(.leaving) [role="menuitemradio"][data-machine]')].map((b) => b.dataset.machine)`);
             await harvest();
-            check('funnel menu: 机器 once another machine has conversations', await exists('.menu.sb-view [data-id="machine"]'));
+            check('显示 › 机器 › once another machine has conversations: 所有机器, this one and the two others', has(machinesIn, ['local', 'smokepeer', 'offpeer']), JSON.stringify(machinesIn));
             await closeMenus();
             // 显示已归档 widens the list, it is not a filter: no 已筛选 row, empty projects stay, the funnel shows it is on
             await js(`window.__store.getState().addWorkspace(${JSON.stringify(E.SMOKE_REPO + sep + 'src')})`);
@@ -3019,18 +3170,20 @@ function driver() {
             const arch = { row: await exists('.sidebar .sb-filtered'), dot: await exists('.sidebar [data-id="view"] .fdot'), groups: await count('.sidebar [data-id="projects"] .sb-group'), projects: await js('window.__store.getState().workspaces.length') };
             check('显示已归档 is not a filter: no 已筛选 row, empty projects stay listed, the funnel is marked', !arch.row && arch.dot && arch.groups === arch.projects, JSON.stringify(arch));
             await js('window.__store.setState({ showArchived: false })');
-            // two projects now: the lower one's menu moves it up / to the top, the upper one's down (2026-10-14)
+            // two projects now: the lower one's menu moves it up / to the top, the upper one's down (2026-10-14). The menu
+            // is the header's right-click (stage 3: the header's hover buttons are 显示 and ＋)
             {
               const heads = '.sidebar [data-id="projects"] .sb-group > .sb-group-head';
               const order = () => js(`[...document.querySelectorAll('${heads} .name')].map((e) => e.textContent).join('|')`);
+              const headMenu = (last) => js(`(() => { const all = [...document.querySelectorAll('${heads}')]; const el = ${last} ? all.at(-1) : all[0]; if (!el) return false; const b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.left + 40, clientY: b.top + 8, button: 2 })); return true; })()`);
               const before = await order();
-              await js(`[...document.querySelectorAll('${heads}')].at(-1).querySelector('[aria-label="项目菜单"]').click()`);
+              await headMenu(true);
               await waitFor('!!document.querySelector(".menu [data-id=\\"move-up\\"]")', 2000);
               await harvest();
               await click('.menu [data-id="move-top"]');
               await sleep(500);
               const moved = await order();
-              await js(`document.querySelector('${heads} [aria-label="项目菜单"]').click()`);
+              await headMenu(false);
               await waitFor('!!document.querySelector(".menu [data-id=\\"move-down\\"]")', 2000);
               await harvest();
               await click('.menu [data-id="move-down"]');
@@ -3045,11 +3198,22 @@ function driver() {
             {
               const viewKey = 'ui.sidebar.view';
               const viewNow = () => js(`JSON.stringify(window.__store.getState().settings[${JSON.stringify(viewKey)}] ?? null)`);
-              const openView = async () => { if (!(await exists('.menu.sb-view:not(.leaving)'))) await click('.sidebar [data-id="view"]'); await waitFor('!!document.querySelector(".menu.sb-view:not(.leaving)")', 2000); };
-              const pickIn = async (row, label) => {
+              const openView = async () => { if (!(await exists('.menu.sb-view:not(.leaving)'))) await clickView(); await waitFor('!!document.querySelector(".menu.sb-view:not(.leaving)")', 2000); };
+              // a submenu of the 显示 menu (stage 3: they fly out to the right; 已归档 / 其它 Agent / 每组 are in 显示 ›)
+              const openSub = async (row) => {
                 await openView();
-                if (!(await js(`document.querySelector('.menu.sb-view [data-id="${row}"]')?.getAttribute('aria-expanded') === 'true'`))) await click(`.menu.sb-view [data-id="${row}"]`);
-                await js(`[...document.querySelectorAll('.menu.sb-view .sb-view-sub [role="menuitemradio"]')].find((b) => b.textContent.trim() === ${JSON.stringify(label)})?.click()`);
+                const open = `document.querySelector('.menu.sb-view [data-id="${row}"]')?.getAttribute('aria-expanded') === 'true'`;
+                if (!(await js(open))) await click(`.menu.sb-view [data-id="${row}"]`);
+                await waitFor(open, 2000);
+              };
+              const pickIn = async (row, label) => {
+                if (row === 'per-group') {
+                  await openSub('show');
+                  await click(`.menu.sb-view .sb-fly [data-per="${label}"]`);
+                } else {
+                  await openSub(row);
+                  await js(`[...document.querySelectorAll('.menu.sb-view .sb-fly:not(.leaving) [role="menuitemradio"]')].find((b) => b.textContent.trim() === ${JSON.stringify(label)})?.click()`);
+                }
                 await sleep(350);
               };
               const projSec = '.sidebar [data-id="projects"]';
@@ -3082,7 +3246,7 @@ function driver() {
               const codexRow = '.sidebar .sb-list [data-sid="smoke-codex-row"]';
               await pickIn('group-by', '不分组'); // one open list: the row is on screen whatever folder it is in
               const codexOn = await exists(codexRow);
-              await openView();
+              await openSub('show');
               await click('.menu.sb-view [data-id="other-agents"]');
               await sleep(300);
               const codexOff = !(await exists(codexRow));
@@ -3094,7 +3258,7 @@ function driver() {
               await pickIn('group-by', '项目');
               check('显示 → 其它 agent 的对话 off hides a Codex conversation, on brings it back (kept in ui.sidebar.view)', codexOn && codexOff && otherFlag === false && codexBack, JSON.stringify({ codexOn, codexOff, otherFlag, codexBack }));
               // 显示已归档: the store and meta.json
-              await openView();
+              await openSub('show');
               await click('.menu.sb-view [data-id="archived"]');
               await sleep(300);
               const archOn = { store: await js('window.__store.getState().showArchived'), saved: JSON.parse(await viewNow())?.show?.archived, checked: await js(`document.querySelector('.menu.sb-view [data-id="archived"]')?.getAttribute('aria-checked')`) };
@@ -3137,10 +3301,12 @@ function driver() {
               await click('.menu.sess-menu [data-id="section-out"]');
               const outByMenu = await waitFor(`!(${inSec})`, 3000);
               await closeMenus();
-              await openView();
-              await click('.menu.sb-view [data-id="select"]');
-              await waitFor('!!document.querySelector(".sidebar .sel-bar")', 2000);
-              await js(`document.querySelector('${projSec} [data-sid="${sid0}"]')?.click()`);
+              // the row menu's 选择 (stage 3: it left the 显示 menu) starts the multi-select with that row picked
+              await ctxMenu(`${projSec} [data-sid="${sid0}"]`);
+              await waitFor('!!document.querySelector(".menu.sess-menu [data-id=\\"select\\"]")', 2000);
+              await harvest();
+              await click('.menu.sess-menu [data-id="select"]');
+              const pickedOne = await waitFor(`!!document.querySelector('.sidebar .sel-bar') && document.querySelectorAll('.sidebar .sb-list .sel-box:checked').length === 1 && !!document.querySelector('${projSec} [data-sid="${sid0}"] .sel-box:checked')`, 2000);
               const barBtn = await waitFor('!!document.querySelector(".sidebar .sel-bar [data-id=\\"select-section\\"]")', 2000);
               await click('.sidebar .sel-bar [data-id="select-section"]');
               await waitFor('!!document.querySelector(".menu [data-section]")', 2000);
@@ -3150,8 +3316,8 @@ function driver() {
               const head = await js(`(() => { const h = document.querySelector('.sidebar .sb-custom > .sb-sec-h'); const t = h?.querySelector('button.sb-sec-t'); return { role: h?.getAttribute('role') ?? null, btn: !!t, expanded: t?.getAttribute('aria-expanded') ?? null, nested: !!t?.querySelector('button') }; })()`);
               await js(`document.querySelector('.sidebar .sb-custom [data-sid="${sid0}"]')?.closest('.sb-row-wrap')?.querySelector('[data-id="custom-out"]')?.click()`);
               await waitFor(`!(${inSec})`, 3000);
-              check('C-U3: row menu 加入分区「本周要交」 puts it in, 移出分区「本周要交」 there takes it out; 选择多个 → 加入分区 → 本周要交 adds the picked and ends the selection; the heading folds with its own button (C-U4)',
-                addItem && /本周要交/.test(addLabel || '') && addedByMenu && outItem && outByMenu && barBtn && addedByBar && head.role === null && head.btn && head.expanded === 'true' && !head.nested, JSON.stringify({ addItem, addLabel, addedByMenu, outItem, outByMenu, barBtn, addedByBar, head }));
+              check('C-U3: row menu 加入分区「本周要交」 puts it in, 移出分区「本周要交」 there takes it out; the row menu\'s 选择 (that row picked) → 加入分区 → 本周要交 adds it and ends the selection; the heading folds with its own button (C-U4)',
+                addItem && /本周要交/.test(addLabel || '') && addedByMenu && outItem && outByMenu && pickedOne && barBtn && addedByBar && head.role === null && head.btn && head.expanded === 'true' && !head.nested, JSON.stringify({ addItem, addLabel, addedByMenu, outItem, outByMenu, pickedOne, barBtn, addedByBar, head }));
               // 恢复默认: back to the defaults (and 显示已归档 off), the section stays; 查看全部 opens the palette
               await pickIn('group-by', '日期');
               await openView();
