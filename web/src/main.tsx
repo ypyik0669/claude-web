@@ -15,6 +15,7 @@ import './styles/phone-menus.css';
 import './styles/shell.css';
 import './styles/background.css';
 import './styles/background-page.css';
+import './styles/background-history.css';
 import './styles/cafe.css';
 import './styles/office.css';
 import './styles/corners.css';
@@ -22,6 +23,7 @@ import './styles/gateway.css';
 import './styles/gateway-sources.css';
 import './styles/hub.css';
 import './styles/bots.css';
+import './styles/opening.css';
 import { loadEnglish } from '@/i18n';
 
 // The page's first paint: theme, the desktop flag, the styles above. Nothing reached from this file calls `tr()` —
@@ -34,6 +36,17 @@ try {
   document.documentElement.dataset.theme = cached || (dark ? 'dark' : 'light');
 } catch { /* storage blocked: the store sets it again once the settings arrive */ }
 if ((window as any).desktop) document.documentElement.classList.add('desktop');
+// after a fancy opening (desktop/src/opening.ts) the shell loads the app with ?opening=1: it fades in where the logo
+// landed (styles/opening.css). Taken out of the address at once, so a reload does not fade again
+{
+  const q = new URLSearchParams(location.search);
+  if (q.has('opening')) {
+    q.delete('opening');
+    document.documentElement.classList.add('opening-in');
+    history.replaceState(history.state, '', `${location.pathname}${q.size ? `?${q}` : ''}${location.hash}`);
+    setTimeout(() => document.documentElement.classList.remove('opening-in'), 1500);
+  }
+}
 
 // The English catalogs are ~420 KB of source; a Chinese page (the default on a Chinese machine) never needs them,
 // so they are their own chunk, loaded before any module that calls `tr()` at the top level gets to run (boot.tsx).

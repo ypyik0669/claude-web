@@ -26,12 +26,34 @@ function agentRows(t: BgTask, a: BgAgent, now: number): NgRow[] {
   return rows.map((r) => ({ ...r, options: [] }));
 }
 
-export function backgroundGraph(session: BgSession, o: { taskId?: string; compact?: boolean; now: number }): BgGraph {
+/** The cards that are not agents: the hub, each workflow and its phases, each command. */
+function frameCards(tasks: BgTask[]): number {
+  let n = 1;
+  for (const t of tasks) {
+    if (t.kind === 'shell') n++;
+    else if (t.kind === 'workflow') n += 1 + (t.phases?.length ? t.phases.length : new Set(t.agents.filter((a) => a.phase != null).map((a) => a.phase)).size);
+  }
+  return n;
+}
+
+/** 跑过的's one line for an agent: how it is (ended) and how long it took (so far). */
+function terseLine(a: BgAgent, now: number): string {
+  if (a.state === 'queued' || a.startedAt === undefined) return agentStateText(a);
+  return `${agentStateText(a)} ${clock(Math.max(0, (a.endedAt ?? now) - a.startedAt))}`;
+}
+
+/**
+ * `maxCards` (跑过的, a run read from disk): every card counted, the agents get what the rest leaves — up to the node
+ * graph's 150. Without it the live board's budget: 40 agents on the page, 16 in the right panel.
+ * `terse` (跑过的): an agent's card is one line, its state and time — a run of nine with four rows each only fitted at 25%.
+ */
+export function backgroundGraph(session: BgSession, o: { taskId?: string; compact?: boolean; now: number; maxCards?: number; terse?: boolean }): BgGraph {
   const tasks = o.taskId ? session.tasks.filter((t) => t.id === o.taskId) : session.tasks;
   const all = tasks.flatMap((t) => t.agents.map((a) => ({ t, a })));
   // too many to draw: the ones at work first, the rest in order; what is left out is counted in `more`
   const order = [...all.filter((x) => x.a.state === 'running'), ...all.filter((x) => x.a.state !== 'running')];
-  const keep = new Set(order.slice(0, o.compact ? 16 : 40).map((x) => `${x.t.id}|${x.a.key}`));
+  const budget = o.maxCards ? Math.max(0, o.maxCards - frameCards(tasks)) : o.compact ? 16 : 40;
+  const keep = new Set(order.slice(0, budget).map((x) => `${x.t.id}|${x.a.key}`));
   const running = all.filter((x) => x.a.state === 'running').length + tasks.filter((t) => t.kind === 'shell' && t.status === 'running').length;
   const nodes: NgNode[] = [{ id: HUB, title: tr('主对话'), subtitle: running ? tr('{running} 个在跑', { running }) : tr('没有在跑的'), icon: 'chat', rows: [] }];
   const edges: NgEdge[] = [];
@@ -40,7 +62,8 @@ export function backgroundGraph(session: BgSession, o: { taskId?: string; compac
   const edge = (from: string, to: string, s: NodeState) => edges.push({ id: `${from}>${to}`, from, to, style: edgeStyleFor(s), pulse: s === 'failed' ? false : undefined });
   const agentNode = (t: BgTask, a: BgAgent) => {
     const id = `${t.id}|${a.key}`;
-    nodes.push({ id, title: a.label, subtitle: o.compact ? agentStateText(a) : a.phaseTitle ?? agentStateText(a), icon: 'agent', accent: agentColor(a.color), state: AGENT[a.state], tip: a.lastSummary, rows: o.compact ? [] : agentRows(t, a, o.now) });
+    const subtitle = o.terse ? terseLine(a, o.now) : o.compact ? agentStateText(a) : a.phaseTitle ?? agentStateText(a);
+    nodes.push({ id, title: a.label, subtitle, icon: 'agent', accent: agentColor(a.color), state: AGENT[a.state], tip: a.lastSummary, rows: o.compact || o.terse ? [] : agentRows(t, a, o.now) });
     picks[id] = { agentKey: a.key, taskId: t.id };
     return id;
   };

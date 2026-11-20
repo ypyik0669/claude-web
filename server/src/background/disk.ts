@@ -11,7 +11,7 @@ import { tr } from '../i18n/index.js';
 import { unalias } from '../models/subagent.js';
 
 /** The official binary names a run `wf_xxxxxxxx-xxx`; our engine uses its task id, `w` + 8 characters. */
-const RUN_ID = /^w[\w-]{1,80}$/;
+export const RUN_ID = /^w[\w-]{1,80}$/;
 const AGENT_ID = /^[\w-]{6,80}$/;
 const MAX_RUNS = 50;
 

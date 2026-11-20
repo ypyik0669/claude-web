@@ -5,7 +5,14 @@ import net from 'node:net';
 
 const port = process.argv[2] ?? '3090';
 const token = process.argv[3];
-const REMOTE_PORT = 3191 + Math.floor(Math.random() * 100);
+// a port the system has free on every address (the listener binds 0.0.0.0) — not a fixed range: Windows may reserve
+// whole blocks for Hyper-V / WinNAT (`netsh interface ipv4 show excludedportrange protocol=tcp`; 3198–3297 on one
+// machine, where 3191 + random(100) failed with EACCES nine times in ten)
+const REMOTE_PORT = await new Promise((res, rej) => {
+  const s = net.createServer();
+  s.once('error', rej);
+  s.listen(0, '0.0.0.0', () => { const p = s.address().port; s.close(() => res(p)); });
+});
 const results = [];
 const check = (name, ok, detail = '') => { results.push([name, ok]); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`); };
 

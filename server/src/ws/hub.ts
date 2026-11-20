@@ -99,6 +99,7 @@ import { parseProxySetting, proxy } from '../net/proxy.js';
 import { CharacterService, handleCharacters, isCharactersRequest } from '../characters/service.js';
 import { handleCloud, isCloudRequest, type CloudServices } from '../cloud/handlers.js';
 import type { ThemeService } from '../themes/service.js';
+import type { OpeningService } from '../openings/service.js';
 import { usable } from '../themes/tools.js';
 import { handleOrchestra, isOrchestraRequest } from '../orchestra/handlers.js';
 import { handleBackground, isBackgroundRequest, type BackgroundService } from '../background/service.js';
@@ -138,6 +139,8 @@ export interface Services {
   /** stage F: project files, 派活, 交接, 发布, 导入 claude.ai (cloud/handlers.ts) */
   cloud?: CloudServices;
   themes: ThemeService;
+  /** 开场动画包 (openings/service.ts); optional (tests) */
+  openings?: OpeningService;
   git: GitService;
   search: SearchService;
   skills: SkillsService;
@@ -882,6 +885,28 @@ export class Hub {
       case 'themes.trialResult':
         this.localWindowOnly(ws, tr('字符画主题'));
         return { taken: s.themes.trialResult(ws, String(req.id), { png: req.png, errors: req.errors, avgMs: req.avgMs, maxMs: req.maxMs, note: req.note }) };
+      case 'openings.list':
+        return s.openings?.list() ?? [];
+      case 'openings.import': {
+        // a folder on this machine is copied: not for a phone or another machine
+        this.localWindowOnly(ws, tr('导入开场动画'));
+        if (!s.openings) throw new Error('openings unavailable');
+        const p = await s.openings.importFolder(String(req.path ?? ''));
+        this.broadcast({ kind: 'openings.changed' });
+        return p;
+      }
+      case 'openings.addVideo': {
+        this.localWindowOnly(ws, tr('导入开场动画'));
+        if (!s.openings) throw new Error('openings unavailable');
+        const p = await s.openings.addVideo(String(req.path ?? ''));
+        this.broadcast({ kind: 'openings.changed' });
+        return p;
+      }
+      case 'openings.remove': {
+        const removed = !!(await s.openings?.remove(String(req.id ?? '')));
+        if (removed) this.broadcast({ kind: 'openings.changed' });
+        return { removed };
+      }
       case 'ui.customCss':
         return s.customCss.read();
       case 'ui.customCss.create':

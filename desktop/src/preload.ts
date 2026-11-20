@@ -12,11 +12,18 @@ window.addEventListener('DOMContentLoaded', () => document.documentElement.class
 contextBridge.exposeInMainWorld('desktop', {
   version: process.env.CLAUDE_WEB_VERSION ?? '',
   platform: process.platform,
-  pickDir: () => ipcRenderer.invoke('desktop:pickDir'),
+  // a title / file types for the dialog are optional (the shell keeps only short plain strings)
+  pickDir: (o?: { title?: string }) => ipcRenderer.invoke('desktop:pickDir', o),
   // 录屏 (stage E3): our own source picker, then the chosen source for the next getDisplayMedia
   captureSources: () => ipcRenderer.invoke('desktop:capture:sources'),
   chooseCapture: (pick: unknown) => ipcRenderer.invoke('desktop:capture:choose', pick),
-  pickFile: () => ipcRenderer.invoke('desktop:pickFile'),
+  pickFile: (o?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => ipcRenderer.invoke('desktop:pickFile', o),
+  // 开场动画 (opening.ts): the opening page waits here for the server, says when it has handed over, and passes on a
+  // sound change; the app page takes that change once it is in
+  openingWait: () => ipcRenderer.invoke('desktop:opening:wait'),
+  openingDone: () => ipcRenderer.send('desktop:opening:done'),
+  openingSound: (on: boolean) => ipcRenderer.send('desktop:opening:sound', on === true),
+  takeOpeningPrefs: () => ipcRenderer.invoke('desktop:opening:prefs'),
   // 粘贴文件 / 文件夹 (clipboard-files.ts): a pasted File's path on this disk ('' for one with none, like a
   // screenshot), and what those paths are — or, none given, the system clipboard's own files
   pathForFile: (f: File) => { try { return webUtils.getPathForFile(f); } catch { return ''; } },

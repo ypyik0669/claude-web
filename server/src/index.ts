@@ -110,6 +110,7 @@ import { BackgroundService } from './background/service.js';
 import { CharacterService } from './characters/service.js';
 import { characterTool } from './characters/tools.js';
 import { ThemeService } from './themes/service.js';
+import { OpeningService } from './openings/service.js';
 import { themeTool } from './themes/tools.js';
 import { proxy } from './net/proxy.js';
 import { WebService } from './web/service.js';
@@ -198,6 +199,21 @@ function pipeFile(file: string, res: http.ServerResponse, opts?: { start: number
   rs.pipe(res);
 }
 
+/** One file, whole or the range asked for (a video seeks): `headers` go on the whole-file answer. */
+function serveFile(req: http.IncomingMessage, res: http.ServerResponse, p: string, size: number, headers: Record<string, string> = {}) {
+  const type = FILE_MIME[path.extname(p).toLowerCase()] ?? 'application/octet-stream';
+  const range = parseRange(req.headers.range, size);
+  if (range === 'unsatisfiable') { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); res.end(); return; }
+  if (range) {
+    const { start, end } = range;
+    res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' });
+    pipeFile(p, res, { start, end });
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache', ...headers });
+  pipeFile(p, res);
+}
+
 function readVersion(): string {
   for (const p of [path.resolve(__dirname, '../../package.json'), path.resolve(__dirname, '../package.json')]) {
     try {
@@ -250,6 +266,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   // made after `web`, which only calls into it later (a character tool)
   let characters: CharacterService;
   const themes = new ThemeService();
+  // 开场动画包: the built-in ones (the desktop app says where its own are; from source: desktop/openings) and the user's
+  const openings = new OpeningService({ builtinDir: process.env.CLAUDE_WEB_OPENINGS || path.resolve(__dirname, '../../desktop/openings'), userDir: path.join(dataDir(), 'openings') });
   /** the main listener's port once it is listening (PORT=0 in the desktop app: a new one every start) */
   let listenPort = 0;
   // 发布 (stage F5): /p/<id>/ snapshots, served before any token check on both listeners (publish/service.ts)
@@ -307,17 +325,19 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       let st: fs.Stats;
       try { st = fs.statSync(p); } catch { res.writeHead(404); res.end('not found'); return; }
       if (!st.isFile()) { res.writeHead(400); res.end('not a file'); return; }
-      const type = FILE_MIME[path.extname(p).toLowerCase()] ?? 'application/octet-stream';
-      const range = parseRange(req.headers.range, st.size);
-      if (range === 'unsatisfiable') { res.writeHead(416, { 'Content-Range': `bytes */${st.size}` }); res.end(); return; }
-      if (range) {
-        const { start, end } = range;
-        res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' });
-        pipeFile(p, res, { start, end });
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache', 'Content-Security-Policy': "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; media-src 'self'" });
-      pipeFile(p, res);
+      serveFile(req, res, p, st.size, { 'Content-Security-Policy': "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; media-src 'self'" });
+      return;
+    }
+    // 开场动画包: a pack's film / loop / poster (nothing else of its folder): GET /api/opening/<id>/<file>?token=
+    if (url.pathname.startsWith('/api/opening/') && req.method === 'GET') {
+      if (!authOk(req, url)) { res.writeHead(403); res.end('forbidden'); return; }
+      let parts: string[];
+      try { parts = url.pathname.slice('/api/opening/'.length).split('/').map(decodeURIComponent); } catch { res.writeHead(400); res.end('bad path'); return; }
+      const p = parts.length === 2 ? openings.file(parts[0], parts[1]) : null;
+      let st: fs.Stats | null = null;
+      try { st = p ? fs.statSync(p) : null; } catch { st = null; }
+      if (!p || !st) { res.writeHead(404); res.end('not found'); return; }
+      serveFile(req, res, p, st.size, { 'Content-Security-Policy': "sandbox; default-src 'none'" });
       return;
     }
     // Binary upload for message attachments: POST /api/attachments?sessionId=&rel=path/in/session (token-guarded like /ws)
@@ -687,7 +707,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     },
   });
   void bots.start();
-  const services = { importer, customCss, orchestra, background, characters, themes, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc, { gitlabHosts: () => { const v = meta.settings()['vcs.gitlabHosts']; return Array.isArray(v) ? v : []; }, tokens: vcsTokens }), vcsTokens, wsl, goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(() => claudeLive.plan()), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, privacy, upstreams, channels, engines, plugins, sync, syncRemote, share, tasks, web, computer, siteAsk, localEnv: localEnvStore, previews, cloud, bots };
+  const services = { importer, customCss, orchestra, background, characters, themes, openings, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc, { gitlabHosts: () => { const v = meta.settings()['vcs.gitlabHosts']; return Array.isArray(v) ? v : []; }, tokens: vcsTokens }), vcsTokens, wsl, goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(() => claudeLive.plan()), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, privacy, upstreams, channels, engines, plugins, sync, syncRemote, share, tasks, web, computer, siteAsk, localEnv: localEnvStore, previews, cloud, bots };
   new Hub(wss, services);
   tasks.start();
   // model lists older than a day (or never pulled) are refreshed in the background — list only, no tokens

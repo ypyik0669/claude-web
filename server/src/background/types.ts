@@ -88,10 +88,64 @@ export interface BgSession { sessionId: string; updatedAt: number; tasks: BgTask
 /** A finished workflow run found on disk (`<conversation>/workflows/<runId>.json`). */
 export interface BgRunSummary { runId: string; name: string; status: string; startedAt: number; durationMs?: number; agentCount: number; tokens?: number; taskId?: string }
 
+/** 跑过的: what kind of finished work a history row is. */
+export type BgHistoryKind = 'workflow' | 'agent' | 'shell';
+
+/**
+ * 跑过的 (2026-11-19): one finished piece of background work found on disk — a workflow run (`workflows/<runId>.json`),
+ * a sub-agent the conversation sent (its Agent / Task call and result in the transcript), a background command (a
+ * run_in_background Bash call; its end is the CLI's <task-notification>). Never in the live snapshot.
+ */
+export interface BgHistoryItem {
+  /** `<sessionId>|<kind>|<key>`: the run id, the sub-agent's id (or its tool call's), the command's task id. */
+  id: string;
+  sessionId: string;
+  kind: BgHistoryKind;
+  title: string;
+  /** `stopped` too for one whose process went before it said it ended. */
+  status: BgStatus;
+  startedAt: number;
+  endedAt?: number;
+  /** The folder the conversation ran in (the row's project name). */
+  cwd?: string;
+  /** A workflow: its run (background.run reads it), how many agents it had, how many of them failed. */
+  runId?: string;
+  agentCount?: number;
+  failed?: number;
+  /** A workflow's description, when it is not its title. */
+  summary?: string;
+  /** A sub-agent: its transcript (background.transcript), `subagent_type`, the model it ran on. */
+  agentId?: string;
+  agentType?: string;
+  model?: string;
+  /** A background command: its command line (cut). */
+  command?: string;
+  tokens?: number;
+  toolUses?: number;
+}
+
+export interface BgHistoryQuery {
+  /** The `next` of the page before: rows older than its last one. */
+  before?: string;
+  /** Default 50, at most 200. */
+  limit?: number;
+  only?: BgHistoryKind;
+  /** Words in the title, the command line, the folder's name, the sub-agent's type. */
+  q?: string;
+  /** Conversations whose title has the words (the window knows the titles): all their rows match. */
+  also?: string[];
+  /** Only this conversation's (a remote one's is forwarded to its machine). */
+  sessionId?: string;
+}
+
+/** Newest first; `next` (none: nothing older) asks for the page after. */
+export interface BgHistoryPage { items: BgHistoryItem[]; next?: string }
+
 export type BackgroundRequest =
   | { kind: 'background.list' }
   | { kind: 'background.history'; sessionId: string }
   | { kind: 'background.run'; sessionId: string; runId: string }
-  | { kind: 'background.transcript'; sessionId: string; agentId: string };
+  | { kind: 'background.transcript'; sessionId: string; agentId: string }
+  | ({ kind: 'background.historyAll' } & BgHistoryQuery);
 
 export type BackgroundEvent = { kind: 'background.changed'; session: BgSession };

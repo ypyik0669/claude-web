@@ -1,7 +1,8 @@
 // 后台 · 网吧: the 3D internet cafe of every conversation's background (scene.ts draws it) and the HTML around it —
 // the count pill, the zones / waiting / finished / activity panel, a person's or a zone's card, the breadcrumb, zoom
 // and day / night. Loaded with lazy() (three.js stays out of the first screen). Without WebGL it is a plain list.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import type { BgSession } from '@shared';
 import { resolveCharacter, type CharacterDef } from '@characters';
 import { useOpenSettled, useStore } from '@/store';
 import { Icon } from '@/ui/icons';
@@ -13,6 +14,7 @@ import { clsx } from '@/util';
 import { useBackground, stopTask } from '@/features/background/state';
 import { agentColor, clock, tokensText } from '@/features/background/model';
 import { hhmm } from '@/features/background/EventFeed';
+import { RecentRuns } from '@/features/background/RecentRuns';
 import { useCafe, openLibrary } from '@/features/cafe/state';
 import { bakeCharacter } from '@/features/cafe/bake';
 import { officeModel, roomsFor, seatBots, seatRooms, statusWord, type BotStatus, type OfficeBot, type OfficeZone, type OfficeModel } from './model';
@@ -31,6 +33,8 @@ export interface OfficeProps {
   onOpenAgent: (sessionId: string, taskId: string, agentKey: string) => void;
   /** the conversation itself (the lead) */
   onOpenChat: (sessionId: string) => void;
+  /** 跑过的 → 在网吧里回放: a finished run played again in place of what runs now (one show at a time) */
+  replay?: { session: BgSession; title: string; bar: ReactNode; onStop: () => void };
 }
 
 const zoneName = (f: { letter: string }) => tr('{z}区', { z: f.letter });
@@ -98,8 +102,12 @@ function Chip({ f, sm }: { f: OfficeZone; sm?: boolean }) {
   return <span className={clsx('of-chip', sm && 'sm')} style={{ '--c': agentColor(f.color) } as CSSProperties}>{f.letter}</span>;
 }
 
-export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat }: OfficeProps) {
-  const sessions = useBackground((s) => s.sessions);
+export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat, replay }: OfficeProps) {
+  const live = useBackground((s) => s.sessions);
+  // the replay's bar ticks with its clock; its picture changes only when a state does
+  const shown = replay?.session;
+  const replaying = !!replay;
+  const sessions = useMemo(() => (shown ? { [shown.sessionId]: shown } : live), [shown, live]);
   const open = useOpenSettled(); // not for each frame of a stream
   const list = useStore((s) => s.sessions);
   const respond = useStore((s) => s.respondPermission);
@@ -112,9 +120,10 @@ export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat }: Of
   const model: OfficeModel = useMemo(() => officeModel({
     sessions,
     titleOf: (sid) => { const x = list.find((v) => v.sessionId === sid); return x?.customTitle || x?.title || ''; },
-    // open here: its own state and requests; else what the list says (another window or machine holds it)
-    lead: (sid) => { const o = open[sid]; return o ? { state: o.state, pending: o.pending, error: o.error } : { state: list.find((v) => v.sessionId === sid)?.live }; },
-  }), [sessions, list, open]);
+    // open here: its own state and requests; else what the list says (another window or machine holds it); a replay's
+    // admin is just there (what the conversation does now is not part of the show)
+    lead: (sid) => { if (replaying) return {}; const o = open[sid]; return o ? { state: o.state, pending: o.pending, error: o.error } : { state: list.find((v) => v.sessionId === sid)?.live }; },
+  }), [sessions, list, open, replaying]);
 
   const [focusSid, setFocusSid] = useState<string | undefined>(compact ? follow : undefined);
   const [sel, setSel] = useState<string | undefined>(undefined);
@@ -348,7 +357,8 @@ export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat }: Of
     const ms = b.startedAt ? Math.max(0, (b.endedAt ?? now) - b.startedAt) : undefined;
     const evs = (sessions[b.sessionId]?.events ?? []).filter((e) => (b.lead ? !e.agent : b.agentKey ? e.agent === b.agentKey && e.taskId === b.taskId : e.taskId === b.taskId)).slice(-5).reverse();
     const wait = model.waiting.find((w) => w.botId === b.id);
-    const running = !b.lead && b.taskId && sessions[b.sessionId]?.tasks.find((t) => t.id === b.taskId)?.status === 'running';
+    // (a replayed run ended long ago: nothing to stop)
+    const running = !replaying && !b.lead && b.taskId && sessions[b.sessionId]?.tasks.find((t) => t.id === b.taskId)?.status === 'running';
     return (
       <div className="office-card" ref={card} role="dialog" aria-label={b.name} style={{ '--c': b.lead ? agentColor(f.color) : b.color ? agentColor(b.color) : 'var(--ink-3)' } as CSSProperties}>
         <div className="oc-head">
@@ -421,11 +431,21 @@ export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat }: Of
   const zoomBy = (f: number) => { const sc = scene.current; if (sc) sc.setZoom(Math.max(0.45, Math.min(3.5, sc.zoom() * f))); };
   const setLight = (v: 'day' | 'night' | null) => void useStore.getState().setSetting('office.light', v);
 
+  // 跑过的 → 在网吧里回放: which run plays, its clock, and the way back to what runs now
+  const replayBanner = replay && (
+    <div className="office-replay" role="group" aria-label={tr('回放：{title}', { title: replay.title })}>
+      <span className="t" title={replay.title}>{tr('回放：{title}', { title: replay.title })}</span>
+      {replay.bar}
+      <button type="button" className="btn sm" onClick={replay.onStop}><Icon name="close" size={12} /><span className="l">{tr('结束回放')}</span></button>
+    </div>
+  );
+
   if (broken) {
     return (
       <div className={clsx('office office-flat', compact && 'compact')} onKeyDown={onKey}>
         {pill}
-        {!model.zones.length ? <EmptyState e={EMPTY.background} /> : (
+        {replayBanner}
+        {!model.zones.length ? <><EmptyState e={EMPTY.background} /><RecentRuns compact={compact} /></> : (
           <div className="office-flat-list">
             <div className="o-note">{tr('这台电脑上画不了 3D，下面是列表')}</div>
             {model.zones.map((f) => (
@@ -495,7 +515,8 @@ export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat }: Of
       {pill}
       {sidePanel}
       {botCard || floorCard}
-      {!model.zones.length && <div className="office-empty"><EmptyState e={EMPTY.background} /></div>}
+      {!model.zones.length && <div className="office-empty"><EmptyState e={EMPTY.background} /><RecentRuns compact={compact} /></div>}
+      {replayBanner}
       <div className="office-bottom">
         {bread}
         {!compact && <span className="office-hint">{tr('拖动旋转 · 右键拖动平移 · 滚轮缩放')}</span>}

@@ -433,6 +433,12 @@ export interface SessionMeta {
   pendingTitle?: string; /** 只聊天: started without tools; a resume keeps it that way */ chatOnly?: boolean; /** 操控电脑 / 控制 Chrome switched while it ran: its later starts keep them */ liveFeatures?: { computerUse?: boolean; chrome?: boolean }; /** 保持电脑唤醒 while this conversation is busy */ keepAwake?: boolean; /** 代码审查卡: findings dismissed here, `<toolUseId>#<index>` */ reviewDismissed?: string[]; /** 任务 chip: suggestions dismissed (tool use ids), and started (tool use id → the new conversation) */ taskDismissed?: string[]; taskStarted?: Record<string, string>; /** PR 监控条: 自动修 CI on, and the failures it already asked about */ prAutoFix?: boolean; prFixed?: string[]; pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string; /** prompt-cache route key when it is not the session's own id (forks keep their root's) */ cacheKey?: string; /** the model its subagents run on, picked for this provider ('' = the main model) */ subagent?: { providerId: string; model: string }; /** the permission mode it last ran with: a resume without a pick comes back in it (the SDK never says it) */ permissionMode?: PermissionMode; /** 思考用的语言 for this conversation: '' / absent = the setting `ai.thinkingLanguage`, 'off' = none here, 'auto' = the interface language, else a THINKING_LANGUAGES id */ thinkingLanguage?: string; /** a `continueInClaude` source's conversation: the Claude conversation it goes on in */ continuedAs?: string; /** the Claude conversation of a `continuedAs`: what it goes on from, and how many of its messages are in it */ continuedFrom?: string; replayed?: number; /** 派活 (stage F3): started by a dispatch, and from where */ origin?: 'dispatch'; dispatchFrom?: DispatchFrom; /** 交给常开机器继续 (stage F1): handed to that machine, read-only here */ handedOff?: HandoffInfo; /** the always-on machine's copy: where it came from */ handoffFrom?: HandoffFrom; /** the project instructions it started with (new conversations only; a resume keeps them) */ projectInstructions?: string; /** 添加文件夹 (+ menu): this conversation's own extra working directories — with the project's, the SDK's additionalDirectories (Codex: writable roots); written only by session.setExtraDirs / a new conversation's `extraDirs` */ extraDirs?: string[] }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number; /** 手动: only 立即运行 starts it */ manual?: boolean; /** each run in its own worktree (with freshSession) */ worktree?: boolean }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
+/**
+ * 开场动画包 (server/src/openings): `intro` / `loop` / `poster` are file names in the pack, fetched as
+ * api/opening/<id>/<file>; `logoAt` the film's second where the logo takes over (none: where it ends, at most
+ * `maxSeconds`), `shortFrom` where 简短 starts. `builtin`: comes with the app, cannot be removed.
+ */
+export interface OpeningInfo { id: string; name: string; builtin: boolean; kind: 'video'; author?: string; license?: string; credits?: string; intro: string; loop?: string; poster?: string; logoAt?: number; shortFrom?: number; maxSeconds: number }
 // ---- remote access / phones / IM (phase 6) ----
 export interface DeviceInfo { id: string; name: string; createdAt: number; lastSeenAt: number; ip?: string; ua?: string }
 export interface RemoteStatus { enabled: boolean; running: boolean; port: number; addresses: string[]; error: string; devices: DeviceInfo[]; pair: { code: string; expiresAt: number } | null; anywhere?: AnywhereStatus }
@@ -897,6 +903,15 @@ export type ClientRequest =
   | { kind: 'themes.trialHost'; on: boolean }
   /** the answer to a `themes.trial` event */
   | { kind: 'themes.trialResult'; id: string; png?: string; errors: string[]; avgMs?: number; maxMs?: number; note?: string }
+  // ---- 开场动画包 (openings/; no sessionId → no federation routing entry) ----
+  /** → OpeningInfo[] */
+  | { kind: 'openings.list' }
+  /** a folder with an opening.json on this machine → OpeningInfo (a local window only) */
+  | { kind: 'openings.import'; path: string }
+  /** one video file → a pack of its own → OpeningInfo (a local window only) */
+  | { kind: 'openings.addVideo'; path: string }
+  /** → { removed } (the built-in packs stay) */
+  | { kind: 'openings.remove'; id: string }
 
   // ---- cross-machine sessions (federation) ----
   | PeerRequest
@@ -955,6 +970,8 @@ export type ServerEvent =
   | { kind: 'customCss.changed' }
   /** a saved character theme was added / changed / removed: windows ask again (themes.list) */
   | { kind: 'themes.changed' }
+  /** an opening pack was added / removed: windows ask again (openings.list) */
+  | { kind: 'openings.changed' }
   /** run this theme draft for the skill and answer with themes.trialResult (to one window) */
   | { kind: 'themes.trial'; id: string; source: { id: string; json: string; backdrop?: string; css?: string } }
   /** an agent said what it offers and that changed (AgentInfo.reportedModels): ask agents.list again */

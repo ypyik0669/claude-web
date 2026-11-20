@@ -12,10 +12,12 @@ import { tr } from '@/i18n';
 export function BackgroundSide() {
   const sessions = useBackground((s) => s.sessions);
   const selected = useBackground((s) => s.selected);
+  // on 跑过的 no conversation is the page's (a row takes it back to 在跑 on that one)
   const runId = useBackground((s) => s.runId);
+  const live = useBackground((s) => s.view === 'live');
   const titles = useStore((s) => s.sessions);
   const list = useMemo(() => sortSessions(Object.values(sessions)), [sessions]);
-  const live = list.filter(hasLive);
+  const going = list.filter(hasLive);
   const ended = list.filter((s) => !hasLive(s));
   const [runs, setRuns] = useState<BgRunSummary[]>([]);
   const [runsOf, setRunsOf] = useState<string | undefined>();
@@ -30,7 +32,7 @@ export function BackgroundSide() {
   const row = (s: BgSession) => {
     const c = liveCounts(s);
     return (
-      <button key={s.sessionId} className={clsx('nav bg-srow', s.sessionId === selected && !runId && 'active')} data-sid={s.sessionId} onClick={() => selectBackground(s.sessionId)} title={name(s.sessionId)}>
+      <button key={s.sessionId} className={clsx('nav bg-srow', live && s.sessionId === selected && !runId && 'active')} data-sid={s.sessionId} onClick={() => selectBackground(s.sessionId)} title={name(s.sessionId)}>
         <Icon name={c.tasks ? 'office' : 'check'} size={15} />
         <span className="l">{name(s.sessionId)}</span>
         {c.tasks ? <span className="n live">{c.running || c.tasks}</span> : null}
@@ -41,14 +43,14 @@ export function BackgroundSide() {
     <div className="sect-side bg-side">
       <div className="sect-top"><span className="sect-title">{BG_TITLE}</span></div>
       <div className="sect-list">
-        {live.length > 0 && <div className="bg-sgroup"><div className="bg-sh">{tr('在跑')}</div>{live.map(row)}</div>}
+        {going.length > 0 && <div className="bg-sgroup"><div className="bg-sh">{tr('在跑')}</div>{going.map(row)}</div>}
         {ended.length > 0 && <div className="bg-sgroup"><div className="bg-sh">{tr('结束了')}</div>{ended.map(row)}</div>}
         {list.length === 0 && <div className="bg-side-empty">{tr('对话里派出子代理、跑工作流或后台命令时，它们会出现在这里。')}</div>}
         {selected && runsOf === selected && runs.length > 0 && (
           <div className="bg-sgroup">
             <div className="bg-sh">{tr('这个对话跑过的工作流')}</div>
             {runs.map((r) => (
-              <button key={r.runId} className={clsx('nav bg-rrow', runId === r.runId && 'active')} data-run={r.runId} onClick={() => selectBackground(selected, { runId: r.runId })} title={tr('{agentCount} 个子代理{v}', { agentCount: r.agentCount, v: r.durationMs ? ` · ${clock(r.durationMs)}` : '' })}>
+              <button key={r.runId} className={clsx('nav bg-rrow', live && runId === r.runId && 'active')} data-run={r.runId} onClick={() => selectBackground(selected, { runId: r.runId })} title={tr('{agentCount} 个子代理{v}', { agentCount: r.agentCount, v: r.durationMs ? ` · ${clock(r.durationMs)}` : '' })}>
                 <Icon name="workflow" size={15} /><span className="l">{r.name}</span><span className="n">{r.status === 'completed' ? '✓' : r.status === 'failed' ? '✗' : '·'}</span>
               </button>
             ))}

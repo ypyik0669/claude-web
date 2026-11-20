@@ -25,6 +25,8 @@ const FORWARD = new Set<ClientRequest['kind']>([
   'usage.session', 'files.changed', 'files.diff',
   // 后台: a remote conversation's finished runs and sub-agent transcripts are on that machine's disk
   'background.history', 'background.run', 'background.transcript',
+  // 跑过的 of one remote conversation (every conversation's — no sessionId — is this machine's own, not forwarded)
+  'background.historyAll',
 ]);
 // Not here on purpose (stage F1): handoff.check / handoff.start / handoff.fetchBack take only this machine's own
 // conversations — planRoute rejects them for another machine's (rewrite.test.ts 'stage F requests').
@@ -161,6 +163,9 @@ export function inbound(kind: ClientRequest['kind'], data: any, peer: PeerRef): 
       return importList(data, peer);
     case 'sessions.search':
       return Array.isArray(data) ? data.filter((h: any) => h?.session && !h.session.peer && !isPeerId(h.session.sessionId)).map((h: any) => ({ ...h, session: prefixSummary(h.session, peer) })) : data;
+    case 'background.historyAll':
+      // the rows are that machine's conversations; the cursor goes back to it as it came
+      return Array.isArray(data?.items) ? { ...data, items: data.items.map((it: any) => ({ ...it, id: pre(peer.id, it.id), sessionId: pre(peer.id, it.sessionId) })) } : data;
     default:
       return data;
   }

@@ -1,0 +1,148 @@
+/* ---- 后台 › 跑过的 (2026-11-19, features/background/History*.tsx): the switch in the page's head, the list of every
+   conversation's finished work, one run (its still graph, its replay, a phone's standing tree), and in the cafe: its
+   刚跑完的 when nobody is in it and the bar of a run it replays. ---- */
+
+/* 在跑 N / 跑过的 */
+.bg-views { display: inline-flex; flex: none; padding: 2px; border-radius: var(--r-pill); background: var(--fill-subtle); }
+.bg-views button { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 12px; border-radius: var(--r-pill); color: var(--ink-2); font-size: var(--fs-sm); white-space: nowrap; }
+.bg-views button:hover { color: var(--ink-1); }
+.bg-views button.on { background: var(--bg-elev); color: var(--ink-1); box-shadow: var(--elev-1); }
+.bg-views .n { min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font-size: var(--fs-micro); line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* the body: the list on the left, the run on the right, each scrolling on its own */
+.hx-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; padding: 0 var(--sp-6) var(--sp-5); }
+.hx-body[hidden] { display: none; }
+.hx { flex: 1 1 auto; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: var(--sp-4); }
+.hx[hidden], .hx-col[hidden] { display: none; }
+.hx-col { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.hx-list { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.hx-search { flex: none; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: var(--r-md); background: var(--fill-subtle); color: var(--ink-3); }
+.hx-search:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.hx-search input { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; color: var(--ink-1); font: inherit; font-size: var(--fs-sm); outline: none; }
+.hx-chips { flex: none; display: flex; flex-wrap: wrap; gap: 4px; }
+.hx-chips button { height: 26px; padding: 0 10px; border-radius: var(--r-pill); font-size: var(--fs-meta); color: var(--ink-2); box-shadow: var(--ring-1); }
+.hx-chips button:hover { color: var(--ink-1); background: var(--layer-hover); }
+.hx-chips button.on { background: var(--primary); color: var(--primary-fg); box-shadow: none; }
+.hx-rows { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--sp-2)); padding: 0 var(--sp-2) var(--sp-4); }
+.hx-day { font-size: var(--fs-micro); color: var(--ink-3); margin: var(--sp-3) 4px 4px; letter-spacing: 0.02em; }
+.hx-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: var(--r-row, var(--r-md)); color: var(--ink-1); text-align: left; }
+.hx-row:hover { background: var(--layer-hover); }
+.hx-row.on { background: var(--layer-selected); }
+.hx-row > svg { flex: none; color: var(--ink-3); }
+.hx-row .tx { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.hx-row .tx b { font-size: var(--fs-sm); font-weight: var(--fw-regular); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hx-row .tx small { font-size: var(--fs-micro); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hx-st { flex: none; padding: 0 8px; border-radius: var(--r-pill); background: var(--fill-subtle); color: var(--ink-2); font-size: var(--fs-micro); line-height: 1.7; white-space: nowrap; }
+.hx-st.ok { background: var(--ok-soft); color: var(--ok); }
+.hx-st.bad { background: var(--err-soft); color: var(--err); }
+.hx-more { padding: var(--sp-3) 10px; font-size: var(--fs-meta); color: var(--ink-4); text-align: center; }
+.hx-err { padding: var(--sp-2) 10px; color: var(--err); font-size: var(--fs-sm); }
+
+/* one run */
+.hx-detail { position: relative; min-width: 0; min-height: 0; display: flex; gap: var(--sp-4); }
+.hx-detail-empty { border-radius: var(--r-card, var(--r-lg)); background: var(--fill-subtle); }
+.hx-main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4) var(--sp-4) var(--sp-3); border-radius: var(--r-card, var(--r-lg)); background: var(--bg-1); box-shadow: var(--elev-1); }
+.hx-dh { display: flex; align-items: flex-start; gap: var(--sp-2); }
+.hx-dh .tx { flex: 1 1 auto; min-width: 0; }
+.hx-dh .tx b { display: block; font-size: var(--fs-lg); font-weight: var(--fw-strong); color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hx-dh .tx small { display: block; margin-top: 2px; font-size: var(--fs-meta); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hx-dh .btn { flex: none; white-space: nowrap; }
+.hx-back { flex: none; margin: -2px 0 0 -6px; }
+.hx-stats { display: flex; flex-wrap: wrap; gap: 4px 18px; padding-bottom: var(--sp-3); border-bottom: var(--hairline) solid var(--edge-subtle); font-size: var(--fs-meta); color: var(--ink-3); }
+.hx-stats b { font-family: var(--mono); font-weight: var(--fw-regular); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+.hx-stats .bad b { color: var(--err); }
+/* the graph takes the card's free height (a tall window draws it bigger), never less than a readable band */
+.hx-graph { flex: 1 1 auto; min-height: 340px; display: flex; flex-direction: column; }
+.hx-graph > .bg-idle { flex: none; }
+.hx-graph .bg-graph { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; border-radius: var(--r-md); background: var(--bg); overflow: hidden; }
+.hx-graph .bg-graph > .ng { flex: 1 1 auto; min-height: 0; }
+.hx.phone .hx-graph { flex: none; min-height: 0; display: block; }
+.hx-cmd { margin: 0; max-height: 160px; overflow: auto; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); background: var(--fill-subtle); font-family: var(--mono); font-size: var(--fs-meta); color: var(--ink-2); white-space: pre-wrap; word-break: break-all; }
+.hx-foot { font-size: var(--fs-meta); color: var(--ink-3); }
+/* an agent's conversation floats over the run's right side (beside it, the graph and the replay bar were squeezed to
+   nothing at 1440 px with the list there too) */
+.hx-detail > .bg-drawer { position: absolute; top: 0; right: 0; bottom: 0; z-index: 5; width: min(420px, 62%); max-height: none; }
+@media (max-width: 1100px) { .hx-detail > .bg-drawer { position: fixed; top: 72px; right: 12px; bottom: 12px; width: min(420px, calc(100vw - 24px)); z-index: 30; } }
+.app.mobile .hx-detail > .bg-drawer { inset: auto 0 0 0; top: 64px; width: auto; border-radius: var(--r-xl) var(--r-xl) 0 0; }
+
+/* the replay: play, the track, the time, the speed */
+.hx-replay { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: var(--r-lg); background: var(--fill-subtle); }
+.hx-play { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--primary); color: var(--primary-fg); }
+.hx-play:hover { background: color-mix(in oklab, var(--primary) 86%, var(--surface-0)); }
+.hx-track { position: relative; flex: 1 1 auto; min-width: 60px; height: 22px; cursor: pointer; touch-action: none; }
+.hx-track:focus-visible { outline-offset: 0; border-radius: var(--r-sm); }
+.hx-track .bar { position: absolute; left: 0; right: 0; top: 8px; height: 6px; border-radius: 3px; background: var(--edge-strong); overflow: hidden; }
+.hx-track .fill { display: block; height: 100%; background: var(--accent); }
+.hx-track .knob { position: absolute; top: 11px; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--bg-elev); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
+.hx-time { flex: none; font-family: var(--mono); font-size: var(--fs-meta); color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hx-speed { flex: none; display: inline-flex; padding: 2px; border-radius: var(--r-pill); background: var(--fill-subtle); }
+.hx-speed button { height: 26px; padding: 0 9px; border-radius: var(--r-pill); font-family: var(--mono); font-size: var(--fs-meta); color: var(--ink-2); }
+.hx-speed button[aria-checked='true'] { background: var(--bg-elev); color: var(--ink-1); box-shadow: var(--elev-1); }
+.hx-speed1 { flex: none; height: 28px; padding: 0 10px; border-radius: var(--r-pill); background: var(--fill-subtle); font-family: var(--mono); font-size: var(--fs-meta); color: var(--ink-1); }
+.hx-replay.compact { gap: 10px; padding: 6px 10px; }
+.hx-replay.compact .hx-play { width: 30px; height: 30px; }
+
+/* a phone: the list is one screen, a run the next — its graph standing up, the replay bar at the bottom */
+.app.mobile .hx-body { padding: 0 var(--sp-3) 0; }
+.hx.phone { display: flex; flex-direction: column; }
+.hx.phone[hidden] { display: none; }
+.hx.phone .hx-col { flex: 1 1 auto; }
+.hx.phone .hx-detail { flex: 1 1 auto; flex-direction: column; }
+.hx.phone .hx-main { padding: 0 0 var(--sp-3); background: transparent; box-shadow: none; border-radius: 0; }
+.hx.phone .hx-dh .tx b { font-size: var(--fs-base); }
+.hx.phone .hx-stats { gap: 2px 14px; }
+.hx.phone .hx-replay { position: sticky; bottom: 0; z-index: 2; margin-top: auto; background: var(--bg-elev); box-shadow: var(--elev-2); }
+.hx-tree { display: flex; flex-direction: column; gap: var(--sp-3); }
+.hx-tph { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 6px; font-size: var(--fs-sm); color: var(--ink-1); }
+.hx-tph small { font-family: var(--mono); font-size: var(--fs-micro); color: var(--ink-3); }
+.hx-tag { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 6px; padding: 9px 12px; border-radius: var(--r-md); background: var(--bg-elev); box-shadow: var(--elev-1); text-align: left; }
+.hx-tag b { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-weight: var(--fw-regular); font-size: var(--fs-sm); color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hx-tag small { flex: none; font-size: var(--fs-micro); color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hx-tag .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--ink-4); box-sizing: border-box; }
+.hx-tag.done .dot { background: var(--ok); }
+.hx-tag.failed .dot { background: var(--err); }
+.hx-tag.failed small { color: var(--err); }
+.hx-tag.running { box-shadow: 0 0 0 1.5px var(--accent), var(--elev-1); }
+.hx-tag.running .dot { background: transparent; border: 2px solid color-mix(in oklab, var(--accent) 28%, transparent); border-top-color: var(--accent); animation: hx-spin 0.8s linear infinite; }
+.hx-tag.queued { opacity: 0.65; background: transparent; box-shadow: var(--ring-1); }
+.hx-tag.queued .dot { background: transparent; border: 1.5px dashed var(--ink-3); }
+.hx-tag.stopped { opacity: 0.7; }
+.hx-tag.shell { cursor: default; }
+.hx-tmore { font-size: var(--fs-meta); color: var(--ink-3); }
+@keyframes hx-spin { to { transform: rotate(360deg); } }
+
+/* the cafe with nobody in it: 刚跑完的 (inside its glass card; the cafe's own day / night colours) */
+.hx-recent { min-width: min(380px, calc(100vw - 72px)); margin-top: 10px; padding-top: 4px; border-top: 1px solid var(--o-line, var(--line)); text-align: left; }
+.hx-recent .rh { display: flex; align-items: center; padding: 4px 2px 6px; font-size: var(--fs-micro); color: var(--o-ink-3, var(--ink-3)); }
+.hx-recent .rh .grow { flex: 1 1 auto; }
+.hx-recent .lk { display: inline-flex; align-items: center; gap: 2px; padding: 2px 4px; border-radius: 6px; color: var(--o-ink, var(--ink-1)); font-size: var(--fs-micro); }
+.hx-recent .lk:hover, .hx-recent .tx:hover b { color: var(--o-ink, var(--ink-1)); background: var(--o-hover, var(--layer-hover)); }
+.hx-recent .rr { display: flex; align-items: center; gap: 10px; padding: 6px 2px; border-top: 1px solid var(--o-line, var(--line)); }
+.hx-recent .rr > svg { flex: none; color: var(--o-ink-3, var(--ink-3)); }
+.hx-recent .tx { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; text-align: left; }
+.hx-recent .tx b { font-weight: var(--fw-regular); color: var(--o-ink, var(--ink-1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; }
+.hx-recent .tx small { font-size: var(--fs-micro); color: var(--o-ink-3, var(--ink-3)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hx-recent .btn { flex: none; color: var(--o-ink, var(--ink-1)); border-color: var(--o-line, var(--edge-strong)); }
+.office.compact .office-empty { left: 8px; right: 8px; bottom: 48px; transform: none; padding: 8px 12px; }
+.office.compact .hx-recent { min-width: 0; }
+.office-flat .hx-recent { max-width: 480px; margin: var(--sp-3) auto 0; }
+
+/* the cafe replaying a run: its name, its clock, back to what runs now. Centred with auto margins: `left: 50%` would
+   leave it only half the cafe's width to grow in */
+.office-replay { position: absolute; left: 12px; right: 12px; bottom: 64px; z-index: 4; width: fit-content; max-width: calc(100% - 24px); margin: 0 auto; display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 14px; border-radius: 14px; background: var(--o-card); color: var(--o-ink); box-shadow: var(--o-shadow); border: 1px solid var(--o-line); backdrop-filter: blur(14px) saturate(1.4); -webkit-backdrop-filter: blur(14px) saturate(1.4); }
+.office-replay .t { flex: 0 1 auto; min-width: 4em; max-width: 260px; font-weight: var(--fw-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-replay .hx-replay { flex: 1 1 auto; min-width: 300px; padding: 0; background: transparent; }
+/* (the cafe's `button { color: inherit }` would draw the icon in the card's ink, on the button's own ink colour) */
+.office-replay .hx-play { color: var(--primary-fg); }
+.office-replay .hx-time { color: var(--o-ink-2); }
+.office-replay .hx-speed1 { background: var(--o-hover); color: var(--o-ink); }
+.office-replay .btn { flex: none; color: var(--o-ink); border-color: var(--o-line); }
+.office-flat .office-replay { position: sticky; top: 0; bottom: auto; margin: 0 auto var(--sp-3); }
+@media (max-width: 760px) {
+  .office-replay { left: 8px; right: 8px; bottom: 56px; width: auto; max-width: none; flex-wrap: wrap; }
+  .office-replay .hx-replay { flex: 1 1 100%; min-width: 0; }
+  .hx { grid-template-columns: minmax(0, 1fr); }
+}
+
+:root[data-reduce-motion='1'] .hx-tag.running .dot { animation: none; }
+@media (prefers-reduced-motion: reduce) { .hx-tag.running .dot { animation: none; } }

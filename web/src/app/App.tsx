@@ -58,6 +58,10 @@ import { startNavHistory } from '@/features/workbench/nav-history';
 import { ProjectDialogLazy } from '@/features/sidebar/ProjectDialogLazy';
 import { HandoffDialogHost } from '@/features/cloud/HandoffDialog';
 import { CloudDialogsLazy } from '@/features/cloud/CloudDialogsLazy';
+import { OpeningBackdrop } from '@/features/opening/OpeningBackdrop';
+import { OpeningPreviewHost } from '@/features/opening/OpeningPreview';
+import { PhoneSplash } from '@/features/opening/PhoneSplash';
+import { OPENING_KEYS } from '@/features/opening/model';
 
 /** Width of the right panel minimized to its icon rail. */
 const MIN_RAIL = 36;
@@ -117,6 +121,13 @@ export function App() {
   useEffect(() => installChecklist(), []);
   useEffect(() => installAccountDefault(), []);
   useEffect(() => installSettingsClose(), []);
+  // 开场动画 (desktop/src/opening.ts): its sound button, pressed while the server was starting, goes into the settings
+  // once they are in (written earlier, the settings arriving afterwards would put the old value back on screen)
+  const metaLoaded = useStore((s) => s.metaLoaded);
+  useEffect(() => {
+    if (!metaLoaded || !desktop?.takeOpeningPrefs) return;
+    void desktop.takeOpeningPrefs().then((p) => { if (p && typeof p.sound === 'boolean') void useStore.getState().setSetting(OPENING_KEYS.sound, p.sound); }).catch(() => {});
+  }, [metaLoaded]);
   const sbWidth = useStore((s) => s.layout.sidebar.width);
   const dock = useStore((s) => s.layout.dock);
   const inspect = useStore((s) => s.inspect);
@@ -331,6 +342,8 @@ export function App() {
       <ErrorBoundary area={tr('派活')} floating><CloudDialogsLazy /></ErrorBoundary>
       <ErrorBoundary area={tr('对话框')} floating><DialogHost /></ErrorBoundary>
       <ErrorBoundary area={tr('添加 Claude 账号')} floating><AddAccountHost /></ErrorBoundary>
+      {/* 开场和背景 (features/opening): the background under the app, 试放一次, the phone's start screen */}
+      <ErrorBoundary area={tr('开场和背景')} floating><OpeningBackdrop /><OpeningPreviewHost /><PhoneSplash /></ErrorBoundary>
       <CustomCss />
     </div>
   );

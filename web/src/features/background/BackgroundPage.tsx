@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { BgRunSummary, BgSession, BgTask } from '@shared';
+import type { BgSession, BgTask } from '@shared';
 import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
@@ -12,7 +12,12 @@ import { CommandGraph } from './CommandGraph';
 import { EventFeed } from './EventFeed';
 import { lazy, Suspense } from 'react';
 import { BG_TITLE, clock, hasLive, KIND_LABEL, liveCounts, orderedTasks, sortSessions, taskStateText, taskTitle, tokensText } from './model';
-import { closeAgent, closeBackground, openAgent, selectBackground, stopTask, useBackground } from './state';
+import { closeAgent, closeBackground, openAgent, openChat, selectBackground, setBgView, stopTask, useBackground, useTitleOf } from './state';
+import { sessionAt } from './history-model';
+import { pickHistory, useHistory } from './history-state';
+import { playPause, seekReplay, setReplaySpeed, stopReplay, useReplay } from './replay';
+import { HistoryView } from './HistoryView';
+import { ReplayBar } from './ReplayBar';
 import { tr } from '@/i18n';
 
 // the cafe is a three.js scene: loaded when the page first shows it (the first screen's entry stays small)
@@ -20,14 +25,7 @@ const Office = lazy(() => import('@/features/office/Office').then((m) => ({ defa
 
 const EMPTY_SESSION = (sessionId: string): BgSession => ({ sessionId, updatedAt: 0, tasks: [], events: [] });
 
-/** A conversation's name as the sidebar shows it. */
-export function useTitleOf(sessionId: string | undefined): string {
-  return useStore((s) => {
-    if (!sessionId) return '';
-    const x = s.sessions.find((v) => v.sessionId === sessionId);
-    return x?.customTitle || x?.title || tr('对话');
-  });
-}
+export { useTitleOf };
 
 /** A ticking clock while something runs (the header's 运行中 3:12). */
 function useNow(on: boolean): number {
@@ -74,26 +72,48 @@ function TaskChips({ session, taskId }: { session: BgSession; taskId?: string })
   );
 }
 
-/** Back to a conversation (a floor's lead is its main conversation). */
-const toChat = (sid: string) => () => {
-  closeBackground();
-  const st = useStore.getState();
-  if (st.open[sid]) st.openInPane(sid, 'replace');
-  else void st.loadHistory(sid);
-};
+/**
+ * 跑过的 → 在网吧里回放: the run at the replay's moment, as the cafe's one conversation. A new picture when a state
+ * changes, and once a second of real time (the cards' running times) — not at every tick of the clock.
+ */
+function useCafeReplay(): { session: BgSession; title: string; bar: React.ReactNode; onStop: () => void } | undefined {
+  const show = useReplay((s) => (s.show?.where === 'cafe' ? s.show : undefined));
+  const t = useReplay((s) => (s.show?.where === 'cafe' ? s.t : 0));
+  const playing = useReplay((s) => s.show?.where === 'cafe' && s.playing);
+  const speed = useReplay((s) => s.speed);
+  const at = show ? show.start + t : 0;
+  const view = show ? sessionAt(show.sessionId, show.task, at) : undefined;
+  const sig = view ? `${view.tasks[0].status}|${view.tasks[0].agents.map((a) => a.key + a.state[0]).join(',')}` : '';
+  const tick = show ? Math.floor(t / (speed * 1000)) : -1;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const session = useMemo(() => view, [show, sig, tick]);
+  if (!show || !session) return undefined;
+  return {
+    session,
+    title: show.title,
+    bar: <ReplayBar compact t={t} dur={show.end - show.start} playing={playing} speed={speed} onPlay={playPause} onSeek={seekReplay} onSpeed={setReplaySpeed} />,
+    onStop: stopReplay,
+  };
+}
 
-/** The page's body for one conversation (live) or one finished run (from disk). */
-/** The building of every conversation's background, on top of the page. */
+/** The building of every conversation's background, on top of the page (or the run 跑过的 replays in it). */
 function OfficeBlock({ follow }: { follow?: string }) {
+  const replay = useCafeReplay();
   return (
     <div className="bg-office-wrap">
       <ErrorBoundary area={tr('后台 · 网吧')}>
         <Suspense fallback={null}>
           <Office
-            follow={follow}
-            onFloor={(sid) => selectBackground(sid)}
-            onOpenAgent={(sid, taskId, agentKey) => { selectBackground(sid); openAgent({ sessionId: sid, taskId, agentKey }); }}
-            onOpenChat={(sid) => toChat(sid)()}
+            follow={replay ? replay.session.sessionId : follow}
+            replay={replay}
+            onFloor={(sid) => { if (!replay) selectBackground(sid); }}
+            onOpenAgent={(sid, taskId, agentKey) => {
+              if (!replay) { selectBackground(sid); openAgent({ sessionId: sid, taskId, agentKey }); return; }
+              // a replayed run's agent: its conversation read from disk, like 跑过的 does
+              const task = useReplay.getState().show?.task;
+              if (task) openAgent({ sessionId: sid, taskId, agentKey, task });
+            }}
+            onOpenChat={(sid) => openChat(sid)}
           />
         </Suspense>
       </ErrorBoundary>
@@ -102,9 +122,10 @@ function OfficeBlock({ follow }: { follow?: string }) {
 }
 
 function Board({ session, live, taskId }: { session: BgSession; live: boolean; taskId?: string }) {
-  const drawer = useBackground((s) => s.drawer);
+  const drawer = useBackground((s) => (s.drawer?.from === 'history' ? undefined : s.drawer));
   const pick = (agentKey: string, tId: string) => openAgent({ sessionId: session.sessionId, taskId: tId, agentKey });
-  const dTask = drawer && drawer.sessionId === session.sessionId ? session.tasks.find((t) => t.id === drawer.taskId) : undefined;
+  // a run the cafe replays is not in the live snapshot: its agent comes with the drawer
+  const dTask = drawer?.task ?? (drawer && drawer.sessionId === session.sessionId ? session.tasks.find((t) => t.id === drawer.taskId) : undefined);
   const dAgent = dTask?.agents.find((a) => a.key === drawer!.agentKey);
   return (
     <div className={clsx('bg-board', dAgent && 'with-drawer')}>
@@ -123,11 +144,23 @@ function Board({ session, live, taskId }: { session: BgSession; live: boolean; t
   );
 }
 
+/** 在跑 N / 跑过的: what runs now (the cafe, the board) or what every conversation ran. */
+function ViewSwitch({ view, running }: { view: 'live' | 'history'; running: number }) {
+  return (
+    <div className="bg-views" role="tablist" aria-label={tr('在跑 / 跑过的')}>
+      <button type="button" role="tab" aria-selected={view === 'live'} data-view="live" className={clsx(view === 'live' && 'on')} onClick={() => setBgView('live')}>
+        {tr('在跑')}{running > 0 && <span className="n">{running}</span>}
+      </button>
+      <button type="button" role="tab" aria-selected={view === 'history'} data-view="history" className={clsx(view === 'history' && 'on')} onClick={() => setBgView('history')}>{tr('跑过的')}</button>
+    </div>
+  );
+}
+
 /**
  * 后台 (spec 2026-10-12-background-office-design.md §3): what a conversation has going besides its turn — the agents
  * of its workflows, its sub-agents, its background commands — as cards, an office, a graph and a feed. The page lies
  * over the main area like 自动化; the section's sidebar (BackgroundSide) picks the conversation, where it is not on
- * screen the page has the conversations as tabs.
+ * screen the page has the conversations as tabs. 跑过的 (2026-11-19): every conversation's finished work, from disk.
  */
 export function BackgroundPage() {
   const open = useBackground((s) => s.open);
@@ -136,6 +169,10 @@ export function BackgroundPage() {
   const taskId = useBackground((s) => s.taskId);
   const runId = useBackground((s) => s.runId);
   const drawer = useBackground((s) => !!s.drawer);
+  const view = useBackground((s) => s.view);
+  const historySeen = useBackground((s) => s.historySeen);
+  const picked = useHistory((s) => !!s.pick);
+  const mobile = useStore((s) => s.mobile);
   const sideNav = useStore((s) => !s.mobile && s.sidebarOpen);
   const titles = useStore((s) => s.sessions);
   const title = useTitleOf(selected);
@@ -159,40 +196,48 @@ export function BackgroundPage() {
       : counts.tasks ? tr('运行中 {clock} · {agentCount} 个子代理 · {tokensText} tok', { clock: Number.isFinite(started) ? clock(now - started) : '', agentCount, tokensText: tokensText(tokens) })
         : session.tasks.length ? tr('都结束了 · {agentCount} 个子代理 · {tokensText} tok', { agentCount, tokensText: tokensText(tokens) }) : undefined;
   const running = session?.tasks.filter((t) => t.status === 'running') ?? [];
-  const toChat = () => {
-    if (!selected) return;
-    closeBackground();
-    const st = useStore.getState();
-    if (st.open[selected]) st.openInPane(selected, 'replace');
-    else void st.loadHistory(selected);
-  };
+  const runningAll = useMemo(() => Object.values(sessions).reduce((n, s) => n + liveCounts(s).tasks, 0), [sessions]);
+  const history = view === 'history';
   return (
     <OverPage
       name="bg"
       label={BG_TITLE}
       open={open}
       onClose={() => { if (drawer) closeAgent(); else closeBackground(); }}
-      title={selected ? title : BG_TITLE}
-      desc={desc}
-      tab={selected ?? ''}
+      // a phone on one run of 跑过的: back to the list first
+      onEscape={() => { if (history && mobile && picked && !drawer) { pickHistory(undefined); return true; } return false; }}
+      title={!history && selected ? title : BG_TITLE}
+      desc={history ? tr('每个对话跑完的工作流、子代理和后台命令') : desc}
+      tab={history ? '' : selected ?? ''}
       tabs={tabs}
-      showTabs={!sideNav && tabs.length > 1}
+      showTabs={!history && !sideNav && tabs.length > 1}
       onTab={(id) => selectBackground(id)}
-      actions={selected ? (
+      actions={(
         <>
-          {!runId && running.length > 1 && <button className="btn sm" title={tr('全部停止')} onClick={() => { for (const t of running) stopTask(selected, t.id); }}><Icon name="stop" size={12} /><span className="l">{tr('全部停止')}</span></button>}
-          {!runId && running.length === 1 && <button className="btn sm" title={tr('停止{v}', { v: KIND_LABEL[running[0].kind] })} onClick={() => stopTask(selected, running[0].id)}><Icon name="stop" size={12} /><span className="l">{tr('停止{v}', { v: KIND_LABEL[running[0].kind] })}</span></button>}
-          {runId && <button className="btn sm" title={tr('回到现在')} onClick={() => selectBackground(selected)}><Icon name="office" size={13} /><span className="l">{tr('回到现在')}</span></button>}
-          <button className="btn sm" title={tr('回到对话')} onClick={toChat}><Icon name="chat" size={13} /><span className="l">{tr('回到对话')}</span></button>
+          {!history && selected && (
+            <>
+              {!runId && running.length > 1 && <button className="btn sm" title={tr('全部停止')} onClick={() => { for (const t of running) stopTask(selected, t.id); }}><Icon name="stop" size={12} /><span className="l">{tr('全部停止')}</span></button>}
+              {!runId && running.length === 1 && <button className="btn sm" title={tr('停止{v}', { v: KIND_LABEL[running[0].kind] })} onClick={() => stopTask(selected, running[0].id)}><Icon name="stop" size={12} /><span className="l">{tr('停止{v}', { v: KIND_LABEL[running[0].kind] })}</span></button>}
+              {runId && <button className="btn sm" title={tr('回到现在')} onClick={() => selectBackground(selected)}><Icon name="office" size={13} /><span className="l">{tr('回到现在')}</span></button>}
+              <button className="btn sm" title={tr('回到对话')} onClick={() => openChat(selected)}><Icon name="chat" size={13} /><span className="l">{tr('回到对话')}</span></button>
+            </>
+          )}
+          <ViewSwitch view={view} running={runningAll} />
         </>
-      ) : undefined}
+      )}
     >
-      <div className="over-body bg-body">
+      <div className="over-body bg-body" hidden={history}>
         <OfficeBlock follow={selected} />
         {!shown
           ? null
           : <Board session={shown} live={!runId} taskId={runId ? undefined : taskId} />}
       </div>
+      {/* 跑过的: mounted once shown, then only hidden (its list, its scroll, its replay stay) */}
+      {historySeen && (
+        <div className="over-body hx-body" hidden={!history}>
+          <ErrorBoundary area={tr('后台 · 跑过的')}><HistoryView shown={open && history} /></ErrorBoundary>
+        </div>
+      )}
     </OverPage>
   );
 }

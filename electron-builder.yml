@@ -71,6 +71,10 @@ extraResources:
   # without downloading an engine first (server/src/engines/manager.ts reads <resources>/engines)
   - from: vendor/engines
     to: engines
+  # 开场动画: the built-in opening packs (Claude Web 娘: 1080P film + background loop). The opening page plays them
+  # before the server is up (desktop/src/opening-pack.ts), the server serves them to the app (server/src/openings)
+  - from: desktop/openings
+    to: openings
 win:
   target:
     - nsis

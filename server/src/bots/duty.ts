@@ -256,7 +256,7 @@ function currentPlan(): DutyPlan {
   const env: Record<string, string> = {};
   // in the desktop app process.execPath is Electron: run it as plain node (it can still read app.asar, node can't)
   if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
-  for (const k of ['CLAUDE_WEB_DIST', 'CLAUDE_WEB_SIDECARS', 'CLAUDE_WEB_ENGINES', 'CLAUDE_WEB_SYSTEM_LANG']) {
+  for (const k of ['CLAUDE_WEB_DIST', 'CLAUDE_WEB_SIDECARS', 'CLAUDE_WEB_ENGINES', 'CLAUDE_WEB_OPENINGS', 'CLAUDE_WEB_SYSTEM_LANG']) {
     const v = process.env[k];
     if (v) env[k] = v;
   }
