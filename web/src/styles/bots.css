@@ -63,7 +63,7 @@
 .app.mobile .bot-settings .sp-row:has(> .ctl > .toggle:only-child) { flex-direction: row; align-items: center; gap: 14px; }
 .app.mobile .bot-settings .sp-row:has(> .ctl > .toggle:only-child) > .ctl { width: auto; }
 .app.mobile .bot-settings .segmented.sp-seg { display: flex; width: 100%; }
-.app.mobile .bot-settings .segmented.sp-seg > button { flex: 1 1 0; min-height: 40px; justify-content: center; }
+.app.mobile .bot-settings .segmented.sp-seg > button { flex: 1 1 0; min-height: 44px; justify-content: center; }
 .app.mobile .bot-settings .sp-row > .ctl > :is(.select-trigger, input.field) { flex: 1 1 auto; width: 100% !important; max-width: none; min-height: 44px; font-size: 16px; }
 .bots-col-profile { flex: 0 0 340px; overflow: auto; border-left: var(--hairline) solid var(--edge-subtle); padding: 0 var(--sp-3); }
 /* Windows / Linux: the caption buttons float over the top-right corner (unless the right panel owns it) — the profile's

@@ -92,7 +92,7 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
         {a.installed && a.kind === 'codex' && <button className="btn sm ghost" data-id="codex-login-open" onClick={() => setLogin(true)} title={tr('用 ChatGPT 账号登录 Codex')}>{tr('登录')}</button>}
         {a.installed && a.login && a.kind !== 'codex' && <button className="btn sm ghost" onClick={() => runInTerminal(a.login)} title={a.login}>{tr('登录')}</button>}
         {a.docs && <a className="btn sm ghost" href={a.docs} target="_blank" rel="noreferrer">{tr('文档')}</a>}
-        {configurable && <button className={clsx('btn sm ghost', cfgOpen && 'on')} onClick={() => setCfgOpen(!cfgOpen)} title={tr('说明文件 / MCP / 模型等设置 / 备份')}>{tr('配置中心')}</button>}
+        {configurable && <button className={clsx('btn sm ghost', cfgOpen && 'on')} onClick={() => setCfgOpen(!cfgOpen)} title={tr('说明文件 / MCP / 模型等设置 / 备份')}>{tr('配置文件')}</button>}
         <button className="btn sm ghost" onClick={() => setOpen(!open)}>{open ? tr('收起') : tr('启动参数')}</button>
       </div>
       {a.kind !== 'claude' && <AgentProvider a={a} save={save} />}

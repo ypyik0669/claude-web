@@ -81,7 +81,7 @@ export const BODY_INFO: Record<BodyId, { l: string; keywords: string }> = {
   providers: { l: tr('供应商列表'), keywords: tr('provider api key base url 中转 openai gemini grok anthropic 缓存 cache 默认 档案 测试连接 上下文窗口 context window 1M 200K 自动压缩 auto-compact 压缩') },
   proxy: { l: tr('网络代理'), keywords: tr('proxy 代理 梯子 vpn clash v2ray http_proxy https_proxy 系统代理 pac 地区 region 403 连不上 超时') },
   gateway: { l: tr('网关与分组'), keywords: tr('gateway 网关 故障转移 failover 转换 多账号 额度 轮询 round robin 成员') },
-  agents: { l: tr('其它 Agent 列表'), keywords: tr('agent codex gemini qwen kimi opencode acp 安装 登录 启动参数 配置中心 自定义') },
+  agents: { l: tr('其它 Agent 列表'), keywords: tr('agent codex gemini qwen kimi opencode acp 安装 登录 启动参数 配置文件 配置中心 自定义') },
   subagents: { l: tr('Claude 子代理列表'), keywords: tr('subagent 子代理 agents md') },
   memory: { l: tr('记忆开关与注入'), keywords: tr('memory 记忆 跨 agent mcp sqlite 遗忘 清空 注入') },
   web: { l: tr('搜索与内置浏览器'), keywords: tr('web search browser 搜索 浏览器 联网 上网 网页 bing duckduckgo google yahoo baidu 百度 brave 密钥 截图 登录状态') },

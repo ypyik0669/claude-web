@@ -16,6 +16,8 @@
 .app.mobile .toggle:not(.sm).on::after { transform: translateX(20px); }
 .app.mobile .toggle:not(.sm):active:not(:disabled)::after { width: 31px; }
 .app.mobile .toggle:not(.sm).on:active:not(:disabled)::after { transform: translateX(16px); }
+/* its target: 45px tall around the 31px drawing (a ::before — the knob is the ::after) */
+.app.mobile .toggle:not(.sm)::before { content: ''; position: absolute; left: -2px; right: -2px; top: -7px; bottom: -7px; }
 .app.mobile .hub-switch { width: 51px; height: 31px; }
 .app.mobile .hub-switch::after { width: 27px; height: 27px; }
 .app.mobile .hub-switch.on::after { left: 22px; }
@@ -27,6 +29,19 @@
   content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%);
 }
 .app.mobile :is(.link, .turn-sum)::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: max(100%, 44px); transform: translateY(-50%); }
+/* the settings, 自定义 and 自动化 › Bot › 设置 (redesign 2026-11 stage 2, spec #phone 问题 1 / 2): every control is a
+   44 × 44 target. Text boxes and pickers really are 44 tall; a button, tab, chip or link keeps its drawing and its
+   target grows around it (a chip holding a native <select> is left alone: the select is its target). A segmented
+   control's option clips its own painting (its words end in …), so it is 44 tall itself */
+:where(.sp-layer.phone, .app.mobile .ext-page, .app.mobile .bot-settings) :is(input.field, input[type='range'], select.field, textarea.field, .select-trigger, .segmented > button) { min-height: 44px; }
+:where(.sp-layer.phone, .app.mobile .ext-page, .app.mobile .bot-settings) :where(.btn, .chip, .seg > button, .sp-tabs button, .subtabs button, .prov-chip, .mm-star, a[href]) { position: relative; }
+:where(.sp-layer.phone, .app.mobile .ext-page, .app.mobile .bot-settings) :is(.btn, .chip:not(:has(> select)), .seg > button, .sp-tabs button, .subtabs button, .prov-chip, .mm-star)::after {
+  content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%);
+}
+:where(.sp-layer.phone, .app.mobile .ext-page, .app.mobile .bot-settings) a[href]:not(.btn)::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: max(100%, 44px); transform: translateY(-50%); }
+/* a link in a row's sentence is really 44 tall: a target grown around it would lie over the control under the sentence */
+:where(.sp-layer.phone, .app.mobile .ext-page, .app.mobile .bot-settings) .sub :is(a[href]:not(.btn), .link) { display: inline-block; padding-block: 12px; line-height: 20px; }
+.app.mobile .ext-page .cx-search { height: 44px; }
 
 /* ---- the header floats: round buttons over the conversation, no bar and no rule; the text scrolls under a fade.
    The status bar's safe area is the header's top. ---- */

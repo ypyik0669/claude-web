@@ -179,7 +179,8 @@ function SyncPanel({ state, cwd, onDone }: { state: AgentConfigState; cwd: strin
   );
 }
 
-/** Settings → CLI Agents → an agent's 「配置中心」: instructions files, MCP servers, settings keys and backups. */
+/** 设置 › Agents 与子代理 → an agent's 「配置文件」 (called 配置中心 until the redesign 2026-11 stage 2 took that name
+ * away): instructions files, MCP servers, settings keys and backups. */
 export function AgentConfigPanel({ kind }: { kind: AgentConfigKind }) {
   const toast = useStore((s) => s.toast);
   const workspaces = useStore((s) => s.workspaces);

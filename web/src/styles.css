@@ -2183,7 +2183,7 @@ html.desktop .sp-layer::before { content: ''; position: absolute; top: 0; left: 
 .sp-layer.phone .sp-row:has(> .ctl > .toggle:only-child) { flex-direction: row; align-items: center; gap: 14px; }
 .sp-layer.phone .sp-row:has(> .ctl > .toggle:only-child) > .ctl { width: auto; }
 .sp-layer.phone .segmented.sp-seg { display: flex; width: 100%; }
-.sp-layer.phone .segmented.sp-seg > button { flex: 1 1 0; min-height: 40px; justify-content: center; }
+.sp-layer.phone .segmented.sp-seg > button { flex: 1 1 0; min-height: 44px; justify-content: center; }
 .sp-layer.phone .sp-row > .ctl > .select-trigger, .sp-layer.phone .sp-row > .ctl > input.field { flex: 1 1 auto; width: 100%; max-width: none; min-height: 44px; font-size: 16px; }
 .sp-layer.phone .sp-tabs { display: flex; width: 100%; }
 .sp-layer.phone .sp-tabs button { flex: 1 1 0; height: 38px; }
@@ -2193,6 +2193,21 @@ html.desktop .sp-layer::before { content: ''; position: absolute; top: 0; left: 
 .sp-layer.phone .modal.settings.sp.searching .sp-nav { padding-bottom: 0; }
 .sp-layer.phone .modal.settings.sp.searching :is(.sp-groups, .sp-ver, .sp-main > .sp-bar) { display: none; }
 .sp-layer.phone .env-row code { min-width: 0; }
+/* the parts inside a page (section components drawn for the desktop column): nothing scrolls sideways (spec #phone
+   问题 3) — long paths and addresses break, a row puts its actions under its words when they do not fit beside them,
+   a heading line wraps its buttons and puts its sentence under them */
+.sp-layer.phone .sp-inner { overflow-wrap: break-word; }
+.sp-layer.phone .sp-body code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; vertical-align: bottom; }
+.sp-layer.phone .sp-body .row { flex-wrap: wrap; row-gap: 6px; }
+.sp-layer.phone .sp-body .row > .grow { flex: 1 1 160px; }
+.sp-layer.phone .sp-body .section > :is(div, h5)[style*='display: flex'] { flex-wrap: wrap; row-gap: 6px; }
+.sp-layer.phone .sp-body .section > div[style*='display: flex'] > .muted { order: 9; flex: 1 1 100%; }
+/* an agent: its dot, mark and name on the first line, the switch and buttons on the next */
+.sp-layer.phone .agent-card > div:first-child { flex-wrap: wrap; row-gap: 6px; }
+.sp-layer.phone .agent-card > div:first-child > .grow { flex: 1 1 calc(100% - 56px); }
+/* 模型 › 模型: rows a finger apart, the star and the switch far enough apart for two fingers */
+.sp-layer.phone .models-table tbody tr { height: 50px; }
+.sp-layer.phone .models-table td.acts .mm-star { margin-right: 16px; opacity: 1; }
 :root[data-reduce-motion='1'] .sp-layer.phone .modal.settings.sp { animation: none; }
 
 /* ---- redesign phase 7: start page / automation page / phone ---- */
