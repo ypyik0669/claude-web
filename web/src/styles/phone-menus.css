@@ -168,3 +168,16 @@ html.desktop .as-sheet { -webkit-app-region: no-drag; }
 @media (prefers-reduced-motion: reduce) {
   .as-sheet, .as-scrim { transition: none; }
 }
+
+/* a phone's project sheet (new-conversation page): 分支 with the current branch, its list opening in place under it
+   (ProjectChip's SheetBranch — the desktop picks the branch from its own chip on the row) */
+.as-sheet .menu.dirmenu button.dirmenu-branch { align-items: center; }
+.as-sheet .menu.dirmenu button.dirmenu-branch .grow { flex: 1; }
+.as-sheet .menu.dirmenu .dirmenu-val { min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: var(--fs-base); color: var(--ink-3); }
+.as-sheet .menu.dirmenu .dirmenu-branches { display: flex; flex-direction: column; padding-left: 20px; }
+.as-sheet .menu.dirmenu .dirmenu-branches .cm-scroll { max-height: 40vh; overflow-y: auto; }
+.as-sheet .menu.dirmenu .dirmenu-branches button.cm-it { display: flex; align-items: center; width: 100%; min-height: 44px; gap: 12px; padding: 6px 12px; border-radius: var(--r-lg); font-size: var(--fs-lg); text-align: left; }
+.as-sheet .menu.dirmenu .dirmenu-branches button.cm-it.on { background: var(--layer-selected); }
+.as-sheet .menu.dirmenu .dirmenu-branches .cm-h { padding: 8px 12px 4px; font-size: 13px; }
+.as-sheet .menu.dirmenu .dirmenu-branches .cm-search { display: flex; align-items: center; gap: 8px; padding: 4px 12px; }
+.as-sheet .menu.dirmenu .dirmenu-branches .cm-search input { flex: 1; min-height: 44px; font-size: 16px; }

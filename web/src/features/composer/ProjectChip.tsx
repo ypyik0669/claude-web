@@ -24,7 +24,7 @@ export function worktreeName(d = new Date()): string {
  * 运行（worktree）」 — the new conversation then works in a git worktree of the project (`openSession({worktree})`,
  * Claude Code's --worktree). Reuses DirPicker (its own portalled menu).
  */
-export function ProjectChip({ cwd, recent, onPick, onBrowse, worktree, onWorktree }: {
+export function ProjectChip({ cwd, recent, onPick, onBrowse, worktree, onWorktree, branchInSheet }: {
   cwd: string;
   recent: string[];
   onPick: (dir: string) => void;
@@ -32,6 +32,8 @@ export function ProjectChip({ cwd, recent, onPick, onBrowse, worktree, onWorktre
   /** '' = off, else the worktree's name */
   worktree: string;
   onWorktree: (name: string) => void;
+  /** a phone: no branch chip on the row — the branch is picked in this sheet (分支 › opens the list in place) */
+  branchInSheet?: boolean;
 }) {
   const toggle = async (close: () => void) => {
     close();
@@ -42,11 +44,14 @@ export function ProjectChip({ cwd, recent, onPick, onBrowse, worktree, onWorktre
   return (
     <DirPicker cwd={cwd} recent={recent} onPick={onPick} onBrowse={onBrowse}
       footer={(close) => (
-        <button type="button" role="menuitemcheckbox" aria-checked={!!worktree} data-id={PROJECT_MENU_ID.worktree} className="dirmenu-wt" onClick={() => void toggle(close)} title={tr('Claude Code 的 --worktree：在仓库的独立副本里运行，改动在自己的分支上')}>
-          <Icon name="branch" size={13} />
-          <span className="grow">{tr('在{worktree}里运行{v}', { worktree: TERMS.worktree, v: worktree ? `：${worktree}` : '' })}</span>
-          <span className={clsx('toggle sm', worktree && 'on')} aria-hidden />
-        </button>
+        <>
+          {branchInSheet && <SheetBranch cwd={cwd} />}
+          <button type="button" role="menuitemcheckbox" aria-checked={!!worktree} data-id={PROJECT_MENU_ID.worktree} className="dirmenu-wt" onClick={() => void toggle(close)} title={tr('Claude Code 的 --worktree：在仓库的独立副本里运行，改动在自己的分支上')}>
+            <Icon name="branch" size={13} />
+            <span className="grow">{tr('在{worktree}里运行{v}', { worktree: TERMS.worktree, v: worktree ? `：${worktree}` : '' })}</span>
+            <span className={clsx('toggle sm', worktree && 'on')} aria-hidden />
+          </button>
+        </>
       )} />
   );
 }
@@ -77,6 +82,33 @@ export function BranchChip({ cwd }: { cwd: string }) {
             <BranchList cwd={cwd} root={git.root ?? cwd} onDone={(changed) => { setOpen(false); chip.current?.focus(); if (changed) reload(); }} />
           </Popover>
         </ErrorBoundary>
+      )}
+    </>
+  );
+}
+
+/**
+ * A phone's project sheet (redesign 2026-11, the phone's new-conversation page: no branch chip on the row): 分支 with
+ * the current one, opening the same list as the desktop's branch chip in place. A folder that is not a repository has
+ * no row.
+ */
+function SheetBranch({ cwd }: { cwd: string }) {
+  const { git, reload } = useBranchStatus(cwd);
+  const [open, setOpen] = useState(false);
+  if (!cwd || !git?.branch) return null;
+  const dirty = git.files.length;
+  return (
+    <>
+      <button type="button" role="menuitem" aria-expanded={open} data-act="branch" className="dirmenu-branch" onClick={() => setOpen((o) => !o)}>
+        <Icon name="branch" size={13} />
+        <span className="grow">{tr('分支')}</span>
+        <span className="dirmenu-val">{git.branch}{dirty ? ' •' : ''}</span>
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
+      </button>
+      {open && (
+        <div className="dirmenu-branches">
+          <BranchList cwd={cwd} root={git.root ?? cwd} onDone={(changed) => { setOpen(false); if (changed) reload(); }} />
+        </div>
       )}
     </>
   );

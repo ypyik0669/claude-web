@@ -1353,7 +1353,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // 「本机」 joins the folder only when there are other computers (peers, WSL distros): one item, 本机 · acme-shop
   const otherMachines = welcome && (peers.some((p) => p.enabled) || wslDistros.length > 0 || !!wMachine);
   const machineChip = welcome ? <MachineChip peers={peers} wsl={wslDistros} value={wMachine} onPick={pickMachine} onAddSsh={() => setAddSsh(true)} onInstall={(d) => void installWsl(d)} onOpen={loadWsl} hideWhenAlone /> : null;
-  const folderChip = welcome ? <ProjectChip cwd={cwd} recent={recentDirs} onPick={setCwd} onBrowse={() => (wPeer ? toast(tr('别的电脑上的文件夹，从它最近用过的里面选')) : void pickDir())} worktree={wWorktree} onWorktree={setWWorktree} /> : null;
+  const folderChip = welcome ? <ProjectChip cwd={cwd} recent={recentDirs} onPick={setCwd} onBrowse={() => (wPeer ? toast(tr('别的电脑上的文件夹，从它最近用过的里面选')) : void pickDir())} worktree={wWorktree} onWorktree={setWWorktree} branchInSheet={mobile && !wPeer && !wWsl} /> : null;
   const projectChips = welcome ? (otherMachines ? <span className="cb-where">{machineChip}<span className="cb-where-sep" aria-hidden>·</span>{folderChip}</span> : <>{machineChip}{folderChip}</>) : null;
   const branchChip = welcome && !mobile && !wPeer && !wWsl ? <BranchChip cwd={cwd} /> : null;
   // a phone (the mockup's 「模型 · 强度」): the level rides on the model chip, whose sheet has the five levels and the

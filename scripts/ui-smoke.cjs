@@ -2632,6 +2632,18 @@ function driver() {
                   await sleep(300);
                   await kbdSeen(`${tag} · + menu`);
                   await putAway();
+                  // the project sheet: 分支 (a phone's row has no branch chip) opens the branch list in place — every rule
+                  await click('.pane.focused .welcome .dirpick');
+                  const branchRow = await waitFor('!!document.querySelector(".as-sheet .menu.dirmenu [data-act=branch]")', 3000);
+                  if (branchRow) {
+                    await click('.as-sheet .menu.dirmenu [data-act=branch]');
+                    const listed = await waitFor('document.querySelectorAll(".as-sheet .dirmenu-branches .cm-it").length > 0', 4000);
+                    await sleep(300);
+                    if (!listed) faults.push(`${tag} · project sheet › 分支: no branch list`);
+                    await audit(`${tag} · project sheet › 分支`, '.as-sheet');
+                    if (theme === 'light') await shot('phone-check-light-project-branch');
+                  } else faults.push(`${tag} · project sheet: no 分支 row (a phone picks the branch there)`);
+                  await putAway();
                 }
                 screens += 1;
               }
