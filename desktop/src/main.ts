@@ -23,8 +23,8 @@ import { CrashGuard, allowNavigation, externalAllowed, sameOrigin, windowOpenAct
 import { FileGuard, guardSession } from './file-guard';
 import { fromOurWindow, openablePath, type IpcAsker } from './ipc-guard';
 import { pastedFiles } from './clipboard-files';
-import { OPENING_SCHEME, fancyOpeningHtml, logoTarget, openingHold, openingHtml, openingLength, setOpeningNote } from './opening';
-import { IGNITE_ID, dataDir, groundOf, localDay, openingSettings, packFileUrl, packResponse, pickOpening, readMetaSettings, resolvePack } from './opening-pack';
+import { CAFE_SCRIPT_URL, OPENING_SCHEME, fancyOpeningHtml, logoTarget, openingHold, openingHtml, openingLength, setOpeningNote } from './opening';
+import { cafeScriptPath, chooseOpening, dataDir, groundOf, localDay, openingSettings, packFileUrl, packResponse, pickOpening, readMetaSettings, readWebEntry } from './opening-pack';
 
 const isMac = process.platform === 'darwin';
 
@@ -194,11 +194,16 @@ function windowUrl(base: string, winId: string) {
 // the built-in packs travel with the app (electron-builder extraResources), the user's are in <data dir>/openings
 const builtinOpenings = () => (app.isPackaged ? path.join(process.resourcesPath, 'openings') : path.resolve(__dirname, '../openings'));
 const openingRoots = () => [builtinOpenings(), path.join(dataDir(), 'openings')];
+// 网吧开门's script (three.js and the cafe scene) is part of the web app's build (web/vite.opening.config.ts)
+const webDistDir = () => (app.isPackaged ? path.join(process.resourcesPath, 'app.asar', 'web', 'dist') : path.resolve(__dirname, '../../web/dist'));
 // the opening page (a data: URL) plays the pack's film from here: a scheme of our own, streamed, seekable (Range)
 protocol.registerSchemesAsPrivileged([{ scheme: OPENING_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } }]);
 
-/** This start's opening, decided once before the main window opens. `lengthMs`: until its wordmark waits (fancy). */
-interface Opening { page: 'fancy' | 'classic' | 'still'; html?: string; lengthMs: number; ground: string; dark: boolean }
+/**
+ * This start's opening, decided once before the main window opens. `lengthMs`: until its wordmark waits (fancy).
+ * `webHtml`: a web pack's page, handed to the opening page when it asks (`desktop:opening:pack`).
+ */
+interface Opening { page: 'fancy' | 'classic' | 'still'; html?: string; lengthMs: number; ground: string; dark: boolean; webHtml?: string | null }
 let opening: Opening | null = null;
 /** the server is up: a fancy opening waits for it at its last frame (`desktop:opening:wait`) */
 let serverUp: () => void = () => {};
@@ -221,17 +226,25 @@ function decideOpening(hidden: boolean): Opening {
   const pick = pickOpening({ when: o.when, today, lastDay: readFlags().openingDay, hidden });
   if (pick.markDay) writeFlags({ openingDay: today });
   if (pick.show !== 'fancy') return { page: pick.show, lengthMs: 0, ground, dark };
-  const pack = o.pack === IGNITE_ID ? null : resolvePack(o.pack, openingRoots());
-  const kind = pack ? 'video' : 'ignite';
+  // a drawn scene, the cafe (its script built), a video / web pack — or 点火 when what was chosen cannot play
+  const choice = chooseOpening(o.pack, { roots: openingRoots(), cafeScript: cafeScriptPath(webDistDir()) });
+  const pack = 'pack' in choice ? choice.pack : null;
+  const webHtml = pack?.kind === 'web' ? readWebEntry(pack) : null;
+  const kind = pack?.kind === 'web' && !webHtml ? 'ignite' : choice.kind;
+  const why = 'why' in choice && choice.why ? choice.why : pack?.kind === 'web' && !webHtml ? `pack ${pack.id}: its page is unreadable or over 8 MB` : '';
   const html = fancyOpeningHtml({
     kind, lang: getLocale() === 'zh' ? 'zh' : 'en', title: APP_NAME, full: o.full, sound: o.sound,
     reduced: settings['ui.reduceMotion'] === true, ground, dark,
-    video: pack ? { intro: packFileUrl(pack.id, pack.intro), logoAt: pack.logoAt, shortFrom: pack.shortFrom, maxSeconds: pack.maxSeconds } : undefined,
+    video: pack?.kind === 'video' ? { intro: packFileUrl(pack.id, pack.intro), logoAt: pack.logoAt, shortFrom: pack.shortFrom, maxSeconds: pack.maxSeconds } : undefined,
+    // the page asks for it (desktop:opening:pack): a data: URL that carried it could pass Chromium's 2 MB URL limit
+    web: kind === 'web' && pack?.kind === 'web' ? { html: null, maxSeconds: pack.maxSeconds } : undefined,
+    cafe: kind === 'cafe' ? { src: CAFE_SCRIPT_URL, sign: tr('Claude 网吧'), room: tr('包间') } : undefined,
     text: { skip: tr('点一下跳过'), waiting: tr('正在启动…'), soundOn: tr('开声音'), soundOff: tr('关声音'), tap: tr('点一下播放') },
     target: logoTarget(process.platform),
   });
-  mainLog(`[opening] ${kind}${pack ? ` ${pack.id}` : ''} ${o.full ? 'full' : 'short'}${o.pack !== IGNITE_ID && !pack ? ` (pack ${o.pack} missing)` : ''}`);
-  return { page: 'fancy', html, lengthMs: openingLength({ kind, full: o.full, ...(pack ?? {}) }), ground, dark };
+  mainLog(`[opening] ${kind}${pack ? ` ${pack.id}` : ''} ${o.full ? 'full' : 'short'}${why ? ` (${why})` : ''}`);
+  const times = pack?.kind === 'video' ? pack : pack?.kind === 'web' ? { maxSeconds: pack.maxSeconds } : {};
+  return { page: 'fancy', html, lengthMs: openingLength({ kind, full: o.full, ...times }), ground, dark, webHtml: kind === 'web' ? webHtml : null };
 }
 
 /**
@@ -916,6 +929,8 @@ const fromOpening = (e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) => 
 ipcMain.handle('desktop:opening:wait', (e) => (fromOpening(e) ? serverUpP : null));
 ipcMain.on('desktop:opening:done', (e) => { if (fromOpening(e)) openingDone(); });
 ipcMain.on('desktop:opening:sound', (e, on: unknown) => { if (fromOpening(e)) openingPrefs.sound = on === true; });
+// a web pack's page: the opening page puts it in its sandboxed frame (opening.ts `startWeb`)
+ipcMain.handle('desktop:opening:pack', (e) => (fromOpening(e) ? opening?.webHtml ?? null : null));
 /** the app page, once in: what was changed during the opening (taken once) */
 ipcMain.handle('desktop:opening:prefs', (e) => {
   if (!ours(e)) return null;
@@ -1105,8 +1120,9 @@ if (gotLock) app.whenReady().then(async () => {
       }) as Electron.Streams);
     } catch { cb({}); }
   });
-  // the opening page plays its pack's film from cw-opening:// (opening-pack.ts: pack files only, ranges for seeking)
-  protocol.handle(OPENING_SCHEME, (req) => packResponse(req, openingRoots()));
+  // the opening page plays its pack's film from cw-opening:// (opening-pack.ts: pack files only, ranges for seeking),
+  // and 网吧开门 loads the cafe's script from there
+  protocol.handle(OPENING_SCHEME, (req) => packResponse(req, openingRoots(), cafeScriptPath(webDistDir())));
   // the window first (on the splash), then the server: see splashUrl
   const hidden = process.argv.includes('--hidden');
   try {

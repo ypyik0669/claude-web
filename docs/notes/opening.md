@@ -4,7 +4,7 @@
 
 ## 放哪一种（桌面版启动时，`desktop/src/opening-pack.ts`，纯函数 + 测试）
 
-- 设置在 meta.json 的 `ui.opening.*`：`pack`（默认 `claude-web-chan`；`ignite` = 点火；或导入的包 id）、`when`（`always` / `daily` 默认 / `never`）、`length`（`full` 默认 / `short`）、`sound`（默认关）、`keep` + `opacity`（放完留作背景，见下）。主进程在 server 起来之前就要定，所以直接读 `<数据目录>/meta.json`（`readMetaSettings`，数据目录同 server 的 `CLAUDE_WEB_DIR` 规则）。
+- 设置在 meta.json 的 `ui.opening.*`：`pack`（默认 `claude-web-chan`；`ignite` = 点火，`stars` = 星图，`ascii` = 字符雨，`cafe` = 网吧开门，见「开场 第二批」；或导入的包 id）、`when`（`always` / `daily` 默认 / `never`）、`length`（`full` 默认 / `short`）、`sound`（默认关）、`keep` + `opacity`（放完留作背景，见下）。主进程在 server 起来之前就要定，所以直接读 `<数据目录>/meta.json`（`readMetaSettings`，数据目录同 server 的 `CLAUDE_WEB_DIR` 规则）。
 - `pickOpening()`：`--hidden`（开机自启）→ 老开场、不算「今天放过」；`never` → 老开场的最后一帧（`still`），不等 `openingHold`；`daily` 且 `flags.json`（userData）的 `openingDay` 是今天（本地日期）→ 老开场；其余放人设版并写 `openingDay`。包没了（删了 / 文件缺）退回点火。`main.log` 记一行 `[opening] video claude-web-chan full` / `ignite short`。
 - 窗口的底色（`titleBar.bg`）按主题取开场结束时的底（`groundOf`：dark `#12110f`、light `#f7f6f2`、dracula / nord / tokyo-night / paper 各自的，system 和字符画主题跟系统），开场的黑淡出到这个颜色，应用接着淡入，不闪。
 
@@ -55,3 +55,42 @@
 - `node scripts/opening-shots.mjs <场景> [输出目录]`（先 `npm run build:all`）：临时 HOME / `CLAUDE_WEB_DIR` / `--user-data-dir`，按场景写 meta.json 和 flags.json，`--remote-debugging-port` 连 CDP，在指定时刻 `Page.captureScreenshot`；`Page.frameNavigated` 知道应用页什么时候接手；系统减少动画用 `--force-prefers-reduced-motion`；手机用 `Emulation.setDeviceMetricsOverride` + reload；最后 `taskkill /T /F` 整棵进程树。场景：full short skip reduced reducedApp light classic ignite igniteLight never sound phone settings（设置页的卡片）。
 - 实测（开发版、临时目录、冷启动）：完整版开场页 0.7 s 出现、14.5 s 进应用（片子 9.7 s + logo 2.25 s + 飞 0.7 s，server 早就好了）；简短版 7.5 s（11-20 换片后，机器忙、截图脚本每张要 1.5–2.5 s：完整版 0.8 s 出现、15.1 s 进应用，简短版 9.2 s）；3 s 时点一下 → 4.5 s；老开场 2.3 s；减少动画 1.6–2.2 s；点火 5.3 s。刚 build 完、机器正忙时有一次 server 起了 104 s：开场停在最后一帧、20 s 后下面换成「电脑比较忙…」，server 好了才飞走——截图脚本等 60 s 就报 `app never came`，不是卡死。
 - 控制台偶尔出现 `Electron sandboxed_renderer.bundle.js script failed to run` / `Cannot destructure property 'preloadScripts' of 'binding.startupData' as it is null`（截图脚本连着 CDP 才看得见）：**老问题，不是开场带来的**——同一台机器上用 `main`（eaa8853c）的桌面壳跑老开场 12 次有 4 次，这个分支的壳 12 次 0 次（之前零星跑二十几次里有 3 次）。出现时应用页的 preload 是好的（窗口按钮都在、`window.desktop` 在），像是 Electron 44 自己的竞态：data: → http 换进程时，新渲染进程的脚本上下文比启动数据先到（多半是那个临时文档）。对比办法：`git archive eaa8853c desktop/src` 解出来用 esbuild 编成 CJS 盖到 `desktop/dist`，跑完 `npm run build -w desktop` 换回来。
+
+## 开场 第二批：星图 / 字符雨 / 网吧开门 / 网页动画包 / 从 GitHub 安装 / 让 Claude 做一个（2026-11-20）
+
+方案的「六种开场」里剩下的。设置页的结构（阶段 2 在改）没动，只改了开场组件自己（`web/src/features/opening/`）和 `catalog.ts` 里开场几行的字。
+
+### 放哪一种、开场页
+
+- `chooseOpening(pack, { roots, cafeScript })`（`opening-pack.ts`）→ `{ kind: 'ignite' | 'stars' | 'ascii' }`（画出来的）、`{ kind: 'cafe' }`、`{ kind: 'video' | 'web', pack }`；包没了 → 点火 + `why`（`pack x missing`），网吧的脚本没 build → 点火（`the cafe script is not built`）。`main.log`：`[opening] stars full`、`[opening] web glow short`、`[opening] ignite full (pack x missing)`。
+- 开场页的 `kind` 有六个：画出来的三个（`SCENES` 时间轴：ignite / stars 字标 2.05 s、飞走 3.7 s、完 4.35 s，ascii 2.1 / 3.75 / 4.4；简短版 2 倍速，所以完整约 4 s、简短约 2 s）和「先放一段、再在黑里点亮 logo」的三个（video / cafe / web，`renderLogo`，`LOGO_HOLD` 2.25 s）。星图：天上的星星飞到 logo 的轮廓上、连线亮起、圆点点燃（每颗星按笔画的顺序轮流落位，相邻两颗都到了才连上线，轮廓像是自己描出来的；**一起飞、一起连线的第一版在半路缠成一团乱线**，截图才看出来）；字符雨：代码字符一列列落下，在 logo 的形状里停住拼成一个大字符 logo（`mask()`：96×37 格、每格 10×16.2，logo 按 k = 300/1024 放在 (330, 67)），再缩成真 logo。结尾和点火一样：字标「Claude Web · by Super NB」、logo 飞到 `logoTarget`、应用淡入。减少动画 → 只有最后一帧（浅色主题有自己的纸色调色板）。
+- **网吧开门能在 data: 页面里跑**：三维场景（只读借用 `features/cafe` 的 `CafeScene`）单独用 Vite 的库模式打成一个 IIFE（`web/vite.opening.config.ts` → `web/dist/opening/cafe-opening.js`，`npm run build -w web` 会一起打），开场页从壳自己的协议 `cw-opening://app/cafe-opening.js` 拿（`appFilePath`：只认这一个文件；打包后在 `app.asar/web/dist/opening/`），CSP 的 `script-src` 加 `cw-opening:`。`window.cwCafeOpening.start(canvas, { full, sign, room, width, height, first })`：灯一排排亮、有人走进来（`cafe/steps.ts` 纯函数 + 测试），完整 2.3 s / 简短 1.2 s，然后 logo 在调暗到 0.8 的网吧上点亮（不是全黑）。退回点火：没有 WebGL（先探一下）、脚本报错、4 s 内没出第一帧（`CAFE.load`）、脚本没 build（主进程就定了）。所以不用「应用起来后再放」。
+- 网页动画包：`opening.json` 的 `kind: 'web'`，`entry` 默认 `index.html`（只认 .html，有大小上限 `WEB_ENTRY_MAX`），自带一切、不联网。**页面内容走 IPC**：主进程读出来（`readWebEntry`），开场页用 `desktop:opening:pack` 要（只给开场页，`fromOpening(e)`）——塞进 data: URL 会撞 Chromium 2 MB 的地址上限，从 data: 页面 fetch `cw-opening://` 又被 CORS 拦。开场页把它放进 `<iframe sandbox="allow-scripts" srcdoc>`，前面加 `packHead()`：自己的 CSP meta（`PACK_CSP`：`default-src 'none'`，只有内联脚本 / 样式，图片 / 媒体 / 字体只认 data: / blob:，connect / frame / worker / form 全 `'none'`）、关 DNS 预取、`overflow: hidden`（不然有滚动条）、`packBoot`（`cwOpening.done()` / `full` / `dark`，拿掉 WebRTC 的构造函数，错误转给开场页，试跑的测量）。srcdoc 的 frame 还继承开场页的 CSP，两层都拦 fetch（实测）；`frame-src 'none'` 拦不住 srcdoc。**CSP 里不能有 `'unsafe-eval'`**：Electron 会在控制台报「Insecure Content-Security-Policy」（ui-smoke 算失败），所以包里不能 eval / `new Function`，skill 里写了。剩下的风险：WebRTC 只在包的主 realm 里拿掉了，包自己再套一层 srcdoc 就又有了（CSP 管不到 WebRTC）；开场页里没有应用的东西可偷，最多知道「放过了」和 IP，装之前也给用户看过作者和许可。
+- 网页包到 `maxSeconds`（≤ 12，`opening.json` 写）还没 `done()` → 切掉（试跑报 `cut`），换成点火（底色用包的深色）。主进程最多等的时间里算了它（`openingLength` 的 web = `maxSeconds + LOGO_HOLD`），试放一次的兜底关窗多给 4 s。
+
+### 设置的卡片
+
+- 顺序（`openingCards`）：内置视频包（Claude Web 娘）· 点火 · 星图 · 字符雨 · 网吧开门 · 导入的包（视频或网页）· 「自己的视频」。`OpeningCard` 每种 kind 一个成员（`kind: 'video' | 'web'` 合成一个成员时，`c.kind === 'cafe'` 之后 TS 收窄不掉，`c.pack` 报错）。缩略图是方案 `TH` 那几张 svg 的移植（`Still`），一律深色像片子的一帧；网吧开门在没有 WebGL 的电脑上副标题写「这台电脑没有 WebGL，会放点火」。
+- 悬停小样（方案「卡片悬停时小窗预览」）：鼠标停 350 ms（或键盘焦点 `:focus-visible`）后在缩略图上盖一层 `.op-hover`，`CardPreview.tsx` 是单独懒加载的 chunk（开场页生成器跟着它）。视频包放 loop（没有就从 `shortFrom` 放片子），静音；其余放开场页本身的 `thumb` 模式：底色 `#13110e`、简短、不飞、不出进度线 / 声音 / 提示，画出来的三种放完 1.4 s 重来。`pointer-events: none`，点击照样落在卡片上。
+- 内置包的名字来自 opening.json（「Claude Web 娘」），英文界面里也是中文——i18n-smoke 查出来的：卡片上用 `packName()`，内置包走 `tr('Claude Web 娘')`（Claude Web-chan），用户自己的包照它写的。
+- 时长要和片子对得上：片子文件 10.08 s，放到 `logoAt` 9.6 s，接着点亮标志 2.25 s、飞 0.7 s → 完整约 13 秒；简短从第 6 秒放起 → 约 7 秒。「开场动画」那行说「约 10 秒的片子，再点亮标志」，「长度」那行写明 13 秒里包括什么（之前一处说「10 秒的开场片」、一处说「完整约 13 秒、简短约 6 秒」，看着像矛盾）。
+- 手机宽度：动画包的三个按钮单独占一行、会换行（照主题色块的写法，`.sp-row:has(> .ctl > .op-btns)`），600px 以下「浓淡」和开关放到文字下面——放在旁边时按钮跑出屏幕、文字被挤成一列四个字（`.ctl` 是 `flex: none`，只能这样从外面给它整行）。
+- 试放一次所有卡片都能放（`requestFor`）；`preview-options.ts` 统一出参数（预览 / 小样）。网吧在应用里的地址是 server 的 `opening/cafe-opening.js`（web/dist 本来就静态服务）。
+- 放完留作背景：星图留下慢慢飘的星星，字符雨留下几列慢慢落的字符（`drift.ts` 纯函数 + `OpeningBackdrop.tsx` 的 `Drift`，浅色主题也有，用纸色、画重 1.6 倍——隔着 70% 的外壳，纸上的墨色和火星一样几乎看不见）；网吧开门、网页包和点火一样是火星。
+
+### 从 GitHub 安装、让 Claude 做一个
+
+- 从 GitHub 安装：`dlg.prompt` 要地址 → `openings.github.inspect`（只给本机桌面窗口）→ `parseGithubUrl`（`owner/repo`、仓库页、`tree/<ref>/<文件夹>`、`blob/…/opening.json`；别的一律拒，不出网）→ 用 api.github.com 的 contents 读（不带 token，每小时 60 次）→ 只下 opening.json 点名的文件、只认 raw.githubusercontent.com、每个文件有上限，先放进 `<数据目录>/openings/.tmp-gh-<token>`（不列出、不能放），15 分钟过期 → `dlg.confirm` 给用户看 作者 / 许可 / 仓库的许可（和包的不同时）/ 来自 / 类型（网页包写明沙盒、不联网、最多几秒）/ 大小 → `install`（rename 进去，id 用 `packIdFor` 并避开内置 id）或 `cancel`（删掉）。走用户的代理（`goingOut`）。
+- 让 Claude 做一个：新对话、输入框里填「用 opening-pack 帮我做一个开场动画：」。`opening-pack` skill（`<数据目录>/runtime/plugins/opening/skills/opening-pack/SKILL.md`；正文和示例 萤火 来自 `server/src/openings/opening-pack.md` + `example/index.html`，`node scripts/gen-skill-text.mjs` 生成 `skill-text.ts`）+ `web` MCP 里的 `opening_guide / draft / get / save / apply / list / delete`（`opening_draft` 是 alwaysLoad）。`opening_draft` 存成草稿（`draft: true`，不出卡片）并**在用户的窗口里放一遍**：最近说过 `openings.trialHost` 的窗口收到 `openings.trial` → 试放一次的 frame 带上 `trial` → 开场页报告 结束方式 / 时刻 / 错误 / 帧时间 / 1、3、6、9 s 和结束时的截图 → 拼成一张条（`trial-report.ts`）→ `openings.trialResult` → 工具结果是文字 + 图。窗口藏着就回一句说明，不放。
+
+### 测试、截图
+
+- `desktop/src/opening.test.ts`、`opening-pack.test.ts`；`server/src/openings/*.test.ts`；web 的 `model / drift / trial-report / cafe/steps` 测试；ui-smoke 的 `opening` 段（用 `openSettings({ reveal: 'ui.opening.pack' })` 打开、按 `data-opening` / `data-act` 找，不依赖设置页的结构）：卡片顺序、悬停小样出现又消失、选星图 / 字符雨（设置、只亮一张、背景的 `canvas[data-drift]`）、试放一次自己放完消失、点一下跳过（直接 `sendInputEvent` 点窗口中间：点在 frame 里，click 助手的守卫看不见）、动画包三个按钮 + GitHub 拒掉非 GitHub 地址（toast，不出网）、390 宽的检查（不查 44 规则，那是设置页的）、让 Claude 做一个（只在不是工作台模式时点，不多开标签）。
+- `opening-shots.mjs` 加了场景（窗口改成 1440×900）：`stars starsShort starsLight starsReduced ascii asciiShort asciiLight cafe cafeShort cafeLight cafeNoWebgl web webLight webCut cardsDark cardsLight cardsPhone cardsPhoneLight`；`packs: [...]` 先把网页包写进临时数据目录（萤火、一个永远不 `done()` 的 3 s 包），`hover: [...]` 用 CDP 把鼠标停在卡片上拍小样，`phoneOpen` 在 390×844 下打开设置。没有 WebGL 用 `--disable-webgl --disable-3d-apis`。
+
+### 坑
+
+- 用 tsx / esbuild 生成的测试页里 `player.toString()` 会带上 keepNames 的 `__name(...)`，页面里报 `__name is not defined`：要从 tsc 的输出（`desktop/dist/opening.js`）生成。
+- Electron 截图小工具一次只跑一个任务：一个进程带好几个任务参数时什么都不出。
+- 测试里从页面取配置（`configOf`）要找最后一个 `)({"kind":`：`packHead` 的 JSON 里也有 `)({`。
+- 手写的英文用 `node scripts/i18n/set.mjs <file.json>`（只写用到这个 key 的目录、顺手删掉没用的）；`merge.mjs` 会把已有的译文改掉、整份重排。同一个中文 key 在 server 和 web 两边可以各有各的英文，`set.mjs` 会两边一起写，写完看一眼另一边。

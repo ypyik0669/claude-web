@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import type { OpeningInfo } from '@shared';
 import { ws } from '@/ws/client';
+import { forgetPackHtml } from './pack-html';
 
 interface PacksState {
   /** null: not asked yet / an older server */
@@ -17,7 +18,7 @@ export const useOpeningPacks = create<PacksState>((set) => ({
   async load() {
     if (!listening) {
       listening = true;
-      ws.on((e) => { if (e.kind === 'openings.changed') void useOpeningPacks.getState().load(); });
+      ws.on((e) => { if (e.kind === 'openings.changed') { forgetPackHtml(); void useOpeningPacks.getState().load(); } });
     }
     try {
       const list = await ws.request<OpeningInfo[]>({ kind: 'openings.list' });

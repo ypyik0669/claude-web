@@ -3,18 +3,26 @@
 //
 // A pack is a folder with an opening.json (界面改版方案 第 7 版 #opening): the built-in ones travel with the app
 // (desktop/openings, `resources/openings` when packaged), the user's are in <data dir>/openings/<id>/ (the server
-// imports them: server/src/openings). Only `kind: "video"` packs exist so far.
+// imports them: server/src/openings). `kind: "video"` (a film) or `kind: "web"` (one self-contained index.html, run in a
+// sandboxed frame of the opening page). The drawn scenes (点火 / 星图 / 字符雨) and 网吧开门 have no folder: 网吧开门's
+// script (three.js and the cafe) is built into the web app's dist (web/vite.opening.config.ts) and served from here.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { OPENING_SCHEME, filmTimes } from './opening';
+import { OPENING_SCHEME, filmTimes, isDrawnKind, type DrawnKind } from './opening';
 
 export type OpeningWhen = 'always' | 'daily' | 'never';
 /** The built-in video pack, the default opening. */
 export const DEFAULT_PACK = 'claude-web-chan';
-/** 点火: the opening drawn without a video (no pack folder). */
+/** 点火: the opening drawn without a video (no pack folder). 星图 / 字符雨 are the other two drawn scenes. */
 export const IGNITE_ID = 'ignite';
+/** 网吧开门: the 3D cafe (no pack folder: its script is web/dist/opening/cafe-opening.js). */
+export const CAFE_ID = 'cafe';
+/** The cafe's script, inside the web app's dist. */
+export const CAFE_SCRIPT = path.join('opening', 'cafe-opening.js');
+/** A web pack's page may be at most this big (everything in it: images and sounds as data: URIs). */
+export const WEB_ENTRY_MAX = 8 * 1024 * 1024;
 
 /** The data directory (meta.json, openings/): CLAUDE_WEB_DIR, else ~/.claude-web — the server's own rule. */
 export const dataDir = (env: NodeJS.ProcessEnv = process.env) => env.CLAUDE_WEB_DIR || path.join(os.homedir(), '.claude-web');
@@ -69,20 +77,58 @@ export function groundOf(theme: unknown, systemDark: boolean): { ground: string;
 /** A pack folder's name / a file in it: one plain path segment. */
 export const safeSegment = (s: unknown): s is string => typeof s === 'string' && s.length > 0 && s.length <= 120 && s !== '.' && s !== '..' && !/[\\/:*?"<>|\0]/.test(s);
 
-export interface ShellPack { id: string; dir: string; intro: string; logoAt: number | null; shortFrom: number; maxSeconds: number }
+export type ShellPack =
+  | { kind: 'video'; id: string; dir: string; intro: string; logoAt: number | null; shortFrom: number; maxSeconds: number }
+  | { kind: 'web'; id: string; dir: string; entry: string; maxSeconds: number };
 
-/** The pack `id` in the first root that has it (the built-in ones first): a video pack whose film is there, or null. */
+/** The pack `id` in the first root that has it (the built-in ones first): a video pack whose film / a web pack whose page is there, or null. */
 export function resolvePack(id: string, roots: string[]): ShellPack | null {
   if (!safeSegment(id)) return null;
   for (const root of roots) {
     const dir = path.join(root, id);
     let j: any;
     try { j = JSON.parse(fs.readFileSync(path.join(dir, 'opening.json'), 'utf8')); } catch { continue; }
+    if (j?.kind === 'web') {
+      const entry = j.entry === undefined ? 'index.html' : j.entry;
+      if (!safeSegment(entry) || !/\.html?$/i.test(entry) || !fs.existsSync(path.join(dir, entry))) return null;
+      return { kind: 'web', id, dir, entry, maxSeconds: filmTimes({ maxSeconds: j.maxSeconds }).maxSeconds };
+    }
     if (j?.kind !== 'video' || !safeSegment(j.intro) || !fs.existsSync(path.join(dir, j.intro))) return null;
-    return { id, dir, intro: j.intro, ...filmTimes(j) };
+    return { kind: 'video', id, dir, intro: j.intro, ...filmTimes(j) };
   }
   return null;
 }
+
+/** A web pack's page (at most WEB_ENTRY_MAX), or null. */
+export function readWebEntry(p: Extract<ShellPack, { kind: 'web' }>): string | null {
+  try {
+    const f = path.join(p.dir, p.entry);
+    if (fs.statSync(f).size > WEB_ENTRY_MAX) return null;
+    return fs.readFileSync(f, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a fancy start plays for the chosen pack: a drawn scene, 网吧开门 (its script built — else 点火), a pack found in
+ * a root (else 点火: removed, or a half copy). `why` is for main.log when it is not what was chosen.
+ */
+export function chooseOpening(pack: string, o: { roots: string[]; cafeScript: string | null }):
+  | { kind: DrawnKind; why?: string }
+  | { kind: 'cafe' }
+  | { kind: 'video' | 'web'; pack: ShellPack } {
+  if (isDrawnKind(pack)) return { kind: pack };
+  if (pack === CAFE_ID) return o.cafeScript ? { kind: 'cafe' } : { kind: 'ignite', why: 'the cafe script is not built' };
+  const p = resolvePack(pack, o.roots);
+  return p ? { kind: p.kind, pack: p } : { kind: 'ignite', why: `pack ${pack} missing` };
+}
+
+/** The web app's dist folder (packaged: inside app.asar; from source: web/dist) — where the cafe's script is. */
+export const cafeScriptPath = (webDist: string): string | null => {
+  const f = path.join(webDist, CAFE_SCRIPT);
+  try { return fs.statSync(f).isFile() ? f : null; } catch { return null; }
+};
 
 /** The address the opening page plays a pack's file from. */
 export const packFileUrl = (id: string, file: string) => `${OPENING_SCHEME}://pack/${encodeURIComponent(id)}/${encodeURIComponent(file)}`;
@@ -119,8 +165,23 @@ export function packFilePath(url: string, roots: string[]): string | null {
   return null;
 }
 
-/** The response for one request of the opening page (protocol.handle): the file, a range of it (a video seeks), or 404. */
-export function packResponse(req: { url: string; headers: { get(name: string): string | null } }, roots: string[]): Response {
+/** cw-opening://app/cafe-opening.js → the cafe's script (the only file of the app served there), or null. */
+export function appFilePath(url: string, cafeScript: string | null): string | null {
+  let u: URL;
+  try { u = new URL(url); } catch { return null; }
+  if (u.protocol !== `${OPENING_SCHEME}:` || u.hostname !== 'app' || u.pathname !== '/cafe-opening.js') return null;
+  return cafeScript;
+}
+
+/**
+ * The response for one request of the opening page (protocol.handle): a pack's file, a range of it (a video seeks),
+ * the cafe's script, or 404.
+ */
+export function packResponse(req: { url: string; headers: { get(name: string): string | null } }, roots: string[], cafeScript: string | null = null): Response {
+  const script = appFilePath(req.url, cafeScript);
+  if (script) {
+    try { return new Response(fs.readFileSync(script), { status: 200, headers: { 'Content-Type': 'text/javascript; charset=utf-8' } }); } catch { return new Response('not found', { status: 404 }); }
+  }
   const p = packFilePath(req.url, roots);
   if (!p) return new Response('not found', { status: 404 });
   let size: number;

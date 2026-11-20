@@ -312,7 +312,7 @@ export function webClaudeMcpServer(t: WebMcpTarget, execPath = process.execPath)
 
 /** Tools Claude runs without asking, as `allowedTools`: the search, only while the server is handed out. */
 export function webAllowedTools(): string[] {
-  return enabled && endpoint ? [WEB_SEARCH_TOOL, EGO_GUIDE_TOOL, ...SERVER_GATED_TOOLS, ...CHARACTER_FREE_TOOLS, ...THEME_FREE_TOOLS] : [];
+  return enabled && endpoint ? [WEB_SEARCH_TOOL, EGO_GUIDE_TOOL, ...SERVER_GATED_TOOLS, ...CHARACTER_FREE_TOOLS, ...THEME_FREE_TOOLS, ...OPENING_FREE_TOOLS] : [];
 }
 
 /** 网吧's character tools that only touch the character library (drafts the user watches, a save): not asked about one by
@@ -321,6 +321,9 @@ export const CHARACTER_FREE_TOOLS = ['mcp__web__character_guide', 'mcp__web__cha
 /** 字符画主题's tools that only touch the theme library (drafts, a save, reading): not asked about. theme_apply (the
  *  user's setting) and theme_delete are asked like any tool. */
 export const THEME_FREE_TOOLS = ['mcp__web__theme_guide', 'mcp__web__theme_draft', 'mcp__web__theme_get', 'mcp__web__theme_save', 'mcp__web__theme_list'];
+/** 开场动画's tools that only touch the opening library (drafts — played once in the user's window, a save, reading):
+ *  not asked about. opening_apply (the user's setting) and opening_delete are asked like any tool. */
+export const OPENING_FREE_TOOLS = ['mcp__web__opening_guide', 'mcp__web__opening_draft', 'mcp__web__opening_get', 'mcp__web__opening_save', 'mcp__web__opening_list'];
 
 /** ACP `session/new` / `session/load` take the list inline, env as name/value pairs. */
 export function webAcpMcpServers(t: WebMcpTarget, execPath = process.execPath) {

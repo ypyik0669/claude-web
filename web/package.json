@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && npm run build:shell",
+    "build": "vite build && npm run build:opening && npm run build:shell",
+    "build:opening": "vite build -c vite.opening.config.ts",
     "build:shell": "vite build -c vite.shell.config.ts",
     "test": "vitest run"
   },

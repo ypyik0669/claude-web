@@ -434,11 +434,17 @@ export interface SessionMeta {
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number; /** 手动: only 立即运行 starts it */ manual?: boolean; /** each run in its own worktree (with freshSession) */ worktree?: boolean }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 /**
- * 开场动画包 (server/src/openings): `intro` / `loop` / `poster` are file names in the pack, fetched as
- * api/opening/<id>/<file>; `logoAt` the film's second where the logo takes over (none: where it ends, at most
- * `maxSeconds`), `shortFrom` where 简短 starts. `builtin`: comes with the app, cannot be removed.
+ * 开场动画包 (server/src/openings): `intro` (video) / `entry` (web) / `loop` / `poster` are file names in the pack,
+ * fetched as api/opening/<id>/<file>; `logoAt` the film's second where the logo takes over (none: where it ends, at
+ * most `maxSeconds`), `shortFrom` where 简短 starts. A web pack's `entry` is one self-contained page that plays in a
+ * sandboxed frame (cut at `maxSeconds`). `builtin`: comes with the app, cannot be removed; `draft`: the opening-pack
+ * skill's draft, not saved yet.
  */
-export interface OpeningInfo { id: string; name: string; builtin: boolean; kind: 'video'; author?: string; license?: string; credits?: string; intro: string; loop?: string; poster?: string; logoAt?: number; shortFrom?: number; maxSeconds: number }
+export interface OpeningInfo { id: string; name: string; builtin: boolean; kind: 'video' | 'web'; author?: string; license?: string; credits?: string; intro?: string; entry?: string; loop?: string; poster?: string; logoAt?: number; shortFrom?: number; maxSeconds: number; draft?: boolean }
+/** 从 GitHub 安装: a pack read from a repository and kept aside until the user says yes (openings.github.install). */
+export interface OpeningGithubOffer { token: string; info: OpeningInfo; source: string; owner: string; repoLicense?: string; files: { name: string; size: number }[]; bytes: number }
+/** A web pack's trial run (the opening-pack skill), as a window saw it play. */
+export interface OpeningTrialResult { end?: 'done' | 'cut' | 'skip'; at?: number; errors: string[]; avgMs?: number; maxMs?: number; frames?: number; png?: string; note?: string }
 // ---- remote access / phones / IM (phase 6) ----
 export interface DeviceInfo { id: string; name: string; createdAt: number; lastSeenAt: number; ip?: string; ua?: string }
 export interface RemoteStatus { enabled: boolean; running: boolean; port: number; addresses: string[]; error: string; devices: DeviceInfo[]; pair: { code: string; expiresAt: number } | null; anywhere?: AnywhereStatus }
@@ -919,6 +925,15 @@ export type ClientRequest =
   | { kind: 'openings.addVideo'; path: string }
   /** → { removed } (the built-in packs stay) */
   | { kind: 'openings.remove'; id: string }
+  /** 从 GitHub 安装: read a pack from a GitHub address and keep it aside → OpeningGithubOffer (a local window only) */
+  | { kind: 'openings.github.inspect'; url: string }
+  /** the user said yes to an offer → OpeningInfo; or no (`cancel`) → null */
+  | { kind: 'openings.github.install'; token: string }
+  | { kind: 'openings.github.cancel'; token: string }
+  /** this window plays the opening-pack skill's trial runs (`openings.trial` events) */
+  | { kind: 'openings.trialHost'; on: boolean }
+  /** the answer to an `openings.trial` event */
+  | ({ kind: 'openings.trialResult'; id: string } & OpeningTrialResult)
 
   // ---- cross-machine sessions (federation) ----
   | PeerRequest
@@ -979,6 +994,8 @@ export type ServerEvent =
   | { kind: 'themes.changed' }
   /** an opening pack was added / removed: windows ask again (openings.list) */
   | { kind: 'openings.changed' }
+  /** play this web pack draft over the window for the opening-pack skill and answer with openings.trialResult (to one window) */
+  | { kind: 'openings.trial'; id: string; pack: OpeningInfo; html: string }
   /** run this theme draft for the skill and answer with themes.trialResult (to one window) */
   | { kind: 'themes.trial'; id: string; source: { id: string; json: string; backdrop?: string; css?: string } }
   /** an agent said what it offers and that changed (AgentInfo.reportedModels): ask agents.list again */

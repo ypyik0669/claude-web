@@ -8,6 +8,7 @@ import { appUrl } from '@/util/app-url';
 import { backdropKind, keepOn, opacityOf, packFileUrl, packOf, shellSolid } from './model';
 import { useOpeningPacks } from './packs';
 import { EMBER_COLORS, EMBER_HALO, emberAlpha, emberCount, rgba, spawn, stepEmbers, type Ember } from './embers';
+import { DRIFT_COLORS, RAIN_CELL, makeRain, makeStars, rainChar, starAlpha, stepRain, stepStars, type Drop, type Star } from './drift';
 
 const reducedMotion = () => (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) || document.documentElement.dataset.reduceMotion === '1';
 /** On screen: the window is visible and has the focus (minimized or another program in front: nothing moves). */
@@ -50,7 +51,9 @@ export function OpeningBackdrop() {
   if (!kind) return null;
   return createPortal(
     <div className="obd" aria-hidden data-kind={kind.kind}>
-      {kind.kind === 'video' ? <LoopVideo key={kind.src} src={kind.src} /> : <Embers key={theme} light={LIGHT.has(theme)} />}
+      {kind.kind === 'video' ? <LoopVideo key={kind.src} src={kind.src} />
+        : kind.kind === 'stars' || kind.kind === 'rain' ? <Drift key={`${kind.kind}-${theme}`} what={kind.kind} light={LIGHT.has(theme)} />
+          : <Embers key={theme} light={LIGHT.has(theme)} />}
     </div>,
     document.body,
   );
@@ -163,4 +166,85 @@ function Embers({ light }: { light: boolean }) {
     };
   }, [light]);
   return <canvas ref={ref} />;
+}
+
+/**
+ * 星图's stars or 字符雨's characters (drift.ts), what those two leave behind: ~24 fps while watched, one still frame
+ * when motion is reduced. The bigger stars get a small glow (a stamped sprite, like 火星's).
+ */
+function Drift({ what, light }: { what: 'stars' | 'rain'; light: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    const rand = Math.random;
+    const col = light ? DRIFT_COLORS.light : DRIFT_COLORS.dark;
+    // ink on paper under a 70 % shell all but vanishes (火星 on a light theme did): stronger there
+    const boost = light ? 1.6 : 1;
+    const glow = sparkSprite(col.star);
+    let w = 0, h = 0, stars: Star[] = [], drops: Drop[] = [], raf = 0, last = 0, t = 0;
+    const resize = () => {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      w = window.innerWidth; h = window.innerHeight;
+      canvas.width = Math.max(1, Math.round(w * dpr)); canvas.height = Math.max(1, Math.round(h * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (what === 'stars') stars = makeStars(w, h, rand); else drops = makeRain(w, h, rand);
+      draw();
+    };
+    const draw = () => {
+      ctx.clearRect(0, 0, w, h);
+      ctx.save();
+      if (what === 'stars') {
+        ctx.globalCompositeOperation = light ? 'source-over' : 'lighter';
+        ctx.fillStyle = col.star;
+        for (const s of stars) {
+          const a = Math.min(1, starAlpha(s, t) * boost);
+          if (s.s > 1.3) { ctx.globalAlpha = a * 0.55; const r = s.s * EMBER_HALO; ctx.drawImage(glow, s.x - r, s.y - r, r * 2, r * 2); }
+          ctx.globalAlpha = a;
+          ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, Math.PI * 2); ctx.fill();
+        }
+      } else {
+        ctx.font = '13px "JetBrains Mono Variable", "JetBrains Mono", Consolas, ui-monospace, monospace';
+        ctx.textBaseline = 'top';
+        const rows = Math.ceil(h / RAIN_CELL.h);
+        for (const d of drops) {
+          for (let j = 0; j < d.len; j++) {
+            const r = Math.floor(d.y) - j;
+            if (r < 0 || r >= rows) continue;
+            ctx.globalAlpha = Math.min(1, (1 - j / d.len) * (j ? 0.5 : 0.85) * boost);
+            ctx.fillStyle = j ? col.rain : col.head;
+            ctx.fillText(rainChar(d.c, r, t), d.c * RAIN_CELL.w, r * RAIN_CELL.h);
+          }
+        }
+      }
+      ctx.restore();
+    };
+    const tick = (now: number) => {
+      raf = 0;
+      if (!watching()) return;
+      const dt = Math.min(0.1, (now - last) / 1000);
+      if (dt >= 1 / 24) {
+        last = now; t += dt;
+        if (what === 'stars') stepStars(stars, dt, w, h); else stepRain(drops, dt, Math.ceil(h / RAIN_CELL.h), rand);
+        draw();
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    const still = reducedMotion();
+    const sync = () => { if (!still && watching() && !raf) { last = performance.now(); raf = requestAnimationFrame(tick); } };
+    resize();
+    canvas.classList.add('on');
+    sync();
+    window.addEventListener('resize', resize);
+    document.addEventListener('visibilitychange', sync);
+    window.addEventListener('focus', sync);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', resize);
+      document.removeEventListener('visibilitychange', sync);
+      window.removeEventListener('focus', sync);
+    };
+  }, [what, light]);
+  return <canvas ref={ref} data-drift={what} />;
 }

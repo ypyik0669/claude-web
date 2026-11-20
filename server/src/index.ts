@@ -112,6 +112,7 @@ import { characterTool } from './characters/tools.js';
 import { ThemeService } from './themes/service.js';
 import { OpeningService } from './openings/service.js';
 import { themeTool } from './themes/tools.js';
+import { openingTool } from './openings/tools.js';
 import { proxy } from './net/proxy.js';
 import { WebService } from './web/service.js';
 import { handleWebTool } from './web/http.js';
@@ -267,7 +268,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   let characters: CharacterService;
   const themes = new ThemeService();
   // 开场动画包: the built-in ones (the desktop app says where its own are; from source: desktop/openings) and the user's
-  const openings = new OpeningService({ builtinDir: process.env.CLAUDE_WEB_OPENINGS || path.resolve(__dirname, '../../desktop/openings'), userDir: path.join(dataDir(), 'openings') });
+  // (从 GitHub 安装 goes out through the user's proxy like every other request: it waits for its first look)
+  const openings = new OpeningService({ builtinDir: process.env.CLAUDE_WEB_OPENINGS || path.resolve(__dirname, '../../desktop/openings'), userDir: path.join(dataDir(), 'openings'), goingOut: () => proxy.refresh() });
   /** the main listener's port once it is listening (PORT=0 in the desktop app: a new one every start) */
   let listenPort = 0;
   // 发布 (stage F5): /p/<id>/ snapshots, served before any token check on both listeners (publish/service.ts)
@@ -486,6 +488,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     // 网吧's character tools ride on the same MCP server; the library is made further down
     characterTool: (tool, args) => characterTool(characters, tool, args) as any,
     themeTool: (tool, args) => themeTool({ svc: themes, getTheme: () => meta.settings()['ui.theme'], setTheme: (v) => meta.setSetting('ui.theme', v) }, tool, args) as any,
+    // 开场动画's opening-pack tools: the opening library; its drafts play in a window (OpeningService.trial)
+    openingTool: (tool, args) => openingTool({ svc: openings, getPack: () => meta.settings()['ui.opening.pack'], setPack: (v) => meta.setSetting('ui.opening.pack', v) }, tool, args) as any,
     ownPorts: () => [listenPort, remote?.port ?? 0].filter((p) => p > 0),
     gate: { ask: (sid, req, signal) => siteAsk.ask(sid, req, signal), mode: (sid) => modeOf(sid) },
   });

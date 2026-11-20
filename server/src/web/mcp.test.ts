@@ -86,7 +86,7 @@ function start(env: Record<string, string>) {
 }
 
 describe('the web MCP server over stdio', () => {
-  it('handshakes, lists the thirty-three tools (twenty-one of 联网, five of 网吧, seven of 字符画主题), and carries each call to the server with the secret and the conversation id', async () => {
+  it('handshakes, lists the forty tools (twenty-one of 联网, five of 网吧, seven of 字符画主题, seven of 开场动画), and carries each call to the server with the secret and the conversation id', async () => {
     const tokenFile = path.join(dir, 'secret.token');
     fs.writeFileSync(tokenFile, `${SECRET}\n`);
     hits.length = 0;
@@ -99,7 +99,7 @@ describe('the web MCP server over stdio', () => {
       m.notify('notifications/initialized');
       expect((await m.rpc('ping')).result).toEqual({});
       const tools = (await m.rpc('tools/list')).result.tools;
-      expect(tools.map((t: any) => t.name)).toEqual(['web_search', 'browser_open', 'browser_read', 'browser_find', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll', 'browser_back', 'browser_screenshot', 'browser_computer', 'browser_console', 'browser_network', 'browser_snapshot', 'browser_wait', 'browser_tabs', 'browser_viewport', 'browser_hover', 'browser_drag', 'browser_select', 'browser_eval', 'character_guide', 'character_draft', 'character_save', 'character_assign', 'character_list', 'theme_guide', 'theme_draft', 'theme_get', 'theme_save', 'theme_apply', 'theme_list', 'theme_delete']);
+      expect(tools.map((t: any) => t.name)).toEqual(['web_search', 'browser_open', 'browser_read', 'browser_find', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll', 'browser_back', 'browser_screenshot', 'browser_computer', 'browser_console', 'browser_network', 'browser_snapshot', 'browser_wait', 'browser_tabs', 'browser_viewport', 'browser_hover', 'browser_drag', 'browser_select', 'browser_eval', 'character_guide', 'character_draft', 'character_save', 'character_assign', 'character_list', 'theme_guide', 'theme_draft', 'theme_get', 'theme_save', 'theme_apply', 'theme_list', 'theme_delete', 'opening_guide', 'opening_draft', 'opening_get', 'opening_save', 'opening_apply', 'opening_list', 'opening_delete']);
       expect(hits).toHaveLength(0); // nothing so far needed the server
 
       const search = (await m.rpc('tools/call', { name: 'web_search', arguments: { query: 'node streams', count: 3 } })).result;
@@ -180,13 +180,14 @@ describe('the tool list', () => {
   it('the tools that can answer with a picture, and web_search, are not deferred on our engine (alwaysLoad); no other tool is', () => {
     // ccb hides MCP tools behind ExecuteExtraTool, whose result is one JSON string: a picture would reach the model as
     // base64 text. alwaysLoad keeps a tool in the model's own list — only for these, so the list stays short.
-    const IMAGE_TOOLS = ['browser_screenshot', 'browser_computer', 'character_draft', 'theme_draft', 'ego_browser'];
+    // (opening_draft answers with the trial run's strip of pictures)
+    const IMAGE_TOOLS = ['browser_screenshot', 'browser_computer', 'character_draft', 'theme_draft', 'opening_draft', 'ego_browser'];
     const loadedIn = (env: NodeJS.ProcessEnv) => toolsFor(env).filter((t) => (t as { _meta?: Record<string, unknown> })._meta?.['anthropic/alwaysLoad'] === true).map((t) => t.name).sort();
     // ego_browser_guide came with ego_browser (read once before it), not for a picture
     expect(loadedIn({ CW_WEB_BROWSER: 'ego' })).toEqual([...IMAGE_TOOLS, 'ego_browser_guide', 'web_search'].sort());
     // web_search: the first tool research reaches for (sub-agents spent turns finding it, 2026-11-02)
-    expect(loadedIn({})).toEqual(['browser_computer', 'browser_screenshot', 'character_draft', 'theme_draft', 'web_search']);
-    for (const name of ['browser_open', 'browser_read', 'browser_click', 'browser_eval', 'character_list', 'theme_list']) {
+    expect(loadedIn({})).toEqual(['browser_computer', 'browser_screenshot', 'character_draft', 'opening_draft', 'theme_draft', 'web_search']);
+    for (const name of ['browser_open', 'browser_read', 'browser_click', 'browser_eval', 'character_list', 'theme_list', 'opening_list']) {
       expect((toolsFor({}).find((t) => t.name === name) as { _meta?: unknown })._meta, name).toBeUndefined();
     }
   });
@@ -199,7 +200,7 @@ describe('the tool list', () => {
     }
     const readOnly = TOOLS.filter((t) => t.annotations.readOnlyHint).map((t) => t.name);
     // reading what is already open, and searching; opening an address or acting on a page is not read-only
-    expect(readOnly).toEqual(['web_search', 'browser_read', 'browser_find', 'browser_screenshot', 'browser_console', 'browser_network', 'browser_snapshot', 'browser_wait', 'character_guide', 'character_list', 'theme_guide', 'theme_get', 'theme_list']);
+    expect(readOnly).toEqual(['web_search', 'browser_read', 'browser_find', 'browser_screenshot', 'browser_console', 'browser_network', 'browser_snapshot', 'browser_wait', 'character_guide', 'character_list', 'theme_guide', 'theme_get', 'theme_list', 'opening_guide', 'opening_get', 'opening_list']);
   });
 
   it('the console / network / structure / wait / tabs / viewport tools take what the contract says', () => {
