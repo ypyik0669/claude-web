@@ -1,0 +1,16 @@
+/* The start page's one-time 「东西搬到哪了」 card (features/home/MovedNotice.tsx): a quiet card above the input, two
+   columns (old thing → where it lives now) that stack on phones. */
+.moved-notice { margin-top: var(--sp-6); padding: var(--sp-4) var(--sp-5); border-radius: var(--r-xl); background: var(--fill-subtle); color: var(--ink-1); font-size: 14px; text-align: left; }
+.moved-notice .mn-head { display: flex; align-items: center; gap: var(--sp-2); }
+.moved-notice .mn-head svg { color: var(--accent-text, var(--ink-2)); flex: none; }
+.moved-notice h2 { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink-1); }
+.moved-notice .mn-sub { margin: var(--sp-1) 0 var(--sp-3); color: var(--ink-2); }
+.moved-notice .mn-list { display: grid; grid-template-columns: minmax(10em, auto) 1fr; gap: 6px var(--sp-4); margin: 0; }
+.moved-notice .mn-row { display: contents; }
+.moved-notice dt { color: var(--ink-2); }
+.moved-notice dd { margin: 0; }
+.moved-notice .mn-acts { display: flex; justify-content: flex-end; margin-top: var(--sp-3); }
+.app.mobile .moved-notice { padding: var(--sp-4); }
+.app.mobile .moved-notice .mn-list { grid-template-columns: 1fr; gap: 2px; }
+.app.mobile .moved-notice dt { margin-top: var(--sp-2); font-size: 13px; }
+.app.mobile .moved-notice .mn-acts .btn { min-height: 44px; min-width: 88px; }
