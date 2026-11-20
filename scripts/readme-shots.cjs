@@ -3,8 +3,11 @@
 // A throwaway server with the demo of scripts/lib/demo.cjs (a repo with real uncommitted changes, conversations in
 // three projects, a fake upstream, one conversation waiting for a permission and one still working) is driven in a
 // real Chromium (Electron); every picture is a capture of that window (offscreen: works with the screen locked).
-// Output: <out>/{characters,home,chat,split,models,subagent,settings,connect,mission,automation,background,permission,
+// Output: <out>/{characters,home,chat,split,models,subagent,settings,connect,automation,background,permission,
 // language,themes,theme-home,mobile}.png and <out>/cafe.gif (frames of the 3D cafe put together with ffmpeg).
+// The interface of the 2026-11 redesign: the sidebar's five entries, the line under the box, one right panel at a
+// time, the settings dialog (4 groups / 14 pages), 自动化's tabs. There is no `mission` picture any more: the Overview
+// is only a palette command now, and the README's 「同时管理多个对话」 shows `permission` (需要你 + the docked card).
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -36,13 +39,17 @@ async function driver() {
   const reset = async () => { key('Escape'); await sleep(150); key('Escape'); await js('window.__store.setState({ settingsOpen: null, paletteOpen: false })'); };
   const dock = (panel) => js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: ${JSON.stringify(panel)} })`);
   const dockClose = () => js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
-  const newConv = async () => { await click('.nav[data-id="sb-new"], .sb-top .nav'); await sleep(1500); };
+  // the sidebar's 新对话 (redesign 2026-11 stage 1: the first of the five entries under the brand row)
+  const newConv = async () => { await click('.sidebar .sb-nav [data-id="new"]'); await sleep(1500); };
+  const closePages = async () => { await js("document.querySelectorAll('.over-page:not([hidden]) .over-close').forEach((b) => b.click())"); await sleep(500); };
 
   // the first-run face (no model connected yet): the start page's notice and the 接一个模型 dialog
   if (E.SHOTS_PHASE === 'fresh') {
     await load(E.SHOTS_URL);
     if (want('connect')) {
       await waitFor('!!document.querySelector(".modal")', 8000);
+      // 正在检查登录… until the server's first answer about the login (it runs the CLI; slow on a busy machine)
+      await waitFor('!!document.querySelector(".modal.onboarding:not([data-step=\\"checking\\"])")', 45_000);
       await sleep(1200);
       await png('connect');
     }
@@ -57,18 +64,22 @@ async function driver() {
   await store("st.setSetting('ui.theme', 'dark')");
   await dockClose();
 
+  // the start page (redesign 2026-11 stage 4): the logo, 今天想做点什么？, the box and the line under it (文件夹 · 分支 ·
+  // 权限 … 模型 · 子代理 · 智能程度); the shop project has conversations, so no starter suggestions and no checklist
   if (want('home')) { await reset(); await sleep(800); await png('home'); }
   if (want('models')) {
-    await reset(); await click('.cb .mm-anchor:not(.sub-anchor) > button.chip'); await sleep(900); await png('models'); await reset(); await sleep(300);
+    // from a conversation's line under the box: the menu opens upwards with the window's height to fill (on the start
+    // page the box sits in the middle and only the first section fits)
+    await reset(); await openChat(E.SHOTS_SID); await dockClose(); await sleep(600);
+    await click('.pane.focused .composer-under .mm-anchor:not(.sub-anchor) > button.chip'); await sleep(1000); await png('models'); await reset(); await sleep(300);
+    await newConv();
   }
   if (want('subagent')) {
     await reset(); await click('.cb .sub-anchor > button.chip'); await sleep(900); await png('subagent'); await reset(); await sleep(300);
   }
   if (want('chat')) {
-    await reset(); await openChat(E.SHOTS_SID); await dock('files'); await sleep(1800);
-    // open the first changed file's diff in the review panel
-    await js(`(() => { const r = document.querySelector('.rv-file, .rv-row, [data-rv-file]'); if (r) r.click(); })()`);
-    await sleep(1500);
+    // the right panel on 改动 (it was 审阅; one panel at a time, the picker at its top left): both files' diffs open
+    await reset(); await openChat(E.SHOTS_SID); await dock('files'); await sleep(3000);
     await png('chat');
   }
   if (want('split')) {
@@ -83,19 +94,19 @@ async function driver() {
     await sleep(600);
   }
   await dockClose();
+  // 需要你 at the top of the sidebar (the orange dot at the row's end, the spinner of the one still working) and the
+  // waiting conversation open, its card docked above the box — the README's 「同时管理多个对话」, in place of the Overview
   if (want('permission')) {
-    await reset(); await openChat(E.SHOTS_PERM_SID); await waitFor('!!document.querySelector(".pdock, .pdock-out")', 20_000); await sleep(1200); await png('permission');
-  }
-  if (want('mission')) {
-    await reset(); await openChat(E.SHOTS_SID); await dock('mission'); await sleep(1800); await png('mission'); await dockClose();
+    await reset(); await openChat(E.SHOTS_PERM_SID); await waitFor('!!document.querySelector(".pdock, .pdock-out")', 20_000); await sleep(1500); await png('permission');
   }
   if (want('settings')) {
-    await reset(); await store("st.openSettings({ section: 'providers' })"); await waitFor('!!document.querySelector(".modal.settings")', 5000); await sleep(1200);
-    // a provider's form open, like the old picture: the first card's edit button
+    // 设置 › 模型 › 来源 (redesign 2026-11 stage 2: the settings dialog; the providers are the Models page's Sources tab)
+    await reset(); await store("st.openSettings({ section: 'model', tab: 'sources' })"); await waitFor('!!document.querySelector(".modal.settings")', 5000); await sleep(1500);
     await png('settings'); await js('window.__store.setState({ settingsOpen: null })');
   }
   if (want('language')) {
-    await reset(); await store("st.openSettings({ section: 'appearance' })"); await waitFor('!!document.querySelector(".modal.settings")', 5000); await sleep(1200);
+    // 设置 › 外观: 语言 is the page's first row
+    await reset(); await store("st.openSettings({ section: 'appearance' })"); await waitFor('!!document.querySelector(".modal.settings")', 5000); await sleep(1500);
     await png('language'); await js('window.__store.setState({ settingsOpen: null })');
   }
   // 字符画主题: the gallery with one card live under the pointer, then the start page in one of them
@@ -106,11 +117,13 @@ async function driver() {
     await png('themes'); await js('window.__store.setState({ settingsOpen: null })');
   }
   if (want('theme-home')) {
-    await reset(); await store("st.setSetting('ui.theme', 'ascii:koi')"); await newConv(); await sleep(4000);
-    await png('theme-home'); await store("st.setSetting('ui.theme', 'dark')"); await sleep(800);
+    // a character theme's backdrop moves on the start page only with 外观 › 背景动画 on (off by default since redesign
+    // 2026-11 stage 4: the page is a still colour otherwise); null after = back to the default (not "turned off")
+    await reset(); await store("st.setSetting('ui.theme', 'ascii:koi')"); await store("st.setSetting('ui.backdropMotion', true)"); await newConv(); await sleep(4500);
+    await png('theme-home'); await store("st.setSetting('ui.theme', 'dark')"); await store("st.setSetting('ui.backdropMotion', null)"); await sleep(800);
   }
   // 自动化 (redesign 2026-11 stage 1: the sidebar's entry; one tab row for 运行中 · 定时任务 · Bot · 目标 · 编排)
-  if (want('automation')) { await reset(); await click('.sidebar .sb-nav [data-id="automation"]'); await sleep(800); await click('.over-page:not([hidden]) .fam-tabs [data-id="schedules"]'); await sleep(1600); await png('automation'); await js("document.querySelectorAll('.over-page:not([hidden]) .over-close').forEach((b) => b.click())"); await sleep(500); }
+  if (want('automation')) { await reset(); await click('.sidebar .sb-nav [data-id="automation"]'); await sleep(800); await click('.over-page:not([hidden]) .fam-tabs [data-id="schedules"]'); await sleep(1600); await png('automation'); await closePages(); }
   if (want('background') || want('cafe') || want('characters')) {
     await reset(); await openChat(E.SHOTS_SID);
     const sid = JSON.stringify(E.SHOTS_SID);
@@ -127,9 +140,11 @@ async function driver() {
     if (want('cafe')) {
       let rect = await js(`(() => { const c = document.querySelector('.office canvas, canvas.office-canvas, .bg-stage canvas'); if (!c) return null; const r = c.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }; })()`);
       if (rect) {
-        // the tools overlay out of the way, and in close on the seats (wheel = zoom at the pointer)
+        // the tools overlay out of the way, and a little closer: the 3D hall's wheel zooms about the camera's target (the
+        // whole hall's middle), not at the pointer; focusing zone A instead would aim at the row's middle and leave its
+        // guests (PCs 0–3, the row's left end) under the zone list
         await js("(() => { const t = document.querySelector('.office-tools'); if (t) t.style.display = 'none'; })()");
-        const at = { x: Math.round(rect.x + rect.width * Number(E.SHOTS_ZX || 0.42)), y: Math.round(rect.y + rect.height * Number(E.SHOTS_ZY || 0.55)) };
+        const at = { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
         await js(`(() => { const c = document.querySelector('.office-canvas'); for (let i = 0; i < ${Number(E.SHOTS_ZSTEPS || 3)}; i++) c.dispatchEvent(new WheelEvent('wheel', { deltaY: -240, clientX: ${at.x}, clientY: ${at.y}, bubbles: true, cancelable: true })); })()`);
         await sleep(400);
         win.webContents.sendInputEvent({ type: 'mouseMove', x: rect.x + 2, y: rect.y + 2 }); // no tooltip over the guests
@@ -159,12 +174,15 @@ async function driver() {
       key('Escape'); await sleep(300);
     }
     if (toCafe) { await click('.bg-page .bg-runview [data-view="list"]'); await sleep(300); }
-    await js("document.querySelectorAll('.over-page:not([hidden]) .over-close').forEach((b) => b.click())"); await sleep(500);
+    await closePages();
+    // nothing runs any more (the phone's picture opens the same conversation: no pill over its box)
+    await js(`window.__cwBackground.inject({ sessionId: ${sid}, updatedAt: Date.now(), tasks: [], events: [] })`); await sleep(300);
   }
+  // a phone (redesign 2026-11 stage 4): the conversation page's head is ☰ · title · ⋯, the box sits at the bottom
   if (want('mobile')) {
     await reset(); await dockClose();
     win.setContentSize(392, 847); await sleep(1500);
-    await openChat(E.SHOTS_SID); await sleep(1500);
+    await openChat(E.SHOTS_SID); await sleep(2000);
     await png('mobile');
     win.setContentSize(1440, 900); await sleep(800);
   }
@@ -172,13 +190,28 @@ async function driver() {
 }
 
 // ------------------------------------------------------------------------------------------------------------ runner
+// The throwaway HOME: on Windows not under %TEMP%, which is inside this machine's home folder (C:\Users\<name>\…): with
+// CW_DEMO_WORK_IN_HOME=1 the demo's repos are in the HOME, and the permission card shows a path there — the user name
+// would be in a README picture. A folder of each run's own under C:\cw-shots (removed after), else %TEMP%.
+const SHOTS_ROOT = 'C:/cw-shots';
+function shotsHome(lang) {
+  if (process.platform === 'win32') {
+    try { fs.mkdirSync(SHOTS_ROOT, { recursive: true }); return fs.mkdtempSync(`${SHOTS_ROOT}/${lang}-`); } catch { /* no write access to C:\ */ }
+  }
+  return demo.tmpHome(`cw-shots-${lang}-`);
+}
+
 async function runner() {
   const lang = String(arg('--lang', 'en'));
   if (!['en', 'zh'].includes(lang)) throw new Error('--lang en|zh');
   const out = path.resolve(String(arg('--out', path.join(demo.ROOT, 'docs', 'images', lang))));
   fs.mkdirSync(out, { recursive: true });
-  const home = demo.tmpHome(`cw-shots-${lang}-`);
+  const home = shotsHome(lang);
   const seed = demo.seedDemo(home, lang);
+  // our engine's built-in `weixin` plugin can't connect in a throwaway HOME (never logged in) and would sit in the info
+  // column's 连接器 as 「无法连接」: switched off with the engine's own setting (scripts/record-themes.cjs does the same)
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'weixin@builtin': false } }, null, 2));
   const T = demo.TEXT[lang];
   const up = await demo.startUpstream(lang);
   const srv = await demo.startServer(home, { lang, shop: seed.shop });
@@ -186,6 +219,12 @@ async function runner() {
   const c = demo.client(srv.port, srv.token);
   await c.ready;
   await c.req({ kind: 'settings.set', key: 'network.proxy', value: 'off' });
+  // one-time notes the pictures should not carry: the start page's 「东西搬到哪了」 card (it is for people who used the
+  // old layout) and a phone's 「长按一条消息…」 toast
+  await c.req({ kind: 'settings.set', key: 'ui.movedNoticeSeen', value: true });
+  await c.req({ kind: 'settings.set', key: 'ui.hint.longPress', value: true });
+  // …and the sidebar's quiet line 「把 Codex 等工具里的对话也列在这里？」 (it finds this machine's own CLIs): 以后再说
+  for (const s of await c.req({ kind: 'library.sources' }).catch(() => [])) if (!s.joined && !s.dismissed) await c.req({ kind: 'library.dismiss', kind_: s.kind }).catch(() => {});
   const { spawn } = require('node:child_process');
   const electron = require(path.join(demo.ROOT, 'node_modules', 'electron'));
   const only = arg('--only', '');
@@ -203,6 +242,9 @@ async function runner() {
   const prov = await c.req({ kind: 'providers.upsert', provider: { name: lang === 'zh' ? '中转' : 'Relay', type: 'anthropic', baseUrl: up.url, apiKey: 'sk-demo-not-real', defaultModel: 'claude-sonnet-5-5', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'], runtime: 'ccb' } });
   await c.req({ kind: 'providers.upsert', provider: { name: 'DeepSeek', type: 'openai', baseUrl: up.url, apiKey: 'sk-demo-not-real', defaultModel: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'] } });
   await c.req({ kind: 'settings.set', key: 'defaultProviderId', value: prov.id });
+  // the finished demo conversations ran on the relay: without it they would be the Claude account's, which is not
+  // logged in here, and their box would say 「这个对话没有能用的模型来源」
+  for (const sid of [seed.sid, ...seed.ids]) await c.req({ kind: 'session.setMeta', sessionId: sid, patch: { providerId: prov.id } });
   for (const p of [seed.shop, seed.notes, seed.blog]) await c.req({ kind: 'workspaces.add', path: p });
   await c.req({ kind: 'schedules.upsert', schedule: { name: T.schedules[0][0], cwd: seed.shop, prompt: T.schedules[0][1], everyMinutes: 1440, enabled: true } });
   const uuid = () => require('node:crypto').randomUUID();
@@ -218,7 +260,11 @@ async function runner() {
   for (const [k, v] of Object.entries(bg)) extra[`SHOTS_${k}`] = v;
   const code = await run({ SHOTS_PHASE: 'main', ...extra });
   c.ws.close();
+  // the HOME is removed at the end: the server has to let go of its files (memory.db) first — a short --only run
+  // otherwise left its HOME behind under C:\cw-shots
+  const gone = new Promise((r) => { if (srv.server.exitCode !== null || srv.server.signalCode) r(); else { srv.server.once('exit', r); setTimeout(r, 10_000); } });
   srv.server.kill();
+  await gone;
   up.server.close();
 
   // the café frames → a GIF
@@ -231,8 +277,9 @@ async function runner() {
     fs.rmSync(frames, { recursive: true, force: true });
     console.log(`wrote cafe.gif (${(fs.statSync(gif).size / 1024).toFixed(0)} KB)`);
   }
-  try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* a handle may still be held */ }
+  try { fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 400 }); } catch { /* a handle may still be held */ }
   seed.cleanup();
+  if (process.platform === 'win32') try { fs.rmdirSync(SHOTS_ROOT); } catch { /* another run's HOME is in it, or it was never made */ }
   console.log(code === 0 ? 'done' : `electron exited ${code}`);
   process.exit(code === 0 ? 0 : 1);
 }
