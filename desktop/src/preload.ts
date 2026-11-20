@@ -19,8 +19,9 @@ contextBridge.exposeInMainWorld('desktop', {
   chooseCapture: (pick: unknown) => ipcRenderer.invoke('desktop:capture:choose', pick),
   pickFile: (o?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => ipcRenderer.invoke('desktop:pickFile', o),
   // 开场动画 (opening.ts): the opening page waits here for the server, says when it has handed over, and passes on a
-  // sound change; the app page takes that change once it is in
+  // sound change; the app page takes that change once it is in. A web pack's page comes from here too.
   openingWait: () => ipcRenderer.invoke('desktop:opening:wait'),
+  openingPack: () => ipcRenderer.invoke('desktop:opening:pack'),
   openingDone: () => ipcRenderer.send('desktop:opening:done'),
   openingSound: (on: boolean) => ipcRenderer.send('desktop:opening:sound', on === true),
   takeOpeningPrefs: () => ipcRenderer.invoke('desktop:opening:prefs'),

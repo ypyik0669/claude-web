@@ -1,5 +1,7 @@
 // English texts of the desktop shell's strings (key = the Chinese source).
 export const EN_DESKTOP: Record<string, string> = {
+  "Claude 网吧": "Claude Net Cafe",
+  "包间": "Room",
   "Chrome 没能启动，可以改用粘贴 cookie": "Chrome did not start; you can paste cookies instead",
   "{APP_NAME} · {pendingCount} 个待处理": "{APP_NAME} · {pendingCount} pending",
   "{dirty} 个文件未保存": "{dirty} {dirty?file:files} unsaved",

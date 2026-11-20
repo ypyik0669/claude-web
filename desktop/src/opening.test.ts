@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  IGNITE, LOGO_HOLD, LOGO_TARGET, LOGO_TARGET_MAC, OPENING_CREDIT, OPENING_END_MS, OPENING_MAX_SECONDS, OPENING_MIN_MS, ease, fancyOpeningHtml, filmTimes, frameAt,
-  logoTarget, openingHold, openingHtml, openingLength, setOpeningNote, type FancyOpeningOptions,
+  CAFE, CAFE_SCRIPT_URL, DRAWN_KINDS, IGNITE, LOGO_HOLD, LOGO_TARGET, LOGO_TARGET_MAC, OPENING_CREDIT, OPENING_END_MS, OPENING_MAX_SECONDS, OPENING_MIN_MS, PACK_CSP, SCENES,
+  ease, fancyOpeningHtml, filmTimes, frameAt, isDrawnKind, logoTarget, openingCsp, openingHold, openingHtml, openingLength, packHead, setOpeningNote, type FancyOpeningOptions,
 } from './opening';
 
 describe('开场动画', () => {
@@ -70,7 +70,8 @@ const video = (o: Partial<FancyOpeningOptions> = {}) => fancyOpeningHtml({
 /** the page's script parsed and its config taken back out */
 function configOf(h: string) {
   const js = scriptOf(h);
-  const i = js.lastIndexOf(')({');
+  // (the config starts with its first key: a web pack's head inside it has a `)({` of its own, in a JSON string)
+  const i = js.lastIndexOf(')({"kind":');
   expect(i > 0 && js.endsWith('});'), 'the script ends with (player)(config);').toBe(true);
   return JSON.parse(js.slice(i + 2, -2));
 }
@@ -146,5 +147,120 @@ describe('开场动画 · 人设版 / 点火', () => {
     expect(configOf(video()).target).toEqual(LOGO_TARGET);
     expect(configOf(video({ target: logoTarget('darwin') })).target).toEqual(LOGO_TARGET_MAC);
     expect(configOf(video({ mode: 'preview', target: { x: 40.5, y: 30, size: 25 } })).target).toEqual({ x: 40.5, y: 30, size: 25 });
+  });
+});
+
+const cspOf = (h: string) => /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(h)![1];
+const drawn = (kind: 'ignite' | 'stars' | 'ascii', o: Partial<FancyOpeningOptions> = {}) => fancyOpeningHtml({ kind, lang: 'zh', title: 'Claude Web', full: true, sound: false, ground: '#12110f', dark: true, text: TEXT, ...o });
+
+describe('开场动画 · 星图 / 字符雨 (轻量版的另外两幕)', () => {
+  it('the three drawn scenes and their timelines (the proposal demo\'s): 点火 and 星图 alike, 字符雨 a little later', () => {
+    expect(DRAWN_KINDS).toEqual(['ignite', 'stars', 'ascii']);
+    expect(SCENES.stars).toEqual(SCENES.ignite);
+    expect(SCENES.ascii).toEqual({ word: 2.1, out: 3.75, end: 4.4 });
+    expect(IGNITE).toBe(SCENES.ignite);
+    expect([isDrawnKind('stars'), isDrawnKind('ascii'), isDrawnKind('cafe'), isDrawnKind('video')]).toEqual([true, true, false, false]);
+  });
+  it('full about 4 s, 简短 about 2 s until the wordmark waits', () => {
+    expect(openingLength({ kind: 'stars', full: true })).toBe(3700);
+    expect(openingLength({ kind: 'stars', full: false })).toBe(1850);
+    expect(openingLength({ kind: 'ascii', full: true })).toBe(3750);
+    expect(openingLength({ kind: 'ascii', full: false })).toBeCloseTo(1875, 6);
+  });
+  it('one page each: no film, no sound button, the glow behind the logo, the wordmark 「by Super NB」; the script runs its own config', () => {
+    for (const kind of ['stars', 'ascii'] as const) {
+      const h = drawn(kind);
+      expect(h).not.toContain('<video');
+      expect(h).not.toContain('class="snd"');
+      expect(h).toMatch(/<div class="glow">/);
+      expect(h).toContain('<span>by</span>Super NB</div>');
+      expect(h).not.toMatch(/https?:\/\/(?!www\.w3\.org)/);
+      expect(configOf(h)).toMatchObject({ kind, mode: 'splash', dark: true, groundDark: true, cafe: null, web: null });
+      expect(() => new Function(scriptOf(h))).not.toThrow();
+      // nothing is loaded: no media, no scripts from anywhere
+      expect(cspOf(h)).toBe("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; media-src 'none'");
+    }
+  });
+  it('on a light ground: the light palette (the page says so with `lt`)', () => {
+    const h = drawn('ascii', { dark: false, ground: '#f7f6f2' });
+    expect(h).toMatch(/<main class="st lt"/);
+    expect(configOf(h)).toMatchObject({ dark: false, groundDark: false });
+  });
+  it('a card\'s preview (`thumb`): the scene alone, no drag strip; it loops and never flies (the player knows by the mode)', () => {
+    const h = drawn('stars', { mode: 'thumb', full: false, ground: '#13110e' });
+    expect(h).toMatch(/<main class="st thumb"/);
+    expect(h).not.toContain('class="drag"');
+    expect(h).toContain('.thumb .bar,.thumb .snd,.thumb .hint,.thumb .tap,.thumb .note{display:none!important}');
+    expect(configOf(h)).toMatchObject({ mode: 'thumb', full: false });
+    expect(scriptOf(h)).toMatch(/thumb\s*&&\s*phase\s*===\s*["']hold["']/);
+  });
+});
+
+describe('开场动画 · 网吧开门', () => {
+  const cafe = (o: Partial<FancyOpeningOptions> = {}) => fancyOpeningHtml({ kind: 'cafe', lang: 'zh', title: 'Claude Web', full: true, sound: false, ground: '#f7f6f2', dark: false, cafe: { src: CAFE_SCRIPT_URL, sign: 'Claude 网吧', room: '包间' }, text: TEXT, ...o });
+  it('the 3D cafe on its canvas, the logo lighting up over it (dark like the film); 点火 waits hidden for a machine without WebGL', () => {
+    const h = cafe();
+    expect(h).toContain('<canvas class="cafe" aria-hidden="true"></canvas>');
+    expect(h).toMatch(/<main class="st lit"/);
+    expect(h).toContain('<div class="glow" hidden></div>');
+    expect(configOf(h)).toMatchObject({ kind: 'cafe', dark: true, groundDark: false, cafe: { src: 'cw-opening://app/cafe-opening.js', sign: 'Claude 网吧', room: '包间' } });
+    // no WebGL, no script, no first frame by CAFE.load: 点火 (on the ground's own palette)
+    const js = scriptOf(h);
+    expect(js).toContain('webgl2');
+    expect(js).toMatch(/fallback\(\)/);
+    expect(() => new Function(js)).not.toThrow();
+  });
+  it('its script comes from the shell\'s own scheme at a start, from the app in a preview — nothing else', () => {
+    expect(cspOf(cafe())).toBe("default-src 'none'; script-src 'unsafe-inline' cw-opening:; style-src 'unsafe-inline'; img-src data:; media-src 'none'");
+    const p = cafe({ mode: 'preview', cafe: { src: 'http://127.0.0.1:4321/opening/cafe-opening.js', sign: 'x', room: 'y' } });
+    expect(cspOf(p)).toContain("script-src 'unsafe-inline' http://127.0.0.1:4321;");
+  });
+  it('about 4.5 s full, 2.3 s 简短 (the logo phase twice as fast too)', () => {
+    expect(openingLength({ kind: 'cafe', full: true })).toBeCloseTo((CAFE.lit + LOGO_HOLD) * 1000, 6);
+    expect(openingLength({ kind: 'cafe', full: false })).toBeCloseTo((CAFE.litShort + LOGO_HOLD / 2) * 1000, 6);
+  });
+});
+
+describe('开场动画 · 网页包 (index.html in a sandboxed frame)', () => {
+  const web = (o: Partial<FancyOpeningOptions> = {}) => fancyOpeningHtml({ kind: 'web', lang: 'zh', title: 'Claude Web', full: true, sound: false, ground: '#12110f', dark: true, web: { html: null, maxSeconds: 9 }, text: TEXT, ...o });
+  it('a start asks the shell for the page (it is not in the data: URL); the frame is sandboxed, never clicked, cut at its limit', () => {
+    const h = web();
+    const cfg = configOf(h);
+    expect(cfg).toMatchObject({ kind: 'web', maxSeconds: 9, web: { html: null } });
+    expect(cfg.web.head).toBe(packHead({ full: true, dark: true, trial: false }));
+    const js = scriptOf(h);
+    expect(js).toContain('openingPack');
+    expect(js).toMatch(/setAttribute\(["']sandbox["'],\s*["']allow-scripts["']\)/);
+    expect(h).toContain('.pack{pointer-events:none');
+    expect(js).toMatch(/e >= cfg\.maxSeconds/);
+    expect(() => new Function(js)).not.toThrow();
+    expect(openingLength({ kind: 'web', full: true, maxSeconds: 9 })).toBe((9 + LOGO_HOLD) * 1000);
+    expect(openingLength({ kind: 'web', full: true, maxSeconds: 40 })).toBe((OPENING_MAX_SECONDS + LOGO_HOLD) * 1000);
+  });
+  it('the page\'s CSP lets a pack have data: / blob: images, media and fonts — still nothing from the network, no eval', () => {
+    const c = cspOf(web());
+    expect(c).toBe("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:");
+    expect(c).not.toMatch(/https?:|connect-src|unsafe-eval/);
+    expect(openingCsp('web', 'preview')).toBe(c);
+  });
+  it('the pack\'s own head: its CSP first (no fetch, no frames, no workers, no forms), no DNS prefetch, the boot script', () => {
+    expect(PACK_CSP).toContain("connect-src 'none'");
+    expect(PACK_CSP).toContain("frame-src 'none'");
+    expect(PACK_CSP).toContain("worker-src 'none'");
+    expect(PACK_CSP).toContain("form-action 'none'");
+    expect(PACK_CSP).not.toMatch(/https?:|unsafe-eval/);
+    const head = packHead({ full: false, dark: true, trial: true });
+    expect(head.indexOf('Content-Security-Policy')).toBeLessThan(head.indexOf('<script>'));
+    expect(head).toContain('x-dns-prefetch-control');
+    const boot = head.slice(head.indexOf('<script>') + 8, head.lastIndexOf('</script>'));
+    expect(() => new Function(boot)).not.toThrow();
+    expect(boot).toContain('RTCPeerConnection');
+    expect(boot).toContain('cwOpening');
+    expect(boot).toMatch(/\{"full":false,"dark":true,"trial":true\}/);
+  });
+  it('a preview carries the page; a `</script>` in it cannot end the page\'s script', () => {
+    const p = web({ mode: 'preview', web: { html: '<script>cwOpening.done()</script></script><b>x', maxSeconds: 12 }, trial: true });
+    expect(scriptOf(p)).not.toContain('</script>');
+    expect(configOf(p)).toMatchObject({ mode: 'preview', trial: true, web: { html: '<script>cwOpening.done()</script></script><b>x' } });
   });
 });
