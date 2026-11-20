@@ -63,7 +63,9 @@ ws.on('open', async () => {
     check('after joining: codex- items listed', ['codex-thr-a', 'codex-thr-b', 'codex-thr-d'].every((id) => ids(codex).includes(id)), ids(codex).join(' '));
     check('after joining: acp_ items listed', ids(acp).includes('acp_e2e~lib-s1') && ids(acp).includes('acp_e2e~lib-s2'), ids(acp).join(' '));
     const a = codex.find((s) => s.sessionId === 'codex-thr-a');
-    check('sub-agent thread folded under its parent', !ids(list).includes('codex-thr-c') && a?.childCount === 1, `childCount=${a?.childCount}`);
+    // (redesign 2026-11 stage 3: the folded child is sent too, with its parentId, for the sidebar to show it one level in)
+    const c = list.find((s) => s.sessionId === 'codex-thr-c');
+    check('sub-agent thread folded under its parent (sent with its parentId, counted on the parent)', c?.parentId === 'codex-thr-a' && a?.childCount === 1, `childCount=${a?.childCount} parentId=${c?.parentId}`);
     check('codex items carry agent + caps', a?.agent === 'codex' && a?.caps?.rename === true && a?.caps?.delete === true);
 
     const p1 = await req({ kind: 'library.read', sessionId: 'codex-thr-b', limit: 20 });

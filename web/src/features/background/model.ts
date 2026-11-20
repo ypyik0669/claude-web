@@ -36,7 +36,7 @@ export function pillText(s: BgSession | undefined): string | null {
 /** After the turn's Stop: what kept running (the turn's Stop spares it), and where to stop it. */
 export function stopNote(s: BgSession | undefined): string | null {
   const n = (s?.tasks ?? []).filter((t) => running(t) && (t.backgrounded || t.kind === 'workflow')).length;
-  return n ? tr('后台还有 {n} 个任务在跑，在「{BG_TITLE}」里停', { n, BG_TITLE }) : null;
+  return n ? tr('后台还有 {n} 个任务在跑，在 自动化 › 运行中 里停', { n }) : null;
 }
 
 export function agentStateText(a: BgAgent): string {

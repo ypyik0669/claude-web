@@ -41,7 +41,7 @@ function Background({ sessionId }: { sessionId: string }) {
   const pick = (agentKey: string, taskId: string) => { openBackground(sessionId, taskId); openAgent({ sessionId, taskId, agentKey }); };
   return (
     <div className="section bg-tasks" style={{ padding: '0 4px' }}>
-      <h5>{tr('后台')}<button className="tasks-open" onClick={() => openBackground(sessionId)} title={tr('在「后台」里看')}><Icon name="office" size={13} />{tr('打开')}</button></h5>
+      <h5>{tr('后台')}<button className="tasks-open" onClick={() => openBackground(sessionId)} title={tr('在 自动化 › 运行中 里看')}><Icon name="office" size={13} />{tr('打开')}</button></h5>
       <div className="bg-tasks-graph"><CommandGraph session={s} compact onPick={pick} /></div>
       {orderedTasks(s).map((t) => (
         <div key={t.id} className={clsx('bg-ttask', t.status === 'running' && 'live')} data-task={t.id}>

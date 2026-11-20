@@ -178,3 +178,12 @@
 .cu-pill-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cu-pill-off { flex: none; height: 22px; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink-3); font-size: var(--fs-meta); cursor: pointer; }
 .cu-pill-off:hover { background: var(--fill-subtle); color: var(--ink-1); }
+
+/* a phone (redesign 2026-11): the composer's pill and the tasks panel's background part are finger-sized; its small
+   command graph stays on the desktop (the rows under it open the same agents) — the phone check, with work running */
+.app.mobile .bg-pill { height: 44px; padding: 0 14px 0 12px; }
+.app.mobile .bg-tasks h5 .tasks-open { min-height: 44px; padding: 0 10px; }
+.app.mobile .bg-tasks-graph { display: none; }
+.app.mobile .bg-ttask .row .btn { min-height: 44px; min-width: 64px; }
+.app.mobile .bg-tagent { height: auto; min-height: 44px; }
+.app.mobile .bg-wf-head .btn { min-height: 44px; }

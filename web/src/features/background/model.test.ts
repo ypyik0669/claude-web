@@ -23,7 +23,7 @@ describe('后台 words', () => {
   });
 
   it('after the turn\'s Stop, says what kept running in the background', () => {
-    expect(stopNote(session([task(), task({ id: 'x', kind: 'agent', backgrounded: false })]))).toBe('后台还有 1 个任务在跑，在「后台」里停');
+    expect(stopNote(session([task(), task({ id: 'x', kind: 'agent', backgrounded: false })]))).toBe('后台还有 1 个任务在跑，在 自动化 › 运行中 里停');
     expect(stopNote(session([task({ kind: 'agent', backgrounded: false })]))).toBeNull();
     expect(stopNote(undefined)).toBeNull();
   });

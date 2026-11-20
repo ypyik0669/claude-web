@@ -72,10 +72,10 @@ export function effortTitle(level: string | null | undefined, note?: string): st
 
 export const ULTRACODE = {
   label: TERMS.ultracode,
-  desc: tr('大任务用：它先拆成几块，分给几个子代理同时做，你在「后台」看进度。小问题别开，更慢、更费额度'),
-  title: tr('{ultracode}（ultracode）：给大任务用。打开后说一件大一点的事（比如「把登录模块重构一下，顺便补测试」），它会先拆成几块，分给几个子代理同时做，最后汇总给你；进度在「后台」看。想得最深，更慢、更费额度。对整个对话生效，再点一次关掉', { ultracode: TERMS.ultracode }),
+  desc: tr('大任务用：它先拆成几块，分给几个子代理同时做，进度在 自动化 › 运行中 看。小问题别开，更慢、更费额度'),
+  title: tr('{ultracode}（ultracode）：给大任务用。打开后说一件大一点的事（比如「把登录模块重构一下，顺便补测试」），它会先拆成几块，分给几个子代理同时做，最后汇总给你；进度在 自动化 › 运行中 看。想得最深，更慢、更费额度。对整个对话生效，再点一次关掉', { ultracode: TERMS.ultracode }),
   /** said once when it is switched on: what to do next */
-  on: tr('{ultracode}已打开：说一件大一点的事，它会拆开分给几个子代理同时做，进度在「后台」看', { ultracode: TERMS.ultracode }),
+  on: tr('{ultracode}已打开：说一件大一点的事，它会拆开分给几个子代理同时做，进度在 自动化 › 运行中 看', { ultracode: TERMS.ultracode }),
   /** the composer's placeholder while it is on */
   placeholder: tr('说一件大一点的事，比如「把登录模块重构一下，顺便补测试」——它会分给几个子代理同时做'),
 } as const;

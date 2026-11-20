@@ -3620,18 +3620,17 @@ function driver() {
             })()`);
             check('sidebar scenarios: fakes installed (kept by a store subscription while they run)', installed);
             await sleep(400);
-            // final review §9 #5: the discovery hint waits while the newcomer checklist is still on the home page…
+            // the discovery hint waits out the first screen only (no conversation on this computer yet: the 入门清单's
+            // time; unit-tested in newcomer.test.ts) — with conversations here an unfinished list no longer holds it back…
             const hintEarly = await exists('.sidebar .sb-hint');
             // …and the home page never shows it (redesign 2026-11 stage 4: under the box only the greeting, the box and
             // its row — the coordinator's list: no 「把 Codex 等工具里的对话也列在这里？」 there)
             const homeEarly = await js(`(() => ({ home: !!document.querySelector('.welcome'), hint: !!document.querySelector('.welcome .home-hint') }))()`);
-            // …but not forever (re-review M-7): 3 days after the list first showed (`since`) it comes anyway
+            // …a list shown a day ago does not either (it used to, up to 3 days: re-review M-7)
             await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], since: Date.now() - 86400e3 }; window.__cwSmokeFakesApply(); })()`);
             await sleep(300);
             const hintDay = await exists('.sidebar .sb-hint');
-            await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], since: Date.now() - 4 * 86400e3 }; window.__cwSmokeFakesApply(); })()`);
-            const hintAged = await waitFor(`!!document.querySelector('.sidebar .sb-hint')`, 2000);
-            check('library hint: an unfinished checklist shown a day ago still holds it back; one shown 4 days ago no longer does (re-review M-7)', !hintDay && hintAged, JSON.stringify({ hintDay, hintAged }));
+            check('library hint: with conversations on this computer an unfinished 入门清单 no longer holds it back (just shown, or a day ago)', hintEarly && hintDay, JSON.stringify({ hintEarly, hintDay }));
             await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], dismissed: true }; window.__cwSmokeFakesApply(); })()`);
             await sleep(300);
             await harvest();
@@ -3640,7 +3639,7 @@ function driver() {
             const hintWant = hintNow.names.length === 1 ? `把 ${hintNow.names[0]} 里的对话也列在这里？` : `把 ${hintNow.names[0]} 等工具里的对话也列在这里？`;
             const homeLate = await exists('.welcome .home-hint');
             check('library hint: never on the home page (only the sidebar has it)', !homeEarly.hint && !homeLate, JSON.stringify({ homeEarly, homeLate }));
-            check('library hint: not while the newcomer checklist is on; once it is closed, one plain question (把 Codex 里的对话也列在这里？ · 列出来 / 以后再说)', !hintEarly && hintNow.msg === hintWant && hintNow.title.includes('Codex') && await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'), JSON.stringify({ hintEarly, hintNow, hintWant }));
+            check('library hint: one plain question (把 Codex 里的对话也列在这里？ · 列出来 / 以后再说)', hintNow.msg === hintWant && hintNow.title.includes('Codex') && await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'), JSON.stringify({ hintEarly, hintNow, hintWant }));
             // several agents' names wrap onto a second line instead of being cut off; the full text is the tooltip
             await js(`(() => { const names = { opencode: 'OpenCode', gemini: 'Gemini CLI', qwen: 'Qwen Code' }; const extra = Object.keys(names).map((k) => ({ kind: k, name: names[k], installed: true, detected: true, joined: false, dismissed: false, enabled: false })); const st = window.__store.getState(); window.__store.setState({ librarySources: [...st.librarySources.filter((x) => !names[x.kind]), ...extra] }); })()`);
             await sleep(300);

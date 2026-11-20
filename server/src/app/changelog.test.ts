@@ -12,6 +12,12 @@ describe('changelog', () => {
     expect(latestSections(LOG, 9)).toContain('## [0.1.0]');
     expect(latestSections('no versions here', 3)).toBe('');
   });
+  it('leaves out the section not released yet (Unreleased / 未发布 on top, renamed when it ships)', () => {
+    const next = LOG.replace('## [0.3.0]', '## [Unreleased]\r\n\r\n- next\r\n\r\n## [0.3.0]');
+    expect(latestSections(next, 1)).toBe('## [0.3.0] — 2026-10-20\n\n- three');
+    expect(latestSections(next.replace('[Unreleased]', '[未发布]'), 2)).toBe('## [0.3.0] — 2026-10-20\n\n- three\n\n## [0.2.0] — 2026-10-10\n\n- two');
+    expect(latestSections('# Changelog\n\n## [未发布]\n\n- next\n', 3)).toBe('');
+  });
   it('the interface language picks the file, English is the fallback', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-log-'));
     fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '## [1.0.0]\n\n- english\n');

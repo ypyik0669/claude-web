@@ -23,7 +23,7 @@ export function WorkflowLive({ toolUseId, onlyRunning }: { toolUseId: string; on
       <div className="bg-wf-head">
         <span className="t">{task.status === 'running' ? tr('{running} 个在跑 · {done}/{agentsCount} 完成', { running, done, agentsCount: task.agents.length }) : tr('{taskStateText} · {done}/{agentsCount} 完成', { taskStateText: taskStateText(task), done, agentsCount: task.agents.length })}</span>
         <span className="grow" />
-        <button className="btn sm" onClick={() => openBackground(sessionId, task.id)}><Icon name="office" size={13} />{tr('在「后台」里看')}</button>
+        <button className="btn sm" onClick={() => openBackground(sessionId, task.id)} title={tr('自动化 › 运行中')}><Icon name="office" size={13} />{tr('在运行中里看')}</button>
       </div>
       {phases.map((p) => {
         const agents = task.agents.filter((a) => (p.index ? a.phase === p.index : true));
