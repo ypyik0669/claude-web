@@ -27,6 +27,8 @@ describe('运行中 as a list', () => {
     // a phone: where the workflow is instead of how long
     expect(groupMeta(task(), 'C:\\work\\acme-shop', now, { phase: '改代码 2/4' })).toBe('acme-shop · 工作流 · 改代码 2/4');
     expect(groupMeta(task(), 'C:\\work\\acme-shop', now, { phase: null })).toBe('acme-shop · 工作流 · 8 分钟');
+    // … and the kind without the sub-agent's type (its row says it), as the plan's phone screen writes it
+    expect(groupMeta(task({ kind: 'agent', agents: [agent({ agentType: 'Explore' })] }), '/home/me/acme-shop/', now, { phase: null, short: true })).toBe('acme-shop · 子代理 · 8 分钟');
   });
 
   it('shows where a running workflow is: the phase of its first agent at work, out of all phases', () => {

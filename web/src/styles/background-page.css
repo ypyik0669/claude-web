@@ -135,7 +135,9 @@
 .app.mobile .bg-run-h { gap: 10px; padding: 6px 4px 6px 14px; min-height: 56px; }
 .app.mobile .bg-run-h .tx { flex-direction: column; align-items: stretch; gap: 1px; }
 .app.mobile .bg-run-h .tx b { font-size: var(--fs-body); white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
-.app.mobile .bg-run-h .tx small { font-size: var(--fs-sm); }
+/* (two lines at most: on 360 px the phase at its end was cut off; it breaks after a 「 · 」 — RunList keepParts — and
+   never inside a word like 改代码) */
+.app.mobile .bg-run-h .tx small { font-size: var(--fs-sm); white-space: normal; word-break: keep-all; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .app.mobile .bg-run-h .r { gap: 2px; }
 .app.mobile .bg-run-phase { display: none; } /* (the phase is in the line under the name there, as the plan draws it) */
 .app.mobile .bg-run-st { font-size: var(--fs-sm); }

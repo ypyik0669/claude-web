@@ -33,11 +33,12 @@ export function taskKind(t: BgTask): string {
 /**
  * A group's second line, as the plan draws it: acme-shop · 工作流 · 8 分钟 (how long it has run, or ran). `phase`:
  * a phone's line says where a workflow is instead of how long (acme-shop · 工作流 · 改代码 2/4) — it has no room
- * for the phase beside the name.
+ * for the phase beside the name. `short`: a phone's kind without the sub-agent's type (its row says it), as the
+ * plan's phone screen writes it.
  */
-export function groupMeta(t: BgTask, cwd: string | undefined, now: number, o: { phase?: string | null } = {}): string {
+export function groupMeta(t: BgTask, cwd: string | undefined, now: number, o: { phase?: string | null; short?: boolean } = {}): string {
   const end = t.status === 'running' ? now : (t.endedAt ?? now);
-  return [projectOf(cwd), taskKind(t), o.phase || spanText(Math.max(0, end - t.startedAt))].filter(Boolean).join(' · ');
+  return [projectOf(cwd), o.short ? KIND_LABEL[t.kind] : taskKind(t), o.phase || spanText(Math.max(0, end - t.startedAt))].filter(Boolean).join(' · ');
 }
 
 /**

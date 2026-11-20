@@ -44,6 +44,9 @@ function useNow(on: boolean): number {
 
 const groupKey = (g: RunGroup) => `${g.sessionId}|${g.task.id}`;
 
+/** A phone's second line may take two lines: it breaks only after a 「 · 」, never inside 「20 分钟」 or 「改代码 2/4」. */
+const keepParts = (s: string) => s.split(' · ').map((p) => p.replace(/ /g, '\u00a0')).join('\u00a0· ');
+
 function AgentRow({ task, agent: a, phone, onPick }: { task: BgTask; agent: BgAgent; phone: boolean; onPick: () => void }) {
   return (
     <button type="button" className={clsx('bg-run-a', `is-${a.state}`)} style={{ '--c': agentColor(a.color) } as CSSProperties} title={agentTip(task, a)} data-agent={a.key} onClick={onPick}>
@@ -64,6 +67,7 @@ function RunCard({ g, session, title, cwd, now, phone, graph, onGraph, flash }: 
   const { shown, more } = shownAgents(t.kind === 'shell' ? [] : t.agents, all);
   const phase = phaseChip(t);
   const name = taskTitle(t);
+  const meta = groupMeta(t, cwd, now, { phase: phone ? phase : null, short: phone });
   const open = tr('打开对话「{title}」', { title });
   const pick = (a: BgAgent) => openAgent({ sessionId: g.sessionId, taskId: t.id, agentKey: a.key });
   const events = graph ? session.events.filter((e) => e.taskId === t.id) : [];
@@ -73,7 +77,7 @@ function RunCard({ g, session, title, cwd, now, phone, graph, onGraph, flash }: 
         <Icon name={KIND_ICON[t.kind]} size={phone ? 17 : 15} />
         <span className="tx">
           <b title={name}>{name}</b>
-          <small title={title}>{groupMeta(t, cwd, now, { phase: phone ? phase : null })}</small>
+          <small title={title}>{phone ? keepParts(meta) : meta}</small>
         </span>
         <span className="r">
           {phase && <span className="bg-run-phase">{phase}</span>}
