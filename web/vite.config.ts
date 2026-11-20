@@ -44,6 +44,8 @@ export default defineConfig({
       '@characters': path.resolve(__dirname, '../server/src/characters/core/index.ts'),
       // the character themes' pure core: the server checks a theme skill's drafts with it
       '@themes': path.resolve(__dirname, '../server/src/themes/core/index.ts'),
+      // 开场动画: the desktop shell's opening page (it imports nothing), for 设置 › 外观 › 试放一次
+      '@opening': path.resolve(__dirname, '../desktop/src/opening.ts'),
       '@': path.resolve(__dirname, 'src'),
     },
   },

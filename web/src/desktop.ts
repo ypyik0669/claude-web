@@ -2,11 +2,15 @@
 export interface DesktopBridge {
   version: string;
   platform: string;
-  pickDir(): Promise<string | null>;
+  /** `title`: the dialog's own (older shells ignore it and say 「选择工作目录」) */
+  pickDir(o?: { title?: string }): Promise<string | null>;
   /** 录屏 (stage E3): screens / windows for our own picker (not this app's windows), the pick for the next getDisplayMedia, a file */
   captureSources?(): Promise<{ id: string; name: string; kind: 'screen' | 'window'; thumb: string }[]>;
   chooseCapture?(p: { kind: 'source'; id: string } | { kind: 'guest'; webContentsId: number }): Promise<boolean>;
-  pickFile?(): Promise<string | null>;
+  pickFile?(o?: { title?: string; filters?: { name: string; extensions: string[] }[] }): Promise<string | null>;
+  /** 开场动画: what was changed during the opening (its sound button), taken once by the page that comes after it.
+   *  (openingWait / openingDone / openingSound are the opening page's own: desktop/src/opening.ts.) */
+  takeOpeningPrefs?(): Promise<{ sound?: boolean } | null>;
   /** 粘贴文件 / 文件夹 (desktop/src/clipboard-files.ts): a pasted File's path on this disk — `webUtils.getPathForFile`;
    *  '' for one with none (a screenshot, a File made in the page) */
   pathForFile?(f: File): string;

@@ -41,6 +41,7 @@ import { coverApp } from './cover';
 import { WebSettings } from '@/features/browser/WebSettings';
 import { tr, trAs } from '@/i18n';
 import { CustomCssSection } from './CustomCssSection';
+import { OpeningKeep, OpeningPacks, OpeningPicker } from '@/features/opening/OpeningSettings';
 import { VIEW_MODES, viewModeLabel } from '@/features/chat/view-mode';
 import { LocalEnvEditor } from './LocalEnvEditor';
 import { thinkingLanguageOptions } from './thinking-language';
@@ -92,6 +93,11 @@ const CONTROLS: Record<EntryId, (e: EntryMeta) => ReactNode> = {
   'ui.cjkFont': (e) => <Select k={e.id} def="" label={e.label} options={CJK_FONTS} />,
   'ui.reduceMotion': (e) => <Toggle k={e.id} label={e.label} />,
   'ui.haptics': (e) => <Toggle k={e.id} def label={e.label} />,
+  'ui.opening.pack': (e) => <OpeningPicker label={e.label} />,
+  'ui.opening.when': (e) => <Seg k={e.id} def="daily" label={e.label} options={[{ id: 'always', l: tr('每次打开') }, { id: 'daily', l: tr('每天第一次') }, { id: 'never', l: tr('不放') }]} />,
+  'ui.opening.length': (e) => <Seg k={e.id} def="full" label={e.label} options={[{ id: 'short', l: tr('简短') }, { id: 'full', l: tr('完整') }]} />,
+  'ui.opening.sound': (e) => <Toggle k={e.id} label={e.label} />,
+  'ui.opening.keep': (e) => <OpeningKeep label={e.label} />,
   'bots.concurrency': (e) => <NumberSelect k={e.id} def={2} label={e.label} options={[1, 2, 3, 4, 5, 6, 7, 8]} />,
   'bots.globalBudgetUsd': (e) => <BotsBudget label={e.label} />,
   'bots.defaultProvider': (e) => <BotsDefaultProvider label={e.label} />,
@@ -135,6 +141,7 @@ const BODIES: Record<BodyId, () => ReactNode> = {
   update: () => <UpdateSection />,
   raw: () => <Settings />,
   customCss: () => <CustomCssSection />,
+  openings: () => <OpeningPacks />,
 };
 
 /** Is the key event aimed at something you type into? ('/' focuses the search only when it is not.) */
@@ -339,7 +346,7 @@ function VersionLine({ onOpen }: { onOpen: () => void }) {
 
 function EntryRow({ sec, e, reveal }: { sec: SectionMeta; e: EntryMeta; reveal?: string }) {
   return (
-    <div className={clsx('sp-row-wrap', reveal === e.id && 'reveal')} data-entry={e.id}>
+    <div className={clsx('sp-row-wrap', e.wide && 'wide', reveal === e.id && 'reveal')} data-entry={e.id}>
       <ErrorBoundary area={tr('设置 · {l} · {label}', { l: sec.l, label: e.label })} compact>
         <Row label={e.label} hint={e.hint} tag={e.tag}>{CONTROLS[e.id](e)}</Row>
       </ErrorBoundary>

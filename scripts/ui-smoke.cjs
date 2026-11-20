@@ -1664,7 +1664,8 @@ function driver() {
           await js(`window.__store.getState().openInPane(null, 'replace')`);
           const welcomeUp = await waitFor(`!!document.querySelector('.pane.focused .welcome .composer') && window.__store.getState().activeId == null`, 5000);
           await sleep(500);
-          const wl = await js(`(() => { const c = document.querySelector('.pane.focused .welcome .composer'); const u = c?.querySelector('.composer-under'); return { under: !!u, mode: !!u?.querySelector('.cmp-mode [data-mode="chat"]'), folder: !!u?.querySelector('.dirpick'), boxChips: !!c?.querySelector('.composer-box .dirpick'), backdrop: !!document.querySelector('.pane.focused .welcome-tile > canvas.ascii-field') }; })()`);
+          // the moving backdrop: 字流 on the page, or 放完留作背景 (her loop / 火星) showing through it instead (features/opening)
+          const wl = await js(`(() => { const c = document.querySelector('.pane.focused .welcome .composer'); const u = c?.querySelector('.composer-under'); const opening = document.documentElement.classList.contains('obd-on') && !!document.querySelector('.obd > video, .obd > canvas') && document.querySelector('.pane.focused')?.hasAttribute('data-home'); return { under: !!u, mode: !!u?.querySelector('.cmp-mode [data-mode="chat"]'), folder: !!u?.querySelector('.dirpick'), boxChips: !!c?.querySelector('.composer-box .dirpick'), backdrop: !!document.querySelector('.pane.focused .welcome-tile > canvas.ascii-field') || !!opening }; })()`);
           await click('.pane.focused .composer-under .cmp-mode [data-mode="chat"]');
           const chatOnly = await waitFor(`!!document.querySelector('.pane.focused .welcome .cap-tag[data-cap="chatOnly"]')`, 2000);
           await click('.pane.focused .composer-under .cmp-mode [data-mode="code"]');
@@ -3045,16 +3046,20 @@ function driver() {
             await harvest();
             check('account popover: the quota windows when the limits are known', await exists('.menu.sb-acct-menu [data-id="quota"]'));
             await closeMenus();
-            // a signed-in account whose login expired: 登录已过期 on top, 重新登录 and 退出 Claude 账号 (account.tsx shows
-            // them only then; the temp HOME has no login, so the account is put in for one look and taken back)
-            const authBefore = await js('JSON.stringify(window.__store.getState().auth ?? null)');
-            await js(`window.__store.setState({ auth: { loggedIn: true, email: 'smoke@example.invalid', expired: true, expiredMessage: 'smoke: the login expired' } })`);
+            // …and the two login states the temp HOME never has: signed in (退出 Claude 账号) and a login that expired (the
+            // notice). Faked for one look and put back at once — held by a subscription meanwhile, since a login check
+            // answering (`auth.changed`, a reconnect) would replace it; no email / plan, so nothing is remembered for an
+            // account (features/models/account-default.ts keys its memory on them)
+            const realAuth = await js('JSON.stringify(window.__store.getState().auth ?? null)');
+            await js(`(() => { const st = window.__store; const fake = { loggedIn: true, expired: true, expiredMessage: 'smoke: 401 authentication_error', expiredAt: Date.now() }; window.__cwSmokeAuthOff = st.subscribe((s) => { if (s.auth !== fake) st.setState({ auth: fake }); }); st.setState({ auth: fake }); })()`);
+            await sleep(200);
             await click(':is(.rail, .sidebar) [data-id="account"]');
-            const expiredAcc = await ids('.menu.sb-acct-menu [data-id]');
+            await waitFor('!!document.querySelector(".menu.sb-acct-menu")', 2000);
             await harvest();
+            const acctStates = await js(`({ expired: !!document.querySelector('.menu.sb-acct-menu [data-id="expired"]'), logout: !!document.querySelector('.menu.sb-acct-menu [data-id="logout"]'), relogin: /重新登录/.test(document.querySelector('.menu.sb-acct-menu [data-id="login"]')?.textContent ?? '') })`);
             await closeMenus();
-            await js(`window.__store.setState({ auth: ${authBefore} })`);
-            check('account popover, signed in with an expired login: 登录已过期, 重新登录 and 退出 Claude 账号', has(expiredAcc, ['expired', 'login', 'logout']), JSON.stringify(expiredAcc));
+            await js(`(() => { if (window.__cwSmokeAuthOff) window.__cwSmokeAuthOff(); window.__cwSmokeAuthOff = null; window.__store.setState({ auth: JSON.parse(${JSON.stringify(realAuth)}) }); })()`);
+            check('account popover: a signed-in account offers 重新登录 and 退出; an expired login says so at the top', acctStates.expired && acctStates.logout && acctStates.relogin, JSON.stringify(acctStates));
             // a live runner: 结束进程 in the conversation menu
             await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'idle' } } } : {}; })`);
             await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);

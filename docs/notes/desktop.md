@@ -27,4 +27,5 @@ npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-
 - 启动页（`splashUrl()`）换成交付包的开场：`desktop/src/opening.ts` 生成一整页 data: URL（Logo SVG 原样内联，样式全在这页里，碰不到应用）。时间轴 / 五次 smoothstep / 字号 / 配色照包，去掉了预览用的重播按钮和 `window.__opening`；`prefers-reduced-motion` 直接终态。
 - 包里没有的、我们加的：系统是暗色时用应用的暗底（`#12110f`，Web 变浅色，Logo 外一圈 1px 淡描边，否则黑方块融进背景）——避免暗色应用开机先闪一屏白；动画放完 3.5 s 还没进应用时下方淡出「正在启动…」；20 s 的「电脑比较忙…」改为 `executeJavaScript(setOpeningNote())` 只换那行字，不重载（重载会重播动画）。
 - 速度：动画本身 1.45 s 没改。服务比动画先好时（热启动）等到开场页 dom-ready 后 1.6 s（`openingHold`）再换真页面；冷启动本来就更久，不多等。实测（开发版、临时目录）：冷启动开场 1.3 s 出现、14.9 s 进应用；热启动 1.1 s / 3.7 s。`--hidden` 启动不等。
-- 截图办法：离屏窗口的 `capturePage()` 不回、挪到屏幕外报 UnknownVizError——用 `offscreen: true` + `paint` 事件拿最后一帧，并给脚本单独的 userData。
+- 截图办法：离屏窗口的 `capturePage()` 不回、挪到屏幕外报 UnknownVizError——用 `offscreen: true` + `paint` 事件拿最后一帧，并给脚本单独的 userData。（开场现在用 `scripts/opening-shots.mjs` 走 CDP 截真窗口，见「人设版开场与背景」。）
+- 2026-11-19 起默认每天第一次打开放人设版开场（Claude Web 娘的片子 → 点亮 logo → 飞到左上角），其它时候还是这个老开场，署名统一成「by Super NB」；`opening.ts` 里两种都有，怎么选、怎么握手见「人设版开场与背景」。

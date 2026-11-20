@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, clipboard, Notification, dialog, shell, ipcMain, nativeImage, nativeTheme, powerSaveBlocker, screen, session, desktopCapturer, webContents } from 'electron';
+import { app, BrowserWindow, Menu, Tray, clipboard, Notification, dialog, shell, ipcMain, nativeImage, nativeTheme, powerSaveBlocker, protocol, screen, session, desktopCapturer, webContents } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { ServerHost } from './server-host';
@@ -23,7 +23,8 @@ import { CrashGuard, allowNavigation, externalAllowed, sameOrigin, windowOpenAct
 import { FileGuard, guardSession } from './file-guard';
 import { fromOurWindow, openablePath, type IpcAsker } from './ipc-guard';
 import { pastedFiles } from './clipboard-files';
-import { openingHold, openingHtml, setOpeningNote } from './opening';
+import { OPENING_SCHEME, fancyOpeningHtml, openingHold, openingHtml, openingLength, setOpeningNote } from './opening';
+import { IGNITE_ID, dataDir, groundOf, localDay, openingSettings, packFileUrl, packResponse, pickOpening, readMetaSettings, resolvePack } from './opening-pack';
 
 const isMac = process.platform === 'darwin';
 
@@ -49,7 +50,7 @@ fixPosixPath();
 
 // ---------- launch flags (read before `ready`): software rendering fallback ----------
 const flagsFile = () => path.join(app.getPath('userData'), 'flags.json');
-function readFlags(): { softwareRender?: boolean; gpuCrashes?: number; autoUpdate?: boolean; zoom?: number } {
+function readFlags(): { softwareRender?: boolean; gpuCrashes?: number; autoUpdate?: boolean; zoom?: number; /** 开场: the day the chosen opening last played (每天第一次) */ openingDay?: string } {
   try { return JSON.parse(fs.readFileSync(flagsFile(), 'utf8')); } catch { return {}; }
 }
 function writeFlags(f: Record<string, unknown>) {
@@ -189,13 +190,58 @@ function windowUrl(base: string, winId: string) {
   return u.toString();
 }
 
+// ---------- 开场动画 (opening.ts: the pages; opening-pack.ts: which one, its pack's files) ----------
+// the built-in packs travel with the app (electron-builder extraResources), the user's are in <data dir>/openings
+const builtinOpenings = () => (app.isPackaged ? path.join(process.resourcesPath, 'openings') : path.resolve(__dirname, '../openings'));
+const openingRoots = () => [builtinOpenings(), path.join(dataDir(), 'openings')];
+// the opening page (a data: URL) plays the pack's film from here: a scheme of our own, streamed, seekable (Range)
+protocol.registerSchemesAsPrivileged([{ scheme: OPENING_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } }]);
+
+/** This start's opening, decided once before the main window opens. `lengthMs`: until its wordmark waits (fancy). */
+interface Opening { page: 'fancy' | 'classic' | 'still'; html?: string; lengthMs: number; ground: string; dark: boolean }
+let opening: Opening | null = null;
+/** the server is up: a fancy opening waits for it at its last frame (`desktop:opening:wait`) */
+let serverUp: () => void = () => {};
+const serverUpP = new Promise<void>((r) => { serverUp = r; });
+/** a fancy opening has played to its end (or was skipped) and handed over (`desktop:opening:done`) */
+let openingDone: () => void = () => {};
+const openingDoneP = new Promise<void>((r) => { openingDone = r; });
+/** the opening's sound button: the app page writes it into the settings once it is in (`desktop:opening:prefs`) */
+let openingPrefs: { sound?: boolean } = {};
+
+/**
+ * 设置 › 外观 › 开场和背景, read from meta.json (the server is not up yet): the chosen opening on every start or the
+ * day's first (default: Claude Web 娘, each day's first start), else the classic one; a pack that is gone → 点火.
+ */
+function decideOpening(hidden: boolean): Opening {
+  const settings = readMetaSettings();
+  const o = openingSettings(settings);
+  const today = localDay(new Date());
+  const { ground, dark } = groundOf(settings['ui.theme'], nativeTheme.shouldUseDarkColors);
+  const pick = pickOpening({ when: o.when, today, lastDay: readFlags().openingDay, hidden });
+  if (pick.markDay) writeFlags({ openingDay: today });
+  if (pick.show !== 'fancy') return { page: pick.show, lengthMs: 0, ground, dark };
+  const pack = o.pack === IGNITE_ID ? null : resolvePack(o.pack, openingRoots());
+  const kind = pack ? 'video' : 'ignite';
+  const html = fancyOpeningHtml({
+    kind, lang: getLocale() === 'zh' ? 'zh' : 'en', title: APP_NAME, full: o.full, sound: o.sound,
+    reduced: settings['ui.reduceMotion'] === true, ground, dark,
+    video: pack ? { intro: packFileUrl(pack.id, pack.intro), logoAt: pack.logoAt, shortFrom: pack.shortFrom, maxSeconds: pack.maxSeconds } : undefined,
+    text: { skip: tr('点一下跳过'), waiting: tr('正在启动…'), soundOn: tr('开声音'), soundOff: tr('关声音'), tap: tr('点一下播放') },
+  });
+  mainLog(`[opening] ${kind}${pack ? ` ${pack.id}` : ''} ${o.full ? 'full' : 'short'}${o.pack !== IGNITE_ID && !pack ? ` (pack ${o.pack} missing)` : ''}`);
+  return { page: 'fancy', html, lengthMs: openingLength({ kind, full: o.full, ...(pack ?? {}) }), ground, dark };
+}
+
 /**
  * What the main window shows while the server starts: a cold start is seconds (the packaged server, the first
  * scan of ~/.claude), and a window that only appears once the page has rendered reads as「打不开」— a second launch
  * from the Start menu in that time found no window to show either.
  */
 function splashUrl(dark: boolean, note = ''): string {
-  const html = openingHtml({ dark, lang: getLocale() === 'zh' ? 'zh' : 'en', title: APP_NAME, note, waiting: tr('正在启动…') });
+  const html = opening?.page === 'fancy' && opening.html
+    ? opening.html
+    : openingHtml({ dark: opening ? opening.dark : dark, lang: getLocale() === 'zh' ? 'zh' : 'en', title: APP_NAME, note, waiting: tr('正在启动…'), still: opening?.page === 'still' });
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -841,16 +887,41 @@ ipcMain.handle('desktop:capture:choose', (e, p: CapturePick) => {
 // 粘贴文件 / 文件夹 (clipboard-files.ts): what the pasted paths are (folder or file, size) — the page's own list from
 // webUtils.getPathForFile, or, when it was handed no file, the system clipboard's
 ipcMain.handle('desktop:clipboard:files', (e, paths: unknown) => (ours(e) ? pastedFiles(paths, clipboard, process.platform) : []));
-ipcMain.handle('desktop:pickFile', async (e) => {
+/** A page's wishes for the open dialog (a title, which files): only short plain strings get through. */
+function dialogOpts(o: unknown): { title?: string; filters?: Electron.FileFilter[] } {
+  const x = (o && typeof o === 'object' ? o : {}) as { title?: unknown; filters?: unknown };
+  const title = typeof x.title === 'string' && x.title.length <= 200 ? x.title : undefined;
+  const filters = Array.isArray(x.filters)
+    ? x.filters.slice(0, 4).filter((f): f is Electron.FileFilter => !!f && typeof f.name === 'string' && f.name.length <= 80 && Array.isArray(f.extensions) && f.extensions.length <= 12 && f.extensions.every((e: unknown) => typeof e === 'string' && /^[a-z0-9]{1,8}$/i.test(e)))
+      .map((f) => ({ name: f.name, extensions: [...f.extensions] }))
+    : undefined;
+  return { ...(title ? { title } : {}), ...(filters?.length ? { filters } : {}) };
+}
+ipcMain.handle('desktop:pickFile', async (e, o?: unknown) => {
   if (!ours(e)) return null;
   const w = BrowserWindow.fromWebContents(e.sender) ?? focusedWin();
-  const r = await dialog.showOpenDialog(w!, { properties: ['openFile'] });
+  const r = await dialog.showOpenDialog(w!, { properties: ['openFile'], ...dialogOpts(o) });
   return r.canceled ? null : r.filePaths[0];
 });
-ipcMain.handle('desktop:pickDir', async (e) => {
+ipcMain.handle('desktop:pickDir', async (e, o?: unknown) => {
   const w = BrowserWindow.fromWebContents(e.sender) ?? focusedWin();
-  const r = await dialog.showOpenDialog(w!, { properties: ['openDirectory', 'createDirectory'], title: tr('选择工作目录') });
+  const r = await dialog.showOpenDialog(w!, { properties: ['openDirectory', 'createDirectory'], title: tr('选择工作目录'), ...dialogOpts(o) });
   return r.canceled ? null : r.filePaths[0];
+});
+// 开场动画: only the opening page itself (the main window's data: page) says these
+const fromOpening = (e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) => {
+  const m = wins.get('main');
+  return !!m && !m.isDestroyed() && e.sender === m.webContents && (!e.senderFrame || e.senderFrame === e.sender.mainFrame) && e.sender.getURL().startsWith('data:');
+};
+ipcMain.handle('desktop:opening:wait', (e) => (fromOpening(e) ? serverUpP : null));
+ipcMain.on('desktop:opening:done', (e) => { if (fromOpening(e)) openingDone(); });
+ipcMain.on('desktop:opening:sound', (e, on: unknown) => { if (fromOpening(e)) openingPrefs.sound = on === true; });
+/** the app page, once in: what was changed during the opening (taken once) */
+ipcMain.handle('desktop:opening:prefs', (e) => {
+  if (!ours(e)) return null;
+  const p = openingPrefs;
+  openingPrefs = {};
+  return p;
 });
 ipcMain.handle('desktop:deepLink:take', (e) => {
   if (BrowserWindow.fromWebContents(e.sender) !== wins.get('main')) return null;
@@ -1034,8 +1105,20 @@ if (gotLock) app.whenReady().then(async () => {
       }) as Electron.Streams);
     } catch { cb({}); }
   });
+  // the opening page plays its pack's film from cw-opening:// (opening-pack.ts: pack files only, ranges for seeking)
+  protocol.handle(OPENING_SCHEME, (req) => packResponse(req, openingRoots()));
   // the window first (on the splash), then the server: see splashUrl
   const hidden = process.argv.includes('--hidden');
+  try {
+    opening = decideOpening(hidden);
+  } catch (e: any) {
+    // the opening never keeps the app from starting: the classic one then
+    mainLog(`[opening] failed, the classic one instead: ${e?.stack ?? e}`);
+    opening = { page: 'classic', lengthMs: 0, ...groundOf(undefined, nativeTheme.shouldUseDarkColors) };
+  }
+  const fancy = opening.page === 'fancy';
+  // a new window starts on the app's own ground (the page reports its real one once in)
+  if (!titleBar.bg) titleBar.bg = opening.ground;
   const main = createWindow(null, 'main', undefined, hidden);
   // the opening starts when its page is in, not when the window was made
   let openedAt = Date.now();
@@ -1047,16 +1130,29 @@ if (gotLock) app.whenReady().then(async () => {
   host.once('slow', slowSplash);
   try {
     const info = await host.start().finally(() => host.off('slow', slowSplash));
-    // a server up before the opening has played (a warm start): let it finish, it is under two seconds
-    const hold = hidden ? 0 : openingHold(openedAt);
-    if (hold) await new Promise((r) => setTimeout(r, hold));
+    serverUp();
+    if (fancy) {
+      // the opening hands over by itself once played (or skipped), its logo flown into the corner. A page that never
+      // says so (it broke) is not waited for past its own length — and the flight always gets its moment
+      const deadline = Math.max(openedAt + opening.lengthMs + 8000, Date.now() + 3000);
+      await Promise.race([openingDoneP, new Promise((r) => setTimeout(r, deadline - Date.now()))]);
+    } else {
+      // a server up before the opening has played (a warm start): let it finish, it is under two seconds
+      const hold = hidden || opening.page === 'still' ? 0 : openingHold(openedAt);
+      if (hold) await new Promise((r) => setTimeout(r, hold));
+    }
     buildMenu();
     buildTray();
     setupUpdater();
     scheduleUpdateChecks();
     const st = loadState();
     if (main.isDestroyed()) createWindow(info.url, 'main', undefined, hidden);
-    else void main.loadURL(windowUrl(info.url, 'main'));
+    else {
+      // after a fancy opening the app fades in where the logo landed (web main.tsx: `opening`)
+      const u = new URL(windowUrl(info.url, 'main'));
+      if (fancy) u.searchParams.set('opening', '1');
+      void main.loadURL(u.toString());
+    }
     for (const id of Object.keys(st.windows)) if (id !== 'main') createWindow(info.url, id, undefined, hidden);
     host.on('crash', (code) => new Notification({ title: APP_NAME, body: tr('后台服务退出（{code}），正在重启…', { code }) }).show());
     host.on('ready', (i) => { if (i.url !== info.url) for (const [id, w] of liveWins()) void w.loadURL(windowUrl(i.url, id)); });
