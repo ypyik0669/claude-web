@@ -283,6 +283,10 @@
 .app.mobile .over-head .over-sub { display: none; }
 .app.mobile .over-head .btn { white-space: nowrap; }
 .app.mobile .over-head .arts-published { width: 44px; padding: 0; justify-content: center; }
+/* 运行中's 在跑 / 跑过的 (background-history.css): the pill keeps its size, each half reaches 44px tall with an invisible
+   ring (phone.css' way); the head row is taller than that, so the ring stays inside it */
+.app.mobile .over-head .bg-views button { position: relative; }
+.app.mobile .over-head .bg-views button::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: max(100%, 44px); transform: translateY(-50%); }
 .app.mobile .arts-published .l { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .app.mobile .fam-tabs, .app.mobile .over-tabs { min-height: 48px; margin-bottom: 4px; padding: 0 var(--sp-3); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 /* (the 4px under the row: a 34px icon button right below it reaches 44 with an invisible ring — phone.css — which must
