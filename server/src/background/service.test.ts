@@ -1,7 +1,10 @@
 import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundService, KEEP_ENDED_MS, KEEP_TASK_MS, handleBackground, isBackgroundRequest } from './service.js';
-import type { BgSession } from './types.js';
+import type { BgHistoryPage, BgSession } from './types.js';
 
 const sys = (subtype: string, o: Record<string, unknown>) => ({ type: 'system', subtype, uuid: 'u', session_id: 's', ...o });
 
@@ -82,6 +85,32 @@ describe('BackgroundService', () => {
     tick(KEEP_ENDED_MS + 1000);
     expect(svc.list().map((s) => s.sessionId)).toEqual(['s1']);
     svc.dispose();
+  });
+
+  it('跑过的 leaves out what still runs (it is 在跑); once it ended it is there', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'cw-bg-svc-'));
+    try {
+      const sid = 'dddddddd-0000-4000-8000-00000000000d';
+      const proj = path.join(root, 'C--w');
+      mkdirSync(proj);
+      const at = new Date(1_700_000_000_000).toISOString();
+      const base = { sessionId: sid, cwd: 'C:\\w', isSidechain: false, timestamp: at };
+      writeFileSync(path.join(proj, `${sid}.jsonl`), [
+        { ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_s', name: 'Bash', input: { command: 'npx serve', description: 'serve it', run_in_background: true } }] } },
+        { ...base, type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_s', content: 'started' }] }, toolUseResult: { backgroundTaskId: 'bsrv00001' } },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+      const pool = new EventEmitter();
+      const svc = new BackgroundService({ pool: pool as any, historyRoots: () => [{ dir: root }] });
+      expect(isBackgroundRequest({ kind: 'background.historyAll' })).toBe(true);
+      pool.emit('message', sid, sys('task_started', { task_id: 'bsrv00001', description: 'serve it', task_type: 'local_bash' }));
+      expect(((await handleBackground(svc, { kind: 'background.historyAll' })) as BgHistoryPage).items).toEqual([]);
+      pool.emit('message', sid, sys('task_notification', { task_id: 'bsrv00001', status: 'completed' }));
+      const page = (await handleBackground(svc, { kind: 'background.historyAll', limit: 5 })) as BgHistoryPage;
+      expect(page.items.map((i) => [i.kind, i.title, i.sessionId])).toEqual([['shell', 'serve it', sid]]);
+      svc.dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('answers its requests', async () => {
