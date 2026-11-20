@@ -18,6 +18,7 @@
 //     it — no list — says the step with 换电脑 while the (slow) dial goes on, and shows the app when it goes;
 //   · 扫码配对: Chromium's fake camera plays a Y4M file with the QR of a fresh pairing code (the settings page's whole
 //     link); the shell's scanner reads it (jsQR: Windows' Chromium has no BarcodeDetector), pairs and opens the app;
+//   · 换一台电脑 in the app's account menu (only a phone inside the shell has it) takes the phone back to the list;
 //   · the localStorage override (cw.shell.brokers / cw.shell.stun) is said in the console, as an info line;
 //   · any console error or warning in the shell page, the app frame or the service worker fails the run;
 //   · nothing goes out: Electron's proxy and the server's are a recorder that must see no request, and every
@@ -535,6 +536,25 @@ function driver() {
       const cams = await js('JSON.stringify(window.__smokeCam)');
       check('the scanned QR pairs (the PC\'s fresh code over its own lists) and the app opens', !!(fresh && fresh.ok) && !!scannedIn && after2 === before2 + 1, JSON.stringify({ fresh, scannedIn: !!scannedIn, before2, after2, cams }));
       if (!scannedIn) await shot('scan-failed');
+
+      // ---- 换一台电脑: only a phone inside the shell has it, in the app's account menu; it takes the phone back to the
+      // shell's list of PCs (ui-smoke cannot see this row: its window is no phone in a shell) ----
+      const switched = scannedIn ? await js(`(async () => {
+        const w = ${appWin};
+        const d = w && w.document;
+        if (!d || !w.__store) return 'no app';
+        const wait = async (q, ms) => { const end = Date.now() + ms; while (Date.now() < end) { const e = d.querySelector(q); if (e) return e; await new Promise((r) => setTimeout(r, 100)); } return null; };
+        w.__store.setState({ sidebarOpen: true });
+        const acct = await wait('.sidebar .sb-account [data-id="account"]', 5000);
+        if (!acct) return 'no account row';
+        acct.click();
+        const row = await wait('.menu.sb-acct-menu [data-id="devices"]', 3000);
+        if (!row) return 'no 换一台电脑 row: ' + [...d.querySelectorAll('.menu.sb-acct-menu [data-id]')].map((e) => e.dataset.id).join(' ');
+        row.click();
+        return 'clicked';
+      })()`).catch((e) => String(e.message || e)) : 'not connected';
+      const backToList = await waitFor(`!!document.querySelector('button.device') && !document.querySelector('iframe.frame')`, 10_000);
+      check('换一台电脑 in the app\'s account menu (a phone inside the shell) takes it back to the list of PCs', switched === 'clicked' && !!backToList, JSON.stringify({ switched, backToList: !!backToList }));
 
       // ---- the localStorage override: said in the console as an info line (not a warning) ----
       await js(`localStorage.setItem('cw.shell.brokers', ${S(E.SHELL_BROKERS)}); localStorage.setItem('cw.shell.stun', '[]'); true`);

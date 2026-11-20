@@ -3897,10 +3897,12 @@ function driver() {
             // back to the real list: stop re-applying first
             await js('window.__cwSmokeFakesOff && window.__cwSmokeFakesOff()');
             await js(`(() => { const ids = new Set(${JSON.stringify(fakes.map((f) => f.sessionId))}); const r = JSON.parse(${JSON.stringify(saved)}); window.__store.setState((s) => { const settings = { ...s.settings }; if (r.checklist === null) delete settings['onboarding.checklist']; else settings['onboarding.checklist'] = r.checklist; return { sessions: s.sessions.filter((x) => !ids.has(x.sessionId)), limits: r.limits, librarySources: r.sources, settings }; }); window.__cwSmokeFakesApply = null; })()`);
-            // nothing is reachable only in the table: every id of every place was on screen
+            // nothing is reachable only in the table: every id of every place was on screen — but the rows only a phone
+            // inside the phone shell has (换一台电脑): this window is no such phone, scripts/shell-smoke.cjs taps that one
+            const ELSEWHERE = new Set(['account:devices']);
             const missing = [];
-            for (const p of Object.keys(PLACES)) for (const id of PLACES[p]) if (!(seen[p] && seen[p].has(id))) missing.push(p + ':' + id);
-            check(`sidebar entries: all ${Object.values(PLACES).reduce((n, v) => n + v.length, 0)} ids of entries.ts PLACES were found in the DOM, each in its place`, !missing.length, missing.join(', '));
+            for (const p of Object.keys(PLACES)) for (const id of PLACES[p]) if (!ELSEWHERE.has(p + ':' + id) && !(seen[p] && seen[p].has(id))) missing.push(p + ':' + id);
+            check(`sidebar entries: all ${Object.values(PLACES).reduce((n, v) => n + v.length, 0) - ELSEWHERE.size} ids of entries.ts PLACES were found in the DOM, each in its place (account:devices: shell-smoke)`, !missing.length, missing.join(', '));
           }
         }
       }
