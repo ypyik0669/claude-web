@@ -1370,9 +1370,16 @@ function driver() {
         const { auditJs: opAudit, problems: opProblems } = require(path.join(ROOT, 'scripts', 'lib', 'phone-audit.cjs'));
         const opPhone = opProblems(await js(opAudit('.op-picker')), { tapTargets: false });
         await shot('opening-phone');
+        // …and further down: 浓淡 + the switch, 动画包's three buttons (they used to run off the screen)
+        await js(`document.querySelector('.opening-packs')?.scrollIntoView({ block: 'center' })`);
+        await sleep(400);
+        opPhone.push(...opProblems(await js(opAudit('.opening-packs, .op-keep')), { tapTargets: false }));
+        const packsRow = await js(`(() => { const b = [...document.querySelectorAll('.opening-packs .op-btns > button')].map((e) => e.getBoundingClientRect()); return { n: b.length, inside: b.every((r) => r.left >= 0 && r.right <= innerWidth) }; })()`);
+        if (packsRow.n !== 3 || !packsRow.inside) opPhone.push(`动画包's buttons: ${JSON.stringify(packsRow)}`);
+        await shot('opening-phone-packs');
         win.setContentSize(sizeWas[0], sizeWas[1]);
         await waitFor(`innerWidth === ${sizeWas[0]} && window.__store.getState().mobile === false`, 4000);
-        check('opening · the cards at phone width (390): nothing sideways, covered or out of the window', phoneCards && !opPhone.length, opPhone.join(' | '));
+        check('opening · the cards, 浓淡 and 动画包 at phone width (390): nothing sideways, covered or out of the window', phoneCards && !opPhone.length, opPhone.join(' | '));
         // 让 Claude 做一个: the page closes, a new conversation's input holds the ask (one pane: the start page itself)
         if (await js(`window.__store.getState().settings['ui.workbench'] !== true`)) {
           await js(`window.__store.getState().openSettings({ reveal: 'ui.opening.pack' })`);
