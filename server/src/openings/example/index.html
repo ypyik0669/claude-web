@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>萤火</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #07060a; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// 萤火：几百只萤火虫在暗处漂，慢慢聚到画面中间偏上的一点，收成一团光，再淡到黑——标志从那一点接着亮。
+// 完整约 3.4 秒，简短约 1.9 秒。按经过的时间推进（机器忙时掉帧也不会变慢）。
+const api = window.cwOpening || { full: true, dark: true, done() {} };
+const LEN = api.full ? 3.4 : 1.9;
+const c = document.getElementById('c');
+const g = c.getContext('2d');
+let w = 0, h = 0, dpr = 1;
+function size() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  w = innerWidth; h = innerHeight;
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+size();
+addEventListener('resize', size);
+
+const N = Math.min(420, Math.round((w * h) / 2600));
+const flies = Array.from({ length: N }, () => ({
+  x: Math.random(), y: Math.random(), p: Math.random() * Math.PI * 2,
+  s: 0.6 + Math.random() * 1.6, d: 0.15 + Math.random() * 0.5,
+  hue: 32 + Math.random() * 22,
+}));
+const ease = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * x * (x * (x * 6 - 15) + 10); };
+const t0 = performance.now();
+let ended = false;
+
+function frame(now) {
+  const t = (now - t0) / 1000;
+  const k = t / LEN;
+  // the point the logo lights up from: the middle, a little above centre
+  const fx = w / 2, fy = h * 0.36;
+  const gather = ease((k - 0.25) / 0.6);
+  const fade = ease((k - 0.82) / 0.18);
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = `rgba(7,6,10,${0.32 + 0.5 * fade})`;
+  g.fillRect(0, 0, w, h);
+  g.globalCompositeOperation = 'lighter';
+  for (const f of flies) {
+    const wx = f.x * w + Math.sin(t * f.d * 2 + f.p) * 26;
+    const wy = f.y * h + Math.cos(t * f.d * 1.6 + f.p) * 18;
+    const x = wx + (fx - wx) * gather;
+    const y = wy + (fy - wy) * gather;
+    const a = (0.35 + 0.65 * Math.abs(Math.sin(t * 3 * f.d + f.p))) * (1 - fade) * Math.min(1, t * 2);
+    const r = f.s * (1 + 2.5 * gather * gather);
+    const grd = g.createRadialGradient(x, y, 0, x, y, r * 4);
+    grd.addColorStop(0, `hsla(${f.hue},100%,70%,${a})`);
+    grd.addColorStop(1, `hsla(${f.hue},100%,50%,0)`);
+    g.fillStyle = grd;
+    g.beginPath(); g.arc(x, y, r * 4, 0, Math.PI * 2); g.fill();
+  }
+  // the gathered light, then black
+  const core = gather * (1 - fade);
+  if (core > 0.02) {
+    const grd = g.createRadialGradient(fx, fy, 0, fx, fy, 90);
+    grd.addColorStop(0, `rgba(255,214,150,${0.8 * core})`);
+    grd.addColorStop(1, 'rgba(255,120,40,0)');
+    g.fillStyle = grd;
+    g.beginPath(); g.arc(fx, fy, 90, 0, Math.PI * 2); g.fill();
+  }
+  if (k >= 1) {
+    if (!ended) { ended = true; api.done(); }
+    return;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

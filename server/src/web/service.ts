@@ -106,6 +106,8 @@ export interface WebDeps {
   characterTool?: (tool: string, args: Record<string, unknown>) => Promise<ToolResult>;
   /** 字符画主题's `theme_*` tools (themes/tools.ts), served by the same MCP process */
   themeTool?: (tool: string, args: Record<string, unknown>) => Promise<ToolResult>;
+  /** 开场动画's `opening_*` tools (openings/tools.ts), served by the same MCP process */
+  openingTool?: (tool: string, args: Record<string, unknown>) => Promise<ToolResult>;
   /**
    * 允许的网站 (site-gate.ts): asks the user on a card of the conversation before a page is changed on a new site,
    * and before every script — an ego lite script (ego_browser) included; `mode` is the conversation's permission mode
@@ -591,6 +593,7 @@ export class WebService extends EventEmitter {
   private async run(sid: string, tool: string, a: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     if (tool.startsWith('character_') && this.d.characterTool) return this.d.characterTool(tool, a);
     if (tool.startsWith('theme_') && this.d.themeTool) return this.d.themeTool(tool, a);
+    if (tool.startsWith('opening_') && this.d.openingTool) return this.d.openingTool(tool, a);
     const str = (k: string) => { const v = a[k]; if (typeof v !== 'string' || !v.trim()) throw new Error(tr('{tool} 需要参数 {k}（字符串）', { tool, k })); return v; };
     const num = (k: string) => (typeof a[k] === 'number' && Number.isFinite(a[k]) ? (a[k] as number) : undefined);
     /** This call's browser op: a Stop (the call's signal) withdraws the site / script card it may be waiting on. */

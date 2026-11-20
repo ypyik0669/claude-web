@@ -313,6 +313,7 @@ export class Hub {
     s.characters.on('changed', () => this.broadcast({ kind: 'characters.changed' }));
     s.customCss.on('changed', () => this.broadcast({ kind: 'customCss.changed' }));
     s.themes.on('changed', () => this.broadcast({ kind: 'themes.changed' }));
+    s.openings?.on('changed', () => this.broadcast({ kind: 'openings.changed' }));
     s.agents.events.on('reported', () => this.broadcast({ kind: 'agents.changed' }));
     s.config.events?.on('authChanged', () => this.broadcast({ kind: 'auth.changed' }));
     s.bots.on('changed', (bots) => this.broadcast({ kind: 'bots.changed', bots }));
@@ -342,7 +343,7 @@ export class Hub {
     // startup discovery happens before anyone is connected: tell each new client what's waiting to be joined
     void this.s.library.detect().then((kinds) => { if (kinds.length) this.send(ws, { type: 'event', event: { kind: 'library.discovered', kinds } }); }).catch(() => {});
     // a window that hosted the built-in browser is gone with its connection: what it was asked fails now, not in 30 s
-    ws.on('close', () => { this.clients.delete(ws); this.s.web.dropConnection(ws); this.s.themes.dropConnection(ws); });
+    ws.on('close', () => { this.clients.delete(ws); this.s.web.dropConnection(ws); this.s.themes.dropConnection(ws); this.s.openings?.dropConnection(ws); });
     // without a listener, a malformed frame / oversized payload makes ws emit an 'error' that crashes the server
     ws.on('error', () => this.clients.delete(ws));
     ws.on('message', async (raw) => {
@@ -886,26 +887,42 @@ export class Hub {
         this.localWindowOnly(ws, tr('字符画主题'));
         return { taken: s.themes.trialResult(ws, String(req.id), { png: req.png, errors: req.errors, avgMs: req.avgMs, maxMs: req.maxMs, note: req.note }) };
       case 'openings.list':
+        // (the service says `changed` itself: every window asks again)
         return s.openings?.list() ?? [];
       case 'openings.import': {
         // a folder on this machine is copied: not for a phone or another machine
         this.localWindowOnly(ws, tr('导入开场动画'));
         if (!s.openings) throw new Error('openings unavailable');
-        const p = await s.openings.importFolder(String(req.path ?? ''));
-        this.broadcast({ kind: 'openings.changed' });
-        return p;
+        return s.openings.importFolder(String(req.path ?? ''));
       }
       case 'openings.addVideo': {
         this.localWindowOnly(ws, tr('导入开场动画'));
         if (!s.openings) throw new Error('openings unavailable');
-        const p = await s.openings.addVideo(String(req.path ?? ''));
-        this.broadcast({ kind: 'openings.changed' });
-        return p;
+        return s.openings.addVideo(String(req.path ?? ''));
       }
-      case 'openings.remove': {
-        const removed = !!(await s.openings?.remove(String(req.id ?? '')));
-        if (removed) this.broadcast({ kind: 'openings.changed' });
-        return { removed };
+      case 'openings.remove':
+        return { removed: !!(await s.openings?.remove(String(req.id ?? ''))) };
+      case 'openings.github.inspect':
+        // what the desktop app plays at its start comes from here: the user at this machine decides
+        this.localWindowOnly(ws, tr('从 GitHub 安装开场动画'));
+        if (!s.openings) throw new Error('openings unavailable');
+        return s.openings.githubInspect(String(req.url ?? ''));
+      case 'openings.github.install':
+        this.localWindowOnly(ws, tr('从 GitHub 安装开场动画'));
+        if (!s.openings) throw new Error('openings unavailable');
+        return s.openings.githubInstall(String(req.token ?? ''));
+      case 'openings.github.cancel':
+        await s.openings?.githubCancel(String(req.token ?? ''));
+        return null;
+      case 'openings.trialHost':
+        // a draft plays in a window on this machine (a phone or a peer is not handed someone's page)
+        this.localWindowOnly(ws, tr('开场动画'));
+        s.openings?.setHost(ws, !!req.on, (r) => this.send(ws, { type: 'event', event: { kind: 'openings.trial', id: r.id, pack: r.pack, html: r.html } }));
+        return null;
+      case 'openings.trialResult': {
+        this.localWindowOnly(ws, tr('开场动画'));
+        const { kind: _k, id, ...r } = req;
+        return { taken: !!s.openings?.trialResult(ws, String(id), r) };
       }
       case 'ui.customCss':
         return s.customCss.read();
