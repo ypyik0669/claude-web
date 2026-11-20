@@ -159,6 +159,9 @@ function Card({ c, on, name, sub, thumb, onPick, onRemove }: { c: OpeningCard; o
   );
 }
 
+/** A pack's name as the card shows it: the built-in one's in the interface's language (its opening.json says 「Claude Web 娘」); the user's as they wrote it. */
+const packName = (p: OpeningInfo) => (p.builtin && p.id === DEFAULT_PACK ? tr('Claude Web 娘') : p.name);
+
 const requestFor = (c: OpeningCard | undefined): PreviewRequest =>
   !c ? { kind: 'ignite' } : c.kind === 'video' ? { kind: 'video', pack: c.pack } : c.kind === 'web' ? { kind: 'web', pack: c.pack } : c.kind === 'cafe' ? { kind: 'cafe' } : { kind: c.kind };
 
@@ -195,7 +198,7 @@ export function OpeningPicker({ label }: { label: string }) {
       : p.author ? (web ? tr('{author} · 网页', { author: p.author }) : tr('{author} · 视频', { author: p.author }))
       : web ? tr('网页做的开场') : tr('自己的视频');
     const thumb = p.poster ? <img src={appUrl(packFileUrl(p.id, p.poster, authToken()))} alt="" loading="lazy" draggable={false} /> : c.kind === 'web' ? <Still kind="web" /> : <span className="add"><Icon name="play" size={20} /></span>;
-    return { name: p.name, sub, thumb };
+    return { name: packName(p), sub, thumb };
   };
   return (
     <div className="op-picker">
