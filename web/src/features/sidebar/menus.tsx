@@ -33,9 +33,12 @@ const FLY = '.sb-fly';
  * back are the sheet's.
  *
  * `onPlace`: called after every placement (a `Menu` re-places its open fly-outs then). `onEscape`: Escape goes there
- * first — true when it took the key (a `Menu` closes its innermost fly-out: one Esc does one thing).
+ * first — true when it took the key (a `Menu` closes its innermost fly-out: one Esc does one thing). `anchor`: the
+ * element it is placed next to when that is not its parent (the 显示 menu lives in a part of the list that stays while
+ * a choice in it rebuilds the groups, next to the header button that opened it); while that element is gone or
+ * hidden the menu stays where it was.
  */
-export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClose: () => void, o: { align?: 'left' | 'right'; prefer?: 'down' | 'up'; side?: 'right'; deps?: unknown[]; onPlace?: () => void; onEscape?: () => boolean } = {}) {
+export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClose: () => void, o: { align?: 'left' | 'right'; prefer?: 'down' | 'up'; side?: 'right'; deps?: unknown[]; onPlace?: () => void; onEscape?: () => boolean; anchor?: () => HTMLElement | null } = {}) {
   const opts = useRef(o);
   opts.current = o;
   const sheet = useSheetMenu();
@@ -43,16 +46,26 @@ export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClos
   const [kb] = useState(() => !byPointer());
   // where the anchor was when the menu was last placed: a scroll closes the menu only when it moved the anchor from there
   const anchorAt = useRef<{ top: number; left: number } | null>(null);
+  /** the element the menu is placed next to: its parent, or `o.anchor` — null while that one is gone or hidden */
+  const target = (): HTMLElement | null => {
+    const parent = ref.current?.parentElement ?? null;
+    if (!opts.current.anchor) return parent;
+    const a = opts.current.anchor();
+    return a && a.isConnected && a.getClientRects().length > 0 ? a : null;
+  };
   useLayoutEffect(() => {
     if (sheet) return;
     const el = ref.current, anchor = el?.parentElement;
     if (!el || !anchor) return;
     if (kb) el.dataset.kb = '';
     const place = () => {
+      const at = target();
+      // the button that opened it went away (a choice rebuilt the groups): it stays where it was
+      if (!at) { if (anchorAt.current) { opts.current.onPlace?.(); return; } }
       // measuring at full height drops the scroll of a pinned menu; a re-place (any change in the sidebar) keeps it
       const scrolled = el.scrollTop;
       Object.assign(el.style, { position: 'fixed', right: 'auto', bottom: 'auto', maxHeight: '', overflowY: '', overscrollBehavior: '' });
-      const a = anchor.getBoundingClientRect(), size = { w: el.offsetWidth, h: el.scrollHeight };
+      const a = (at ?? anchor).getBoundingClientRect(), size = { w: el.offsetWidth, h: el.scrollHeight };
       anchorAt.current = { top: a.top, left: a.left };
       const side = anchor.closest('.sidebar')?.getBoundingClientRect();
       const spot = placeFixed(a, size, { vw: window.innerWidth, vh: window.innerHeight }, { ...opts.current, caption: captionBox(), ...(side && opts.current.side !== 'right' ? { minLeft: Math.max(8, Math.round(side.left) + 4) } : {}) });
@@ -79,7 +92,7 @@ export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClos
   closeRef.current = onClose;
   useEffect(() => {
     const onScroll = (e: Event) => {
-      const anchor = ref.current?.parentElement;
+      const anchor = target();
       const t = e.target as Node | null;
       if (!anchor || !t || ref.current?.contains(t)) return;
       if (!(t === document || (t as Node).contains?.(anchor))) return;
@@ -163,7 +176,7 @@ const HOVER_CLOSE_MS = 280;
 const flyItems = (panel: HTMLElement) => [...panel.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')].filter((b) => b.closest(FLY) === panel && b.getClientRects().length > 0);
 
 /** A sidebar popover menu (filter / automation / project / account): `.menu` fixed next to its parent element. */
-export function Menu({ onClose, className, align, prefer, side, label, title, children }: { onClose: () => void; className?: string; align?: 'left' | 'right'; prefer?: 'down' | 'up'; side?: 'right'; label: string; /** a phone: a title at the top of the sheet */ title?: string; children: React.ReactNode }) {
+export function Menu({ onClose, className, align, prefer, side, label, title, anchor, children }: { onClose: () => void; className?: string; align?: 'left' | 'right'; prefer?: 'down' | 'up'; side?: 'right'; label: string; /** a phone: a title at the top of the sheet */ title?: string; /** placed next to this element instead of its parent (`useAnchoredMenu`) */ anchor?: () => HTMLElement | null; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const sheet = useSheetMenu();
   const [path, setPath] = useState<string[]>([]);
@@ -173,7 +186,7 @@ export function Menu({ onClose, className, align, prefer, side, label, title, ch
   const shared = useMemo(() => ({ placers: new Set<() => void>(), rows: new Map<string, HTMLElement>(), labels: new Map<string, string>() }), []);
   const tree = useMemo<MenuTree>(() => ({ sheet, path, setPath, ...shared }), [sheet, path, shared]);
   useAnchoredMenu(ref, onClose, {
-    align, prefer, side,
+    align, prefer, side, anchor,
     onPlace: () => { for (const f of shared.placers) f(); },
     // Esc closes the innermost submenu first, the focus back on its row
     onEscape: () => {

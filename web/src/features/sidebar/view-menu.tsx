@@ -13,6 +13,8 @@ export type SourceChip = Pick<SourceStatus, 'kind' | 'name' | 'error' | 'loading
 
 export interface ViewMenuProps {
   onClose(): void;
+  /** the 显示 button it was opened from (the menu itself lives where a choice does not rebuild it) */
+  anchor?: () => HTMLElement | null;
   view: SidebarView;
   setView(v: SidebarView): void;
   sources: SourceChip[];
@@ -66,7 +68,7 @@ export function ViewMenu(p: ViewMenuProps) {
   const sourceName = p.source === 'all' ? tr('全部') : p.sources.find((x) => x.kind === p.source)?.name ?? p.source;
   const machineName = p.machine === 'all' ? tr('所有机器') : p.machines.find((m) => m.id === p.machine)?.name ?? p.machine;
   return (
-    <Menu onClose={p.onClose} className="sb-view" label={tr('显示')} title={tr('对话列表')}>
+    <Menu onClose={p.onClose} className="sb-view" label={tr('显示')} title={tr('对话列表')} anchor={p.anchor}>
       <SubMenu id={id('group-by')} icon="folder" label={tr('分组方式')} value={GROUP_LABEL[v.groupBy]()}>
         {GROUP_ORDER.map((g) => radio(v.groupBy === g, GROUP_LABEL[g](), () => p.setView({ ...v, groupBy: g }), g))}
       </SubMenu>

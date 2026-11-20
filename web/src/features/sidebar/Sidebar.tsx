@@ -318,10 +318,15 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     const name = (await dlg.prompt(tr('分区名称'), '', { placeholder: tr('比如：本周要交') }))?.trim();
     if (name) await saveSections(addSection(sections, `sec-${Date.now().toString(36)}`, name));
   };
-  // the 显示 menu, anchored to the button that opened it (a header's, or the 项目 row's)
-  const viewMenu = (k: string) => menu === k && (
+  // the 显示 menu: one, whichever 显示 button opened it (a header's, or the 项目 row's) — it lives in the 项目 row,
+  // which stays while a choice in it rebuilds the groups (by 日期 a project's header is gone; the menu stays open, as
+  // a choice always left it), and is placed next to that button while the button is there
+  const viewBtns = useRef(new Map<string, HTMLElement>());
+  const viewKey = menu === 'view' || menu?.startsWith('view:') ? menu : null;
+  const viewMenu = viewKey && (
     <ViewMenu
-      onClose={() => closeMenu(k)}
+      onClose={() => closeMenu(viewKey)}
+      anchor={() => viewBtns.current.get(viewKey) ?? null}
       view={view} setView={(v) => void setSetting(VIEW_KEY, v)}
       sources={chips} counts={counts} total={total} source={sourceFilter} setSource={(x: AgentKind | 'all') => setSourceFilter(x)}
       machines={machines} machine={machine} setMachine={setMachine} showMachines={showMachines}
@@ -331,12 +336,12 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     />
   );
   const viewButton = (k: string, dataId: 'view' | 'group-view') => (
-    <span className="anchor">
-      <button className={clsx('icon-btn xs', (viewDot || menu === k) && 'on')} data-id={dataId} title={tr('显示：分组方式、排序、已归档、来源、机器')} aria-label={tr('显示')} aria-haspopup="menu" aria-expanded={menu === k} onClick={toggleMenu(k)}>
-        <Icon name="filter" size={14} />{viewDot && <span className="fdot" />}
-      </button>
-      {viewMenu(k)}
-    </span>
+    <button
+      ref={(el) => { if (el) viewBtns.current.set(k, el); else viewBtns.current.delete(k); }}
+      className={clsx('icon-btn xs', (viewDot || menu === k) && 'on')} data-id={dataId} title={tr('显示：分组方式、排序、已归档、来源、机器')} aria-label={tr('显示')} aria-haspopup="menu" aria-expanded={menu === k} onClick={toggleMenu(k)}
+    >
+      <Icon name="filter" size={14} />{viewDot && <span className="fdot" />}
+    </button>
   );
   const gh = (x: GroupHeadId) => x;
   // a project / folder / date header's 显示 and ＋ (on hover; none on a phone, whose list has its one ≡)
@@ -588,6 +593,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
             {headView && viewButton('view', 'view')}
             {/* (a desktop's ＋ on a project header is a new conversation there: this one is a folder icon) */}
             <button className="icon-btn xs" data-id={head('add-project')} title={tr('打开文件夹（添加项目）')} aria-label={tr('打开文件夹')} onClick={pickWorkspace}><Icon name={mobile ? 'plus' : 'folder'} size={mobile ? 15 : 14} /></button>
+            <span className="anchor sb-view-host">{viewMenu}</span>
           </div>
           {empty && (
             <div className="ws-empty sb-empty" data-empty={empty.openButton ? 'open' : 'make-project'}>
