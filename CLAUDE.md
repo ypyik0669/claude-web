@@ -73,6 +73,10 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [ui-redesign-6-settings](docs/notes/ui-redesign-6-settings.md) | 界面改版 阶段 6：设置重组（2026-09-28） | 设置表 catalog、旧 id、全窗页与焦点、wording 闸 |
 | [ui-redesign-7-home](docs/notes/ui-redesign-7-home.md) | 界面改版 阶段 7：首页 / 首次引导 / 自动化页 / 手机（2026-09-29） | 首页、入门清单、首次引导、自动化页、手机底部抽屉、断线条、空状态、文案闸 |
 | [ui-redesign-2026-11-stage1](docs/notes/ui-redesign-2026-11-stage1.md) | 界面改版（2026-11）阶段 1：外壳（2026-11-19） | 去掉图标栏、侧栏五个入口、品牌菜单、账号行和八行账号菜单、自动化家族（frame.ts / family.tsx）、一条左边线、旧名字进命令面板、Artifacts 页、手机体检（phone-audit） |
+| [ui-redesign-2026-11-stage2](docs/notes/ui-redesign-2026-11-stage2.md) | 界面改版（2026-11）阶段 2：设置弹窗 / 自定义（2026-11-20） | 设置弹窗、4 组 14 页（catalog.ts、LEGACY_SECTIONS / AWAY_SECTIONS 旧 id 落地）、配置中心拆掉（config-parts.tsx）、自定义四个标签（Artifact 类型）、自动化 › Bot › 设置、路径文字、手机设置整页 |
+| [ui-redesign-2026-11-stage3](docs/notes/ui-redesign-2026-11-stage3.md) | 界面改版（2026-11）阶段 3：侧栏照图 7 重做（2026-11-20） | 飞出的子菜单（sidebar/menus.tsx）、六行显示菜单（view-menu.tsx）、分组标题的 显示 / ＋、行不带时间、分叉缩进一层、Ctrl K 搜 Artifacts、手机 ≡ 单和推进来的页 |
+| [ui-redesign-2026-11-stage4](docs/notes/ui-redesign-2026-11-stage4.md) | 界面改版 2026-11 阶段 4：首页 / 对话 / 右侧面板 / 手机对话页（2026-11-20） | 首页只剩标志 + 问候 + 框、框下一行（ComposerUnder）、上下文小环、右侧面板一次一个 + 下拉（PanelPicker）、Ctrl 1–5 / Ctrl+Alt 1–9、对话头 ⋯、手机对话页 / 底部面板 / 长按、不显示键盘提示（ui/kbd.ts）、手机项目单选分支 |
+| [ui-redesign-2026-11-automation](docs/notes/ui-redesign-2026-11-automation.md) | 界面改版（2026-11）自动化：运行中的列表 / 网吧、跑过的收尾、手机上的定时任务（2026-11-20） | 运行中按对话分组的列表（run-list.ts）、列表 / 网吧（background.view）、跑过的去掉左栏、手机上的网吧（⋯ 里的工具）和定时任务的行 |
 | [quick-connect](docs/notes/quick-connect.md) | 首次使用：接一个模型 / Agent 检测（2026-09-30） | 快速连接、模型挑选、接一个模型对话框、Agent 检测 |
 | [provider-routing](docs/notes/provider-routing.md) | 供应商：IM / 定时任务 / 其它 Agent（2026-09-30 用户报告） | 对话池里定供应商、IM 供应商、Codex 经垫片 |
 | [proxy-external](docs/notes/proxy-external.md) | 网络代理 / 外部写入的对话 / Codex 读取（2026-09-30 用户报告） | 网络代理、外部写入的对话实时显示、Codex 读历史 |
@@ -80,7 +84,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [effort-ultracode](docs/notes/effort-ultracode.md) | 思考强度 / 深度编排 / 自动判断在所有模型上（2026-10-08） | 各接口的强度参数、CLAUDE_WEB_MODEL_CAPS、被拒记录、自动判断 |
 | [prompt-cache](docs/notes/prompt-cache.md) | 提示缓存（2026-09-28） | 用量统计修正、费用未知、网关缓存键、缓存垫片、闲置回收 |
 | [desktop](docs/notes/desktop.md) | 桌面版（desktop/） | Electron 壳、打包、应用自动更新 |
-| [opening](docs/notes/opening.md) | 人设版开场与背景（2026-11-19，界面改版方案 第 7 版） | 放哪种开场、cw-opening://、toString 播放器、主进程握手、放完留作背景 / 火星、设置卡片与试放、动画包格式与接口、内置片子（一镜到底、查硬切、生成参考图的坑）、手机开屏、opening-shots 截图脚本 |
+| [opening](docs/notes/opening.md) | 人设版开场与背景（2026-11-19，界面改版方案 第 7 版） | 放哪种开场、cw-opening://、toString 播放器、主进程握手、放完留作背景 / 火星、设置卡片与试放、动画包格式与接口、内置片子（一镜到底、查硬切、生成参考图的坑）、手机开屏、opening-shots 截图脚本；第二批：星图 / 字符雨 / 网吧开门、网页动画包（沙盒 iframe）、从 GitHub 安装、让 Claude 做一个（opening-pack skill）、悬停小样 |
 | [macos-ci](docs/notes/macos-ci.md) | macOS / CI（2026-09-27） | mac 打包、发版收尾、CI、没有 Mac 时怎么验 |
 | [robustness](docs/notes/robustness.md) | 子进程窗口 / 前端健壮性（2026-09-28） | 停止、终端是 shell、spawn guard、错误边界、zustand 选择器、ui-smoke 用法 |
 | [ui-refresh](docs/notes/ui-refresh.md) | 界面换新（2026-10-10） | 样式文件顺序、令牌、外壳、字体、图标、标题栏、动效、手机交互、质感：发丝边 / 弹簧 / 滚动渐隐 / 暗色字重（10-16） |

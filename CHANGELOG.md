@@ -4,6 +4,59 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+This release trims the interface: fewer entry points and fewer layers, nothing taken away. The icon bar is gone and the sidebar starts with five places, Background and Bots join Automation, Settings opens as a dialog, the start page is just the input box, and the right panel shows one thing at a time. The first time you open it, a "Where things moved" card on the start page says where everything went, and Ctrl K still finds every page by its old name.
+
+### Changed
+
+**Layout**
+
+- **No icon bar.** The sidebar starts with New conversation · Search · Artifacts · Automation · Customize. The app menu is behind the logo at the top left, and Ctrl B hides the whole sidebar (the button that brings it back is the first one in the header).
+- **Your account is at the bottom of the sidebar** at every window size: the avatar in its usage ring, your name and a line of usage. Its menu has Settings, Usage and ledger (with today's spend), Language, Theme, Keyboard shortcuts, Help and feedback, What's new, and Sign in / out.
+- **Old names still work.** Press Ctrl K and type an old name (Background, Overview, Config center, Extensions, Models…) and it takes you to where that page lives now.
+
+**Start page and conversations**
+
+- **The start page is the greeting and the box.** Claude Web's own logo, "What do you want to do today?" and the input box. The three starter suggestions only show while the project has no conversation yet, the getting-started checklist only the very first time, and the recent / scheduled / archived lists are gone (the sidebar has them).
+- **One row under the input box, every control with its words.** On a new conversation: folder · branch · permissions … model · subagent · thinking effort. In a conversation: permissions · turns · steps · speed · cache hits · model · subagent · thinking effort and the context ring. When the window gets narrow the numbers go first; the controls keep their words. The ring always shows a percentage, and its card has the details.
+- **The right panel shows one thing at a time.** Its five fixed tabs became a picker at its top left (Tasks · Terminal · Changes · Browser · Files, this conversation's Artifacts, and More panels), and the conversation header has a button for each of the five; click the lit one again to close the panel. "Review" is now called "Changes".
+- **The conversation header's ⋯** has Rename, Fork, Export…, Steps view and More, then Conversation info (Ctrl+I), Issues & PRs and the Android screen, then Hand off to another agent…, Archive and Delete.
+
+**Sidebar**
+
+- **Project headers show Show and ＋ when you point at them.** Show is one six-row menu (Group by ›, Sort by ›, Show ›, New section, Restore defaults, View all) whose submenus fly out to the right, and a choice applies at once. The project menu is a right-click (a long press on a phone).
+- **A row is the title and one status** (waiting, error, running, +N −M); the time moved to the tooltip. Forks sit one step in, under the conversation they came from.
+- **Search finds Artifacts too** (Ctrl K, or the search box at the top of the phone's drawer).
+
+**Settings**
+
+- **Settings is a dialog** over the page you're on (Ctrl+,, the account menu, or the ⚙ next to your name): 14 pages in 4 groups, all searchable. General is split into Conversations and Notifications and window. Providers, Model gateway and Models and thinking effort are one page, Settings › Models, with Sources · Routing · Models tabs and a button that opens the model hub. Links to the old places still land in the right spot.
+- **The config center is gone.** Skills, connectors (MCP) and plugins are under Customize, which also gets an Artifact types tab; environment variables, hooks and settings.json are in Settings. On the agent cards its button is now "Config files". Bot settings moved to Automation › Bots (the ⚙ on the list).
+- **"Manage sources" in the model menu** opens Settings › Models › Sources.
+
+**Automation**
+
+- **One page, five tabs:** Running · Scheduled tasks · Bots · Goals · Orchestration. Background and Bots used to be pages of their own. The sidebar's Automation goes back to the tab you used last.
+- **Running is a list, grouped by conversation.** Each workflow, subagent and background command is one group with its project, kind, running time, the workflow's stage ("Code 2/4"), Stop and Open conversation; click a subagent to open its conversation beside the list. The 3D net cafe is the other view (List / Net cafe at the right of the tabs, remembered). On a phone the list is the default and the net cafe is in ⋯.
+
+**Phone**
+
+- **The conversation header is ☰, the title and ⋯.** ⋯ opens the six panels as a grid (Changes, Tasks, Terminal, Files, Browser, Artifacts) above the conversation's actions; a panel opens as a sheet from the bottom that you can pull up to full screen.
+- **Long-press a message** to copy, edit, rerun, fork or read it aloud. Messages no longer carry a row of icons.
+- **Settings is a full page** pushed in from the side, every control at least 44 points, and no keyboard hints anywhere on a phone.
+- **The new-conversation page's project sheet picks the branch,** and each scheduled task has its name on its own line, with the switch and actions in its ⋯.
+
+**Keyboard shortcuts**
+
+- **Ctrl+Shift+1–5 opens Tasks · Terminal · Changes · Browser · Files** (Ctrl+1–5 too in the desktop app), so Ctrl+Shift+2 is no longer Review and Ctrl+Shift+3 no longer Usage (Usage is in the panel picker and Ctrl K). Jumping to a group in the desktop app moved from Ctrl+1–9 to Ctrl+Alt+1–9, as in the browser. The config center's Ctrl+Shift+4 is gone.
+
+### Added
+
+- **Finished: look back at what ran.** Automation › Running has a Running / Finished switch. Finished lists every conversation's finished workflows, subagents and background commands, read from disk, so they're still there after a restart; open one to replay it.
+- **An opening with Claude Web-chan** (desktop app). The app opens with a short film, by default on the first start of the day, and it can stay behind the interface as a soft moving background (light themes get drifting embers instead). Settings › Appearance › Opening and background: which opening, how often, the short version, sound, and how strong the background is.
+- **More openings:** Starmap, Code rain and Net cafe opens (3D, needs WebGL), and web packs. Install one from GitHub (you see its author, license and size before anything is installed), or have Claude make one with you. Point at a card to preview it.
+
 ## [0.5.14] — 2026-11-19
 
 ### Fixed
