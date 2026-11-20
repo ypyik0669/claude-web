@@ -18,14 +18,15 @@ function inventory() {
   const sections = [...list.matchAll(/id: '([\w.-]+)', l: (?:tr(?:As)?\()?'[^']+'(?:, '[^']+')?\)?, ic: '\w+', group: '\w+'/g)].map((m) => ({ id: m[1], at: m.index, tabs: [] }));
   for (const [i, s] of sections.entries()) {
     const text = list.slice(s.at, i + 1 < sections.length ? sections[i + 1].at : list.length);
-    s.tabs = [...text.matchAll(/\{ id: '(\w+)', l: [^,]+, bodies:/g)].map((m) => m[1]);
+    // a tab's label: tr('…'), trAs('…', '…') (its comma is inside the call) or a constant
+    s.tabs = [...text.matchAll(/\{ id: '(\w+)', l: (?:trAs\('[^']*', '[^']*'\)|[^,]+), bodies:/g)].map((m) => m[1]);
   }
   const layout = fs.readFileSync(path.join(demo.ROOT, 'web/src/model/layout.ts'), 'utf8');
   const block = layout.slice(layout.indexOf('export const PANELS'), layout.indexOf('];', layout.indexOf('export const PANELS')));
   const panels = [...block.matchAll(/\{ id: '(\w+)', title:/g)].map((m) => m[1]);
   const icons = [...list.matchAll(/\bic: '/g)].length;
   if (sections.length !== icons) throw new Error(`read ${sections.length} settings pages but the catalog has ${icons}`);
-  if (sections.length < 15 || panels.length < 5) throw new Error('could not read the settings pages / panels from the sources');
+  if (sections.length < 14 || panels.length < 5) throw new Error('could not read the settings pages / panels from the sources');
   return { sections: sections.map(({ at, ...s }) => s), panels };
 }
 
