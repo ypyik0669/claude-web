@@ -305,8 +305,8 @@ async function runner() {
     SMOKE_INVENTORY: JSON.stringify(inv),
     // longer than the driver's own hard stop (below): the driver must get to write its result and say where it stopped
     // (with 520 s here the grown smoke, ~9 min, was killed mid stage B and reported only "electron exited -1");
-    // stages D / E / F added the node-graph, stage-e and stage-f phases on top
-  }, (idle + 1020) * 1000);
+    // stages D / E / F added the node-graph, stage-e and stage-f phases on top; the 2026-11 redesign's pieces more
+  }, (idle + 1560) * 1000);
   let r = null;
   try { r = JSON.parse(fs.readFileSync(result, 'utf8')); } catch { /* electron died */ }
   let failed = !r || code !== 0;
@@ -365,9 +365,10 @@ function driver() {
   const check = (name, ok, detail) => { res.checks.push({ name, ok: !!ok, detail: detail || undefined }); log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail || ''}`); };
   const finish = (code) => { res.seconds = Math.round((Date.now() - res.startedAt) / 1000); try { fs.writeFileSync(E.SMOKE_RESULT, JSON.stringify(res, null, 2)); } catch { /* ignore */ } app.exit(code); };
   process.on('uncaughtException', (e) => { log(`uncaught ${e.stack || e}`); check('driver', false, String(e.message || e)); finish(3); });
-  // the whole smoke takes ~9 minutes on a busy machine (stage B's browser section alone ~1.5), more with stages D / E / F;
-  // the runner waits longer
-  const hardStop = setTimeout(() => { check(`driver finished in time (stopped in phase ${phase})`, false); finish(6); }, (Number(E.SMOKE_IDLE || 0) + 960) * 1000);
+  // the whole smoke takes ~9 minutes on a busy machine (stage B's browser section alone ~1.5), more with stages D / E / F,
+  // ~13 with the 2026-11 redesign's phone checks (stage 2 alone ran 787 s with two other smokes beside it); the runner
+  // waits longer
+  const hardStop = setTimeout(() => { check(`driver finished in time (stopped in phase ${phase})`, false); finish(6); }, (Number(E.SMOKE_IDLE || 0) + 1500) * 1000);
 
   app.whenReady().then(async () => {
     const show = E.SMOKE_SHOW === '1';
