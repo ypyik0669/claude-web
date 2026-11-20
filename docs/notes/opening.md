@@ -33,9 +33,18 @@
 
 ## 动画包（`server/src/openings/`）
 
-- 格式：一个文件夹，`opening.json` = `{ name, author?, license?, credits?, kind: 'video', intro, loop?, poster?, logoAt?, shortFrom?, maxSeconds? }`。`intro` mp4 / webm / mov（最多放 12 s，`logoAt` 是切黑点火的时刻，没写就放到 12 s 或片尾）；`loop` 是放完留在后面的循环；`poster` webp / png / jpg 是卡片缩略图。`readPack` 校验并把时间夹到范围内。内置包 `desktop/openings/claude-web-chan`（1080P，片子 7.9 MB、循环 2.9 MB，`electron-builder.yml` 的 `extraResources` 放进 `resources/openings`，server 从 `CLAUDE_WEB_OPENINGS` 知道在哪；值班 Bot 的子进程 env 也透传它）。
+- 格式：一个文件夹，`opening.json` = `{ name, author?, license?, credits?, kind: 'video', intro, loop?, poster?, logoAt?, shortFrom?, maxSeconds? }`。`intro` mp4 / webm / mov（最多放 12 s，`logoAt` 是切黑点火的时刻，没写就放到 12 s 或片尾）；`loop` 是放完留在后面的循环；`poster` webp / png / jpg 是卡片缩略图。`readPack` 校验并把时间夹到范围内。内置包 `desktop/openings/claude-web-chan`（片子 10.9 MB，720P 出片放大到 1080P，见下「内置片子」；循环 1080P 2.9 MB；`electron-builder.yml` 的 `extraResources` 放进 `resources/openings`，server 从 `CLAUDE_WEB_OPENINGS` 知道在哪；值班 Bot 的子进程 env 也透传它）。
 - `OpeningService`：`list()`（内置在前，同 id 内置赢）、`importFolder()`（只复制 json 里用到的文件，先进临时目录再 rename；id 来自文件夹名 `packIdFor`）、`addVideo()`（写一个只有 `intro` 的包）、`remove()`（只删导入的）。WS `openings.list / import / addVideo / remove`（导入要本机桌面窗口，`localWindowOnly`），广播 `openings.changed`；HTTP `GET /api/opening/<id>/<file>?token=` 只给 json 里点名的文件，`CSP: sandbox`。
-- 二进制直接进了 git（`.gitattributes` 标了 `*.mp4 / *.webm / *.webp binary`），约 11 MB，单独一个提交。
+- 二进制直接进了 git（`.gitattributes` 标了 `*.mp4 / *.webm / *.webp binary`），约 11 MB，单独一个提交；11-20 换片子又是单独一个提交（新片 10.9 MB，旧片 7.9 MB 留在历史里）。
+
+## 内置片子（11-20 换成一镜到底）
+
+- 第一版片子（11-19）在第 3.0 s 有一刀硬切（眼睛亮起的特写 → 全身画 logo），用户录屏说「两个场景，完全没有连贯性」。换成一个连续镜头：闭眼低头慢慢抬头，1.75 s 睁眼 → 拉远到全身，火线沿圆角方框烧一圈，r / 斜杠 / 竖线 / 圆依次点燃，炸开一圈冲击波 → 推近，手掌朝镜头托着火球 → 9.1 s 白光 → 9.67 s 全黑。`logoAt` 9.6（开场页在 `logoAt` 把最后一帧 0.25 s 淡成黑，早一点没关系），`shortFrom` 6（她站着、logo 已经烧起来、镜头开始推近）。
+- 生成：Seedance 2.5，中转 `POST /v1/videos`（`seconds: '10'`、`size: '1280x720'`、`images: [http 地址…]`），`TTseadanco2.5-720` 一条 $5；1080P 那两个渠道当天不能用（`TTseadanco2.5-1080` 回「只支持 480p/720p」，`特价…-1080` 已下架，都没扣钱）。参考图：主视觉、人设表、logo 对照，加上旧片第 0 s 和第 8.67 s 的帧（告诉它开头、结尾长什么样）。出了两条，用户看完对比选了第二条。提示词、参数、费用在用户桌面「Claude Web 开场动画」文件夹的 prompts.md，不进仓库。
+- 参考图要 http 地址：临时开一个只放这几张图的 cloudflared quick tunnel。**上游隔一分钟左右会再下载一次**：第一次就是拿到第一次下载就关了链接，报「第 3 个参考图片素材下载失败」（退款了）。链接要开到出片。
+- 后期：`scale=1920:1080:flags=lanczos,unsharp=5:5:0.45:5:5:0`，libx264 `-preset slow -crf 19`，AAC 160k，`+faststart`（开场页边下边放）。720P 放大的细节比原生 1080P 软一点。
+- 查硬切：`ffmpeg -i x.mp4 -vf "select='gte(scene,0)',metadata=print:file=sc.txt" -f null -` 拿每一帧的变化分。旧片硬切那一帧 0.28；新片白光之前每帧都低于 0.075，只有白光那一下 0.44。切黑点看 `signalstats` 的 YAVG 什么时候回到黑。
+- 给用户比候选：把构建好的 `fancyOpeningHtml`（`mode: 'preview'`）塞进 iframe 的 `srcdoc`，片子用 data: URI，CSP 换成 `media-src data: blob:`；嵌进外层页面的 JSON 要把 `</` 和 `<!--` 转义。几条并排，一起从头放，双击就能看（全在一个文件里）。
 
 ## 手机网页（`PhoneSplash.tsx`）
 
@@ -44,5 +53,5 @@
 ## 真机验证 / 截图
 
 - `node scripts/opening-shots.mjs <场景> [输出目录]`（先 `npm run build:all`）：临时 HOME / `CLAUDE_WEB_DIR` / `--user-data-dir`，按场景写 meta.json 和 flags.json，`--remote-debugging-port` 连 CDP，在指定时刻 `Page.captureScreenshot`；`Page.frameNavigated` 知道应用页什么时候接手；系统减少动画用 `--force-prefers-reduced-motion`；手机用 `Emulation.setDeviceMetricsOverride` + reload；最后 `taskkill /T /F` 整棵进程树。场景：full short skip reduced reducedApp light classic ignite igniteLight never sound phone settings（设置页的卡片）。
-- 实测（开发版、临时目录、冷启动）：完整版开场页 0.7 s 出现、14.5 s 进应用（片子 9.7 s + logo 2.25 s + 飞 0.7 s，server 早就好了）；简短版 7.5 s；3 s 时点一下 → 4.5 s；老开场 2.3 s；减少动画 1.6–2.2 s；点火 5.3 s。刚 build 完、机器正忙时有一次 server 起了 104 s：开场停在最后一帧、20 s 后下面换成「电脑比较忙…」，server 好了才飞走——截图脚本等 60 s 就报 `app never came`，不是卡死。
+- 实测（开发版、临时目录、冷启动）：完整版开场页 0.7 s 出现、14.5 s 进应用（片子 9.7 s + logo 2.25 s + 飞 0.7 s，server 早就好了）；简短版 7.5 s（11-20 换片后，机器忙、截图脚本每张要 1.5–2.5 s：完整版 0.8 s 出现、15.1 s 进应用，简短版 9.2 s）；3 s 时点一下 → 4.5 s；老开场 2.3 s；减少动画 1.6–2.2 s；点火 5.3 s。刚 build 完、机器正忙时有一次 server 起了 104 s：开场停在最后一帧、20 s 后下面换成「电脑比较忙…」，server 好了才飞走——截图脚本等 60 s 就报 `app never came`，不是卡死。
 - 控制台偶尔出现 `Electron sandboxed_renderer.bundle.js script failed to run` / `Cannot destructure property 'preloadScripts' of 'binding.startupData' as it is null`（截图脚本连着 CDP 才看得见）：**老问题，不是开场带来的**——同一台机器上用 `main`（eaa8853c）的桌面壳跑老开场 12 次有 4 次，这个分支的壳 12 次 0 次（之前零星跑二十几次里有 3 次）。出现时应用页的 preload 是好的（窗口按钮都在、`window.desktop` 在），像是 Electron 44 自己的竞态：data: → http 换进程时，新渲染进程的脚本上下文比启动数据先到（多半是那个临时文档）。对比办法：`git archive eaa8853c desktop/src` 解出来用 esbuild 编成 CJS 盖到 `desktop/dist`，跑完 `npm run build -w desktop` 换回来。

@@ -1,15 +1,15 @@
 {
   "name": "Claude Web 娘",
-  "version": 3,
+  "version": 4,
   "author": "Super NB",
   "license": "MIT",
   "kind": "video",
   "intro": "intro.mp4",
   "loop": "loop.mp4",
   "poster": "poster.webp",
-  "logoAt": 9.71,
-  "shortFrom": 6.6,
+  "logoAt": 9.6,
+  "shortFrom": 6,
   "maxSeconds": 12,
   "sound": false,
-  "credits": "人设图：gpt-image-2.6；开场片和背景循环：Seedance 2.5（1080P）"
+  "credits": "人设图：gpt-image-2.6；开场片：Seedance 2.5（一镜到底，720P 出片放大到 1080P）；背景循环：Seedance 2.5（1080P）"
 }
