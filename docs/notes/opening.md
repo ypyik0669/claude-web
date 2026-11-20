@@ -72,6 +72,7 @@
 
 - 顺序（`openingCards`）：内置视频包（Claude Web 娘）· 点火 · 星图 · 字符雨 · 网吧开门 · 导入的包（视频或网页）· 「自己的视频」。`OpeningCard` 每种 kind 一个成员（`kind: 'video' | 'web'` 合成一个成员时，`c.kind === 'cafe'` 之后 TS 收窄不掉，`c.pack` 报错）。缩略图是方案 `TH` 那几张 svg 的移植（`Still`），一律深色像片子的一帧；网吧开门在没有 WebGL 的电脑上副标题写「这台电脑没有 WebGL，会放点火」。
 - 悬停小样（方案「卡片悬停时小窗预览」）：鼠标停 350 ms（或键盘焦点 `:focus-visible`）后在缩略图上盖一层 `.op-hover`，`CardPreview.tsx` 是单独懒加载的 chunk（开场页生成器跟着它）。视频包放 loop（没有就从 `shortFrom` 放片子），静音；其余放开场页本身的 `thumb` 模式：底色 `#13110e`、简短、不飞、不出进度线 / 声音 / 提示，画出来的三种放完 1.4 s 重来。`pointer-events: none`，点击照样落在卡片上。
+- 手机宽度：动画包的三个按钮单独占一行、会换行（照主题色块的写法，`.sp-row:has(> .ctl > .op-btns)`），600px 以下「浓淡」和开关放到文字下面——放在旁边时按钮跑出屏幕、文字被挤成一列四个字（`.ctl` 是 `flex: none`，只能这样从外面给它整行）。
 - 试放一次所有卡片都能放（`requestFor`）；`preview-options.ts` 统一出参数（预览 / 小样）。网吧在应用里的地址是 server 的 `opening/cafe-opening.js`（web/dist 本来就静态服务）。
 - 放完留作背景：星图留下慢慢飘的星星，字符雨留下几列慢慢落的字符（`drift.ts` 纯函数 + `OpeningBackdrop.tsx` 的 `Drift`，浅色主题也有，用纸色、画重 1.6 倍——隔着 70% 的外壳，纸上的墨色和火星一样几乎看不见）；网吧开门、网页包和点火一样是火星。
 
