@@ -180,6 +180,8 @@ function Drift({ what, light }: { what: 'stars' | 'rain'; light: boolean }) {
     if (!canvas || !ctx) return;
     const rand = Math.random;
     const col = light ? DRIFT_COLORS.light : DRIFT_COLORS.dark;
+    // ink on paper under a 70 % shell all but vanishes (火星 on a light theme did): stronger there
+    const boost = light ? 1.6 : 1;
     const glow = sparkSprite(col.star);
     let w = 0, h = 0, stars: Star[] = [], drops: Drop[] = [], raf = 0, last = 0, t = 0;
     const resize = () => {
@@ -197,7 +199,7 @@ function Drift({ what, light }: { what: 'stars' | 'rain'; light: boolean }) {
         ctx.globalCompositeOperation = light ? 'source-over' : 'lighter';
         ctx.fillStyle = col.star;
         for (const s of stars) {
-          const a = starAlpha(s, t);
+          const a = Math.min(1, starAlpha(s, t) * boost);
           if (s.s > 1.3) { ctx.globalAlpha = a * 0.55; const r = s.s * EMBER_HALO; ctx.drawImage(glow, s.x - r, s.y - r, r * 2, r * 2); }
           ctx.globalAlpha = a;
           ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, Math.PI * 2); ctx.fill();
@@ -210,7 +212,7 @@ function Drift({ what, light }: { what: 'stars' | 'rain'; light: boolean }) {
           for (let j = 0; j < d.len; j++) {
             const r = Math.floor(d.y) - j;
             if (r < 0 || r >= rows) continue;
-            ctx.globalAlpha = (1 - j / d.len) * (j ? 0.5 : 0.85);
+            ctx.globalAlpha = Math.min(1, (1 - j / d.len) * (j ? 0.5 : 0.85) * boost);
             ctx.fillStyle = j ? col.rain : col.head;
             ctx.fillText(rainChar(d.c, r, t), d.c * RAIN_CELL.w, r * RAIN_CELL.h);
           }
