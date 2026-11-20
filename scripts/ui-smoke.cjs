@@ -2345,8 +2345,9 @@ function driver() {
         const search = viaSearch && await waitFor(`${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .search-view")`, 5000);
         check('查看这个对话的搜索 opens 文件 in search mode', search, JSON.stringify({ viaSearch }));
         // the picker puts another panel (目标) in front; it is listed under 已打开 with a ×, which closes it — the panel
-        // stays open, on one of the five (only the five open before: with others open the front would move to the next one)
-        await js(`(() => { const d = window.__store.getState().layout.dock; window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { tabs: d.tabs.filter((x) => ['tasks', 'terminal', 'files', 'browser', 'explorer'].includes(x)), active: 'explorer' } }); })()`);
+        // stays open (on the next open one, else the one of the five last in front). The other panels stay mounted: the
+        // cafe's scene (window.__cwCafe, checked by the 后台 section later) belongs to whichever cafe mounted last
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.close', panel: 'goals', workbench: false })`);
         await sleep(200);
         await pickPanel('goals');
         const temp = await waitFor(`${activeTab} === 'goals' && !!document.querySelector('.dock-panel[data-panel="goals"]:not([hidden])')`, 3000);
@@ -2354,9 +2355,9 @@ function driver() {
         const listedOpen = await js(`!!document.querySelector('.dock-pick-menu .dock-more-open[data-open="goals"] button.x')`);
         if (listedOpen) await click('.dock-pick-menu .dock-more-open[data-open="goals"] button.x');
         const closedTemp = await waitFor('!window.__store.getState().layout.dock.tabs.includes("goals") && window.__store.getState().layout.dock.open', 3000);
-        const landedCore = await js(`['tasks', 'terminal', 'files', 'browser', 'explorer'].includes(${activeTab})`);
+        const landedOn = await js(activeTab);
         if (await js('!!document.querySelector(".dock-pick-menu")')) await key('Escape');
-        check('picker: 目标 comes to the front and is listed under 已打开 with a ×; the × closes it and the panel stays open on one of the five', temp && listedOpen && closedTemp && landedCore, JSON.stringify({ temp, listedOpen, closedTemp, landedCore }));
+        check('picker: 目标 comes to the front and is listed under 已打开 with a ×; the × closes it and the panel stays open (on another panel)', temp && listedOpen && closedTemp && !!landedOn && landedOn !== 'goals', JSON.stringify({ temp, listedOpen, closedTemp, landedOn }));
         if (E.SMOKE_READONLY !== '1') {
           // the terminal is never remounted: switching panels, hiding the panel, flipping the workbench tools
           await pickPanel('terminal');

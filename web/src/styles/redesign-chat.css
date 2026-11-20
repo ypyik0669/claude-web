@@ -19,12 +19,13 @@
 
 /* ============================================================ the line under the box ============================================================
    Every chip keeps its words (the user: 「都写字」, never only an icon). The older rules hid `.opt` words in a narrow
-   row (the row inside the box still does); here they win back. Only the model's name shrinks: everything else is
+   row (a 560px container, 700px in English: `html[lang="en"] .cb .opt`, which outranks a plain `.composer-under.cb
+   .opt`; the row inside the box still does); here they win back. Only the model's name shrinks: everything else is
    `flex: none`. (ComposerBar.tsx measures whether one line still holds it: `data-wrap` puts the right-hand group on a
    line of its own.) */
-.composer-under.cb .opt { display: inline; }
-.composer-under.cb .caret.opt, html .composer-under.cb .mm-anchor > .chip .caret { display: inline-flex; }
-html .composer-under.cb .sub-anchor .mm-chip-label { display: inline; max-width: none; }
+html .composer-under.cb.cb .opt { display: inline; }
+html .composer-under.cb.cb .caret.opt, html .composer-under.cb .mm-anchor > .chip .caret { display: inline-flex; }
+html .composer-under.cb.cb .sub-anchor .mm-chip-label { display: inline; max-width: none; }
 .composer-under.cb > .cb-left { flex: none; }
 .composer-under.cb > .cb-right { flex: 0 1 auto; min-width: 0; }
 html .composer-under.cb.cb > .cb-left, html .composer-under.cb.cb > .cb-right { flex-shrink: 0; }

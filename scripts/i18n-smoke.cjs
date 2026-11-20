@@ -86,17 +86,32 @@ async function driver() {
   results.lang = lang;
 
   await step('welcome');
-  // English is wider than Chinese: the composer's one row must still hold every control, at a few window widths
+  // English is wider than Chinese: the composer's rows must still hold every control, at a few window widths. The
+  // one-line box (the new-conversation page's and a conversation's): the bar is `display: contents` (no box of its
+  // own) — its +, voice input and send sit in the box itself, on the text box's line; the chips are on the line under
+  // the box, and none of them is only an icon (redesign 2026-11 stage 4: 「都写字」). The composer on screen: the pages
+  // that are not shown stay mounted, hidden
   const ROW = `(() => {
-    const row = document.querySelector('.composer-bar.cb, .cb');
-    if (!row) return ['no composer row'];
-    const box = row.getBoundingClientRect();
+    const composer = [...document.querySelectorAll('.composer')].find((c) => c.getBoundingClientRect().width > 0 && c.querySelector('.composer-bar.cb'));
+    if (!composer) return ['no composer row'];
+    const bar = composer.querySelector('.composer-bar.cb');
+    const under = composer.querySelector('.composer-under.cb');
+    const inBox = getComputedStyle(bar).display === 'contents';
+    const rows = [[inBox ? bar.closest('.composer-box') : bar, bar, 'the row'], [under, null, 'the line under the box']].filter(([r]) => !!r);
     const bad = [];
-    if (row.scrollWidth > row.clientWidth + 1) bad.push('the row overflows (' + row.scrollWidth + ' > ' + row.clientWidth + ')');
-    for (const el of row.querySelectorAll('button')) {
-      const r = el.getBoundingClientRect();
-      if (!r.width || getComputedStyle(el).display === 'none') continue;
-      if (r.left < box.left - 1 || r.right > box.right + 1) bad.push('outside the row: ' + (el.getAttribute('aria-label') || el.className || el.textContent).toString().slice(0, 40));
+    const name = (el) => (el.getAttribute('aria-label') || el.className || el.textContent).toString().slice(0, 40);
+    for (const [row, of, what] of rows) {
+      const box = row.getBoundingClientRect();
+      if (row.scrollWidth > row.clientWidth + 1) bad.push(what + ' overflows (' + row.scrollWidth + ' > ' + row.clientWidth + ')');
+      for (const el of (of ?? row).querySelectorAll('button')) {
+        const r = el.getBoundingClientRect();
+        if (!r.width || getComputedStyle(el).display === 'none') continue;
+        if (r.left < box.left - 1 || r.right > box.right + 1) bad.push('outside ' + what + ': ' + name(el));
+      }
+    }
+    if (under) for (const l of under.querySelectorAll('.cc-l, .dirpick-name, .mm-chip-label')) {
+      const chip = l.closest('button');
+      if (chip && chip.getBoundingClientRect().width > 0 && !(l.getBoundingClientRect().width > 0)) bad.push('only an icon in the line under the box: ' + name(chip));
     }
     return bad;
   })()`;
@@ -124,8 +139,22 @@ async function driver() {
 
   await step('conversation', async () => { await js(`window.__store.getState().loadHistory(${JSON.stringify(E.I18N_SID)})`); await sleep(2500); });
   for (const p of inv.panels) await step(`panel · ${p}`, async () => { await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: ${JSON.stringify(p)} })`); await sleep(700); });
+  // the right panel's picker (redesign 2026-11 stage 4: one panel at a time, chosen at its top left)
+  await step('panel · picker', async () => { await click('.dock .dock-pick'); await sleep(500); });
+  await closeMenus();
+  // a conversation's composer beside the right panel (and the info column at 1440): a narrow row of English chips
+  for (const w of [1440, 1100]) {
+    win.setContentSize(w, 900); await sleep(700);
+    for (const b of await js(ROW).catch((e) => ['check failed: ' + e.message])) results.layout.push(`composer row in a conversation beside the right panel at ${w}px: ${b}`);
+  }
+  win.setContentSize(1440, 900); await sleep(600);
   await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
-  await step('conversation · header menu', async () => { await click('.chat-head .icon-btn:last-of-type'); await sleep(400); });
+  // the header's ⋯ (stage 4), and its 更多 opened in place
+  await step('conversation · header menu', async () => { await click('.sess-head .sh-more > .icon-btn'); await sleep(400); });
+  await step('conversation · header menu · more', async () => {
+    if (!(await js('!!document.querySelector(".conv-menu")'))) { await click('.sess-head .sh-more > .icon-btn'); await sleep(400); }
+    await click('.conv-menu [data-act="more"]'); await sleep(300);
+  });
   await closeMenus();
   await step('conversation · message actions', async () => { await js(`(() => { const m = document.querySelector('.msg.user, .msg-user'); if (m) m.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); })()`); });
 
