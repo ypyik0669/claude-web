@@ -245,9 +245,25 @@ function SettingsDialog({ open }: { open: SettingsAsk }) {
     root.current?.querySelector('.sp-si.on')?.scrollIntoView({ block: 'nearest' });
     const box = scroller.current;
     if (!box) return;
-    const el = target.reveal ? box.querySelector(`[data-entry="${CSS.escape(target.reveal)}"]`) : target.body ? box.querySelector(`[data-body="${CSS.escape(target.body)}"]`) : null;
-    if (el) el.scrollIntoView({ block: 'center' });
-    else box.scrollTop = 0;
+    const find = () => (target.reveal ? box.querySelector(`[data-entry="${CSS.escape(target.reveal)}"]`) : target.body ? box.querySelector(`[data-body="${CSS.escape(target.body)}"]`) : null);
+    const el = find();
+    if (!el) { box.scrollTop = 0; return; }
+    el.scrollIntoView({ block: 'center' });
+    // a part that shares its page (stage 2: 对话库 under 共享记忆, IM under 手机与远程) sits under parts that are still
+    // loading and grow after this: keep it in view while they settle — for two seconds, or until the user scrolls
+    const inner = box.firstElementChild;
+    if (!inner || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => find()?.scrollIntoView({ block: 'center' }));
+    ro.observe(inner);
+    const quit = () => ro.disconnect();
+    const t = setTimeout(quit, 2000);
+    const opts = { once: true, passive: true } as const;
+    for (const ev of ['wheel', 'touchstart', 'pointerdown'] as const) box.addEventListener(ev, quit, opts);
+    return () => {
+      clearTimeout(t);
+      quit();
+      for (const ev of ['wheel', 'touchstart', 'pointerdown'] as const) box.removeEventListener(ev, quit);
+    };
   }, [target]);
   // '/' → search (like the mock's hint), unless typing somewhere
   useEffect(() => {
