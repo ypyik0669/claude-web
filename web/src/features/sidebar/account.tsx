@@ -3,10 +3,10 @@ import type { LedgerEntry } from '@shared';
 import { useStore, type AccountAuth } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
-import { Icon, type IconName } from '@/ui/icons';
+import { Icon } from '@/ui/icons';
 import { fmtCost } from '@/model/cost';
 import { modKey } from '@/features/workbench/shortcuts';
-import { Menu, closeDrawer } from './menus';
+import { Menu, SubMenu, closeDrawer } from './menus';
 import { QuotaWindows, UsageRing, worstWindow } from './UsageRing';
 import { accountName, planLabel, todayCost } from './status';
 import { ACCOUNT_PANELS, type AccountId } from './entries';
@@ -114,29 +114,12 @@ async function logoutClaude() {
   await st.checkAuth(true).catch(() => {});
 }
 
-type SubId = 'language' | 'theme' | 'help';
-
-/**
- * A row of the account menu with a choice behind it (语言 ›, 主题 ›, 帮助与反馈 ›): it opens in place under the row,
- * like the 显示 menu's sub-options (one anchored menu at a time app-wide: a second one would close the first).
- */
-function SubRow({ id, icon, label, value, open, onToggle, children }: { id: AccountId; icon: IconName; label: string; value?: string; open: boolean; onToggle(): void; children: React.ReactNode }) {
-  return (
-    <>
-      <button data-id={id} className={clsx('acct-sub-h', open && 'open')} aria-expanded={open} onClick={(e) => { e.stopPropagation(); onToggle(); }}>
-        <Icon name={icon} size={14} /> <span className="grow">{label}</span>
-        <span className="v">{value}<Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} /></span>
-      </button>
-      {open && <div className="acct-sub" role="group" aria-label={label}>{children}</div>}
-    </>
-  );
-}
-
 /**
  * The account menu (redesign 2026-11 stage 1, eight rows): who and the two quota windows at the top; 设置 · 用量与账本
  * (today's spend beside it) · 语言 › · 主题 › (浅色 / 深色 / 跟随系统, 字符画主题…, 外观…) · 键盘快捷键 (not on a phone) ·
  * 帮助与反馈 › · 更新内容 · 登录 / 退出 Claude 账号. The old 配置中心 and 命令面板 rows are gone: 自定义 / 设置 › 高级
- * and the sidebar's 搜索 have them.
+ * and the sidebar's 搜索 have them. The three › rows fly out to the right (stage 3, `SubMenu`); on a phone they are
+ * pushed inside the same sheet.
  */
 export function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null; name: string; onClose: () => void }) {
   const limits = useStore((s) => s.limits);
@@ -144,7 +127,6 @@ export function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null;
   const lang = useStore((s) => (s.settings['ui.language'] as string | undefined) ?? 'auto');
   const theme = useStore((s) => themeChoice(s.settings['ui.theme']));
   const [today, setToday] = useState(cachedToday);
-  const [sub, setSub] = useState<SubId | null>(null);
   useEffect(() => {
     let live = true;
     loadToday().then((v) => { if (live) setToday(v); }).catch(() => {});
@@ -155,7 +137,6 @@ export function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null;
   const act = (fn: () => boolean | void) => () => { onClose(); if (fn() !== false) closeDrawer(); };
   const st = useStore.getState;
   const plan = planLabel(limits?.subscriptionType ?? auth?.subscriptionType, limits?.planName);
-  const toggle = (k: SubId) => () => setSub((v) => (v === k ? null : k));
   const langLabel = LANGUAGES.find((l) => l.id === lang)?.l ?? LANGUAGES[0].l;
   return (
     <Menu onClose={onClose} className="sb-acct-menu" align="left" prefer="up" label={tr('账号')}>
@@ -182,26 +163,26 @@ export function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null;
         <Icon name="usage" size={14} /> <span className="grow">{tr('用量与账本')}</span>
         <span className="v" data-id={id('today')} title={tr('今天（本地时间）各对话的费用合计，来自账本')}>{tr('今日 {cost}', { cost: today ? fmtCost(today.cost, today.unknown) : '…' })}</span>
       </button>
-      <SubRow id={id('language')} icon="web" label={tr('语言')} value={langLabel} open={sub === 'language'} onToggle={toggle('language')}>
+      <SubMenu id={id('language')} icon="web" label={tr('语言')} value={langLabel} panelClass="acct-fly">
         {LANGUAGES.map((l) => (
           <button key={l.id} role="menuitemradio" aria-checked={lang === l.id} data-lang={l.id} onClick={(e) => { e.stopPropagation(); if (lang !== l.id) void st().setSetting('ui.language', l.id); }}>
             <Icon name="check" size={13} className={clsx('ck', lang !== l.id && 'off')} /> {l.l}
           </button>
         ))}
         <div className="menu-note">{tr('换语言会重新加载界面')}</div>
-      </SubRow>
-      <SubRow id={id('theme')} icon="sun" label={tr('主题')} value={theme ? THEME_LABEL[theme] : tr('字符画主题')} open={sub === 'theme'} onToggle={toggle('theme')}>
+      </SubMenu>
+      <SubMenu id={id('theme')} icon="sun" label={tr('主题')} value={theme ? THEME_LABEL[theme] : tr('字符画主题')} panelClass="acct-fly">
         <ThemeQuick />
         <button data-id={id('ascii-themes')} onClick={act(() => st().openSettings({ section: 'appearance', reveal: 'ui.theme' }))}><Icon name="sparkle" size={14} /> {tr('字符画主题…')}</button>
         <button data-id={id('appearance')} onClick={act(() => st().openSettings({ section: 'appearance' }))}><Icon name="settings" size={14} /> {tr('外观…')}</button>
-      </SubRow>
+      </SubMenu>
       {!mobile && <button data-id={id('shortcuts')} onClick={act(() => useStore.setState({ shortcutsOpen: true }))}><Icon name="keyboard" size={14} /> <span className="grow">{tr('键盘快捷键')}</span><span className="k">{modKey} /</span></button>}
-      <SubRow id={id('help')} icon="info" label={tr('帮助与反馈')} open={sub === 'help'} onToggle={toggle('help')}>
+      <SubMenu id={id('help')} icon="info" label={tr('帮助与反馈')} panelClass="acct-fly">
         <button data-help="guide" onClick={act(() => openExternal(HELP_LINKS.guide))}><Icon name="read" size={14} /> {tr('使用说明')}<Icon name="external" size={12} className="ext" /></button>
         <button data-help="issue" onClick={act(() => openExternal(HELP_LINKS.issue))}><Icon name="chat" size={14} /> {tr('报告问题或提建议')}<Icon name="external" size={12} className="ext" /></button>
         <button data-help="site" onClick={act(() => openExternal(HELP_LINKS.site))}><Icon name="web" size={14} /> {tr('官网')}<Icon name="external" size={12} className="ext" /></button>
         <button data-help="diagnostics" onClick={act(() => st().openSettings({ section: 'diagnostics' }))}><Icon name="clipboard" size={14} /> {tr('导出诊断包…')}</button>
-      </SubRow>
+      </SubMenu>
       <button data-id={id('whats-new')} onClick={act(() => openWhatsNew())}><Icon name="sparkle" size={14} /> {tr('更新内容')}</button>
       {!auth?.relay && (
         <>

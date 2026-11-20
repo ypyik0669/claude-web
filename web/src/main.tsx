@@ -13,6 +13,7 @@ import './styles/phone.css';
 import './styles/phone-sheet.css';
 import './styles/phone-menus.css';
 import './styles/shell.css';
+import './styles/sidebar.css';
 import './styles/background.css';
 import './styles/background-page.css';
 import './styles/background-history.css';

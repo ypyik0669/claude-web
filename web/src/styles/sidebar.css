@@ -1,0 +1,103 @@
+/* The sidebar as 图 7 draws it (redesign 2026-11 stage 3) and the menus' submenus. Loaded after shell.css (and so after
+   phone-menus.css: the phone rules here re-dress what that sheet does to a menu).
+
+   features/sidebar/menus.tsx `SubMenu`: a row with a submenu behind it flies out beside its menu on a desktop (fixed,
+   tucked 4px under the menu's edge), and is pushed inside the same action sheet on a phone (the rest of that level makes
+   way, ‹ at the top left goes back). Rows: a title and one status at its end (an orange dot while it waits for you, a red
+   one when its process died, the running ring, +N −M — never the time); forks / side conversations one level in under
+   their root, with a little elbow. Project / folder / date headers show 显示 and ＋ on hover. */
+
+/* ---- a row with a submenu, and the submenu ---- */
+.menu .sb-sub > .sb-sub-row { min-height: 34px; padding: 5px 10px; }
+.menu .sb-sub-row .grow { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu .sb-sub-row .v { flex: 0 1 auto; min-width: 0; max-width: 58%; margin-left: auto; padding-left: 10px; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--ink-4); font-variant-numeric: tabular-nums; }
+.menu .sb-sub-row .v .vt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu .sb-sub-row .v > svg { flex: none; color: var(--ink-4); }
+.menu .sb-sub-row.open, .menu .sb-sub-row[aria-expanded='true'] { background: var(--layer-hover); color: var(--ink-1); }
+/* a menu with a submenu out: no scale-in left to finish — its transform would hold the fixed submenu inside its box */
+.menu[data-fly-open] { animation: none; }
+.menu.sb-fly { position: fixed; z-index: 1001; min-width: 184px; max-width: 320px; overflow: auto; }
+.menu.sb-fly[data-side='left'] { z-index: 1001; }
+/* what a submenu row holds (the same as the menu's own rows) */
+.menu.sb-fly > button .n, .menu.sb-fly > button .k { margin-left: auto; padding-left: 8px; font-size: 12px; color: var(--ink-4); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---- the 显示 menu: six rows (分组方式 › · 排序 › · 显示 › · 新建分区 · 恢复默认 · 查看全部) ---- */
+.menu.sb-view { width: 236px; }
+.menu.sb-view .sb-fly button > svg.ck { visibility: hidden; color: var(--accent-text); }
+.menu.sb-view .sb-fly button.on > svg.ck { visibility: visible; }
+.menu.sb-view .sb-fly button.off { color: var(--ink-3); }
+.menu.sb-view .sb-fly .warn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
+.menu.sb-view .sb-fly .spinner { width: 10px; height: 10px; border-width: 1.5px; margin-left: auto; }
+.menu.sb-view .sb-fly.sb-view-show { min-width: 232px; }
+/* 每组: 5 条 · 10 条 · 全部, one row */
+.menu .sb-per { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 3px 4px 3px 10px; font-size: var(--fs-base); color: var(--ink-1); }
+.menu .sb-per .l { flex: 1 1 auto; white-space: nowrap; }
+.menu .sb-per .segmented { flex: none; width: 150px; }
+.menu .sb-per .segmented > button { height: 24px; font-size: var(--fs-meta); }
+
+/* ---- the account menu's three submenus (语言 · 主题 · 帮助与反馈) ---- */
+/* (232: 浅色 · 深色 · 跟随系统 side by side, each with its icon, without the last one spilling out of its pill) */
+.menu.acct-fly { min-width: 232px; }
+.menu.acct-fly .ck { color: var(--ink-1); }
+.menu.acct-fly .ck.off { visibility: hidden; }
+.menu.acct-fly .ext { margin-left: auto; }
+.menu.acct-fly .menu-note { padding-left: 31px; }
+.menu.acct-fly .theme-quick { margin: 2px 2px 4px; }
+
+/* ---- a row: its one status at the end ---- */
+.sb-row .st.wait, .sb-row .st.err { width: 7px; height: 7px; margin-right: 3px; border-radius: 50%; background: var(--accent); max-width: none; overflow: visible; }
+.sb-row .st.err { background: var(--err); }
+.sb-row .st.run .spin { border-top-color: var(--accent); }
+/* forks / side conversations: one level in, an elbow from the root */
+.sb-row.sess.kid { color: var(--ink-3); }
+.sb-row.sess.kid.active { color: var(--ink-1); }
+.sb-row.sess.kid::before { content: ''; position: absolute; left: calc(var(--row-indent) - 13px); top: calc(50% - 9px); width: 7px; height: 9px; border-left: var(--hairline, 1px) solid var(--edge-strong); border-bottom: var(--hairline, 1px) solid var(--edge-strong); border-bottom-left-radius: 5px; pointer-events: none; }
+/* the root's fold arrow: there on hover while they show, always while they are folded */
+.sb-row .kids-toggle[aria-expanded='true'] { opacity: 0; transition: opacity var(--dur-2) var(--ease-out); }
+.sb-row:hover .kids-toggle, .sb-row:focus-within .kids-toggle, .sb-row .kids-toggle:focus-visible { opacity: 1; }
+@media (hover: none) { .sb-row .kids-toggle { opacity: 1; } }
+
+/* ---- a project / folder / date header: 显示 and ＋ on hover (and while its 显示 menu is open) ---- */
+.sb-group.menu-on > .sb-group-head .acts { display: inline-flex; }
+.sb-group.menu-on > .sb-group-head { background: var(--layer-hover); }
+.sb-group-head .acts { align-items: center; gap: 2px; }
+.sb-group-head .acts .anchor { display: inline-flex; }
+.sb-group-head .acts .icon-btn.xs { position: relative; width: 24px; height: 24px; color: var(--ink-3); }
+.sb-group-head .acts .icon-btn.xs:hover { color: var(--ink-1); }
+.sb-group-head .acts .icon-btn.on { color: var(--ink-1); background: var(--layer-selected); }
+.sb-group-head .fdot { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+/* ---- / in the sidebar: the list's own filter box, at its top ---- */
+.sb-list .sb-filter-q.sb-slash { position: sticky; top: 0; z-index: 4; margin: 8px 2px 4px; background: var(--surface-2); }
+.sb-list .sb-filter-q.sb-slash .icon-btn.xs { flex: none; width: 22px; height: 22px; }
+
+/* ---- a phone: the drawer's rows have their status only (a long press opens a row's menu, or a header's) ---- */
+.app.mobile .sb-row.sess { padding-right: 14px; }
+.app.mobile .sb-row .st.wait, .app.mobile .sb-row .st.err { width: 8px; height: 8px; }
+.app.mobile .sb-row .kids-toggle { display: none; }
+.app.mobile .sb-row.sess.kid::before { left: calc(var(--row-indent) - 14px); }
+
+/* ---- a phone: a submenu is pushed inside the same sheet ---- */
+.as-sheet .menu .sb-sub > .sb-sub-row { min-height: 48px; padding: 6px 12px; gap: 12px; border-radius: var(--r-lg); font-size: var(--fs-lg); line-height: 22px; }
+.as-sheet .menu .sb-sub > .sb-sub-row > svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.as-sheet .menu .sb-sub-row .v { font-size: var(--fs-base); max-width: 62%; }
+.as-sheet .menu .sb-sub-row .v > svg { width: 18px; height: 18px; stroke-width: 2; }
+.as-sheet .menu .sb-sub-row.open { background: none; }
+/* (five classes: out-ranks `.menu.sb-menu`, `.menu.sb-fly` and the menus' own rules) */
+.as-layer > .as-sheet .menu.sb-menu.sb-fly {
+  position: static; width: auto; min-width: 0; max-width: none; max-height: none; margin: 0; padding: 0; z-index: auto;
+  border-radius: 0; background: none; box-shadow: none; overflow: visible; transform: none; animation: none;
+}
+.as-sheet .menu[data-pushed] > :not(.sb-push-head, .sb-sub[data-open]) { display: none; }
+.as-sheet .menu .sb-sub[data-open] > .sb-sub-row { display: none; }
+.as-sheet .sb-push-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 4px; min-height: 48px; margin: 0 0 4px; background: var(--surface-elev); }
+.as-sheet .menu .sb-push-head .sb-push-back { flex: none; width: 44px; min-width: 44px; height: 44px; min-height: 44px; padding: 0; justify-content: center; border-radius: var(--r-lg); color: var(--ink-1); }
+.as-sheet .menu .sb-push-head .sb-push-back > svg { width: 22px; height: 22px; stroke-width: 2; color: var(--ink-1); }
+.as-sheet .sb-push-head .t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lg); font-weight: 600; color: var(--ink-1); }
+.as-sheet .sb-sheet-title { padding: 0 12px 8px; font-size: var(--fs-lg); font-weight: 600; color: var(--ink-1); }
+/* 每组 and 主题's three: full-size targets */
+.as-sheet .menu .sb-per { min-height: 56px; padding: 4px 4px 4px 12px; gap: 12px; font-size: var(--fs-lg); }
+.as-sheet .menu .sb-per .segmented { width: min(220px, 60%); }
+.as-sheet .menu .sb-per .segmented > button { height: 44px; font-size: var(--fs-base); }
+.as-sheet .menu.sb-fly .theme-quick button { height: 44px; }
+.as-sheet .menu.acct-fly .menu-note { padding-left: 12px; }

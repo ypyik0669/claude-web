@@ -1604,8 +1604,6 @@ html[data-density='compact'] .sb-row.sess { height: 28px; padding: 0 10px 0 var(
 .menu.sb-view .warn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
 .menu.sb-view .spinner { width: 10px; height: 10px; border-width: 1.5px; margin-left: auto; }
 .menu.sb-view { max-height: min(640px, calc(100vh - 24px)); overflow-y: auto; }
-.menu.sb-view .sb-view-chev { flex: none; margin-left: 4px; color: var(--ink-4); }
-.menu.sb-view .sb-view-sub { padding-left: 14px; }
 /* the user's own sections (stage C3): a drop target header, a × on each row */
 .sb-custom .sb-custom-out { visibility: hidden; flex: none; }
 .sb-custom .sb-row-wrap:hover .sb-custom-out, .sb-custom .sb-custom-out:focus-visible { visibility: visible; }

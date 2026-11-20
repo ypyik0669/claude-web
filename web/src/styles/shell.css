@@ -221,17 +221,10 @@
 .sb-account .sb-gear { flex: none; color: var(--ink-3); }
 .sb-account .sb-gear:hover { color: var(--ink-1); }
 
-/* the account menu: a value at the end of a row; a row with a choice behind it opens in place under it */
+/* the account menu: a value at the end of a row (its three › rows fly out: sidebar.css, stage 3) */
 .menu.sb-acct-menu button .grow { flex: 1 1 auto; min-width: 0; }
 .menu.sb-acct-menu button .v { margin-left: auto; padding-left: 8px; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--ink-4); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .menu.sb-acct-menu button .v > svg { color: var(--ink-4); }
-.menu.sb-acct-menu .acct-sub-h.open { background: var(--layer-hover); }
-.menu.sb-acct-menu .acct-sub { padding: 2px 0 4px 18px; }
-.menu.sb-acct-menu .acct-sub .theme-quick { margin: 2px 4px 4px 6px; }
-.menu.sb-acct-menu .acct-sub .ck { color: var(--ink-1); }
-.menu.sb-acct-menu .acct-sub .ck.off { visibility: hidden; }
-.menu.sb-acct-menu .acct-sub .ext { margin-left: auto; }
-.menu.sb-acct-menu .acct-sub .menu-note { padding-left: 32px; }
 
 /* 自动化's five tabs over each of its pages (features/automation/family.tsx) */
 .fam-tabs { flex: none; display: flex; align-items: center; gap: 2px; min-height: 36px; padding: 0 var(--sp-5); overflow-x: auto; scrollbar-width: none; }

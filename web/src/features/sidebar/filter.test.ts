@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '@shared';
-import { childrenOf, filterSessions, filterSummary, machineCounts, renderedRows, sourceCounts } from './filter';
+import { families, filterSessions, filterSummary, machineCounts, renderedRows, sourceCounts } from './filter';
 
 const s = (id: string, o: Partial<SessionSummary> = {}): SessionSummary => ({ sessionId: id, title: id, cwd: '/w', lastModified: 0, ...o });
 
@@ -90,11 +90,41 @@ describe('renderedRows', () => {
   });
 });
 
-describe('childrenOf', () => {
+describe('families: forks and side conversations one level under their root (redesign 2026-11 stage 3)', () => {
+  const f = (meta: Record<string, object> = {}, extra: Partial<typeof base> = {}) => ({ ...base, meta, ...extra });
+  const fam = (all: SessionSummary[], o: ReturnType<typeof f>) => families(all, filterSessions(all, o), o);
   it("a parent's child sessions, newest first; archived ones only when archived are shown", () => {
     const all = [s('p'), s('k1', { parentId: 'p', lastModified: 1 }), s('k2', { parentId: 'p', lastModified: 5 }), s('k3', { parentId: 'p', archived: true }), s('x', { parentId: 'q' })];
-    expect(ids(childrenOf(all, 'p', { showArchived: false, meta: {} }))).toEqual(['k2', 'k1']);
-    expect(ids(childrenOf(all, 'p', { showArchived: true, meta: {} }))).toContain('k3');
+    expect(ids(fam(all, f()).kids.get('p') ?? [])).toEqual(['k2', 'k1']);
+    expect(ids(fam(all, f({}, { showArchived: true })).kids.get('p') ?? [])).toContain('k3');
+    // an orphan child (its parent is not listed) is nobody's kid — and never a row of its own (filterSessions)
+    expect(fam(all, f()).rootOf.has('x')).toBe(false);
+  });
+  it('a sub-agent of a sub-agent sits under the root, one level in', () => {
+    const all = [s('r'), s('a', { parentId: 'r', lastModified: 2 }), s('b', { parentId: 'a', lastModified: 3 })];
+    const out = fam(all, f());
+    expect(ids(out.kids.get('r') ?? [])).toEqual(['b', 'a']);
+    expect(out.rootOf.get('b')).toBe('r');
+  });
+  it('a Claude conversation forked here: under the conversation its cache key names (a fork of a fork: the root)', () => {
+    const all = [s('root'), s('fork1', { lastModified: 4 }), s('fork2', { lastModified: 6 }), s('alone')];
+    const out = fam(all, f({ fork1: { cacheKey: 'root' }, fork2: { cacheKey: 'root' }, alone: { cacheKey: 'alone' } }));
+    expect(ids(out.kids.get('root') ?? [])).toEqual(['fork2', 'fork1']);
+    expect(out.rootOf.has('alone')).toBe(false); // its own key: not a fork
+  });
+  it('a fork whose root is filtered out stays a row of its own; a pinned fork stays in 置顶', () => {
+    const all = [s('root', { title: 'zzz' }), s('fork', { title: 'login fix' })];
+    const q = f({ fork: { cacheKey: 'root' } }, { query: 'login' });
+    expect(fam(all, q).rootOf.has('fork')).toBe(false);
+    expect(fam(all, f({ fork: { cacheKey: 'root', pinned: true } })).rootOf.has('fork')).toBe(false);
+  });
+  it('a kid must pass the filter itself (an archived fork under a listed root is hidden)', () => {
+    const all = [s('root'), s('fork', { archived: true })];
+    expect(fam(all, f({ fork: { cacheKey: 'root' } })).kids.has('root')).toBe(false);
+  });
+  it('a cycle stops where it started', () => {
+    const all = [s('a', { parentId: 'b' }), s('b', { parentId: 'a' }), s('c')];
+    expect(() => fam(all, f())).not.toThrow();
   });
 });
 

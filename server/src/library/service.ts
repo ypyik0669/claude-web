@@ -174,6 +174,12 @@ export class LibraryService extends EventEmitter {
   /** Until the first refreshIndex pass completes, search uses the old transcript scan (a half-built index misses things). */
   private indexReady = false;
   private byId = new Map<string, SessionSummary>();
+  /**
+   * The rows the last list() folded under their top-level ancestor (forks / resumed children / sub-agents), their
+   * `parentId` pointing at a listed row (an alias resolved): `sessions.list` sends them too, so the sidebar can show
+   * them under their root (redesign 2026-11 stage 3) — every other caller of list() keeps the folded list.
+   */
+  private kids: SessionSummary[] = [];
   /** A source's library id → the conversation here it was merged into (a Codex conversation started in this app). */
   private merged = new Map<string, string>();
   private resuming = new Map<string, Promise<{ agent: AgentKind; cwd: string }>>();
@@ -411,17 +417,37 @@ export class LibraryService extends EventEmitter {
       }
     };
     const kids = new Map<string, number>();
+    const folded: SessionSummary[] = [];
     for (const id of all.keys()) {
       const root = rootOf(id);
       if (root === id) continue;
       kids.set(root, (kids.get(root) ?? 0) + 1);
+      const k = all.get(id)!;
+      const pid = k.parentId ? alias.get(k.parentId) ?? k.parentId : undefined;
+      folded.push(pid && pid !== k.parentId ? { ...k, parentId: pid } : k);
       out.delete(id);
     }
+    this.kids = folded;
     for (const [root, n] of kids) {
       const r = out.get(root);
       if (r) out.set(root, { ...r, childCount: (r.childCount ?? 0) + n });
     }
     return [...out.values()].sort((a, b) => b.lastModified - a.lastModified);
+  }
+
+  /**
+   * The rows the last list() folded away (each with its `parentId`), newest first; `roots`: only those whose top-level
+   * ancestor is one of these ids (a list cut to a `limit` sends the children of the rows it has).
+   */
+  children(roots?: ReadonlySet<string>): SessionSummary[] {
+    const byId = new Map(this.kids.map((k) => [k.sessionId, k]));
+    const top = (k: SessionSummary): string => {
+      let cur = k;
+      const seen = new Set<string>([k.sessionId]);
+      for (let p = cur.parentId ? byId.get(cur.parentId) : undefined; p && !seen.has(p.sessionId); p = cur.parentId ? byId.get(cur.parentId) : undefined) { seen.add(p.sessionId); cur = p; }
+      return cur.parentId ?? cur.sessionId;
+    };
+    return this.kids.filter((k) => !roots || roots.has(top(k))).sort((a, b) => b.lastModified - a.lastModified);
   }
 
   // ---------- routing ----------

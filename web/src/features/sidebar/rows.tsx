@@ -15,10 +15,14 @@ import { rowStatus, type RowStatus } from './status';
 import type { RowId, RowMenuId } from './entries';
 import { useLongPress } from '@/ui/long-press';
 import { haptic } from '@/ui/haptics';
-import { tr } from '@/i18n';
+import { tr, dateLocale } from '@/i18n';
 
-/** Sidebar-only entries of the session menu (where to open it, pin, folder); the rest is the shared SessionMenu. */
-function SidebarMenuExtra({ s, onClose }: { s: SessionSummary; onClose: () => void }) {
+/**
+ * Sidebar-only entries of the session menu (where to open it, pin, 选择, folder); the rest is the shared SessionMenu.
+ * `onSelect`: 选择 — the multi-select starts with this row (redesign 2026-11 stage 3: it left the 显示 menu); not on the
+ * 需要你 rows (they take no part in it).
+ */
+function SidebarMenuExtra({ s, onClose, onSelect, kids }: { s: SessionSummary; onClose: () => void; onSelect?: () => void; /** its forks / side conversations: show / fold them (a phone has no arrow for it) */ kids?: { n: number; open: boolean; toggle(): void } }) {
   const st = useStore();
   const open = st.open[s.sessionId];
   const meta = st.sessionMeta[s.sessionId] ?? {};
@@ -29,10 +33,13 @@ function SidebarMenuExtra({ s, onClose }: { s: SessionSummary; onClose: () => vo
   const sections = readSections(st.settings[SECTIONS_KEY]);
   return (
     <>
-      <button data-id={id('open-tab')} onClick={openIn('tab')}><Icon name="board" size={14} /> {tr('在新{tile}打开', { tile: TERMS.tile })}</button>
-      <button data-id={id('open-split')} onClick={act(split)}><Icon name="splitRight" size={14} /> {tr('在右侧{pane}打开', { pane: TERMS.pane })}</button>
+      {/* a phone shows one conversation at a time: no tab strip, no side by side to open it into */}
+      {!st.mobile && <button data-id={id('open-tab')} onClick={openIn('tab')}><Icon name="board" size={14} /> {tr('在新{tile}打开', { tile: TERMS.tile })}</button>}
+      {!st.mobile && <button data-id={id('open-split')} onClick={act(split)}><Icon name="splitRight" size={14} /> {tr('在右侧{pane}打开', { pane: TERMS.pane })}</button>}
       {effectiveCaps(s).resume && <button data-id={id('resume')} onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }).catch((e) => st.toast(e.message)))}><Icon name="play" size={14} /> {tr('恢复运行')}</button>}
       <button data-id={id('pin')} onClick={act(() => st.setSessionMeta(s.sessionId, { pinned: !meta.pinned }))}><Icon name="pin" size={14} /> {meta.pinned ? tr('取消置顶') : tr('置顶')}</button>
+      {onSelect && <button data-id={id('select')} title={st.mobile ? undefined : tr('也可以按住 Shift 点对话')} onClick={() => { onClose(); onSelect(); }}><Icon name="checkCircle" size={14} /> {tr('选择')}</button>}
+      {kids && <button data-id={id('kids')} onClick={() => { onClose(); kids.toggle(); }}><Icon name={kids.open ? 'chevronUp' : 'chevronDown'} size={14} /> {kids.open ? tr('收起子对话') : tr('展开 {n} 个子对话', { n: kids.n })}</button>}
       {!s.peer && <button data-id={id('explorer')} onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }).catch((e) => useStore.getState().toast(e.message)))}><Icon name="folder" size={14} /> {tr('在资源管理器打开')}</button>}
       {!s.peer && <button data-id={id('vscode')} onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd, app: 'code' }).catch((e) => useStore.getState().toast(e.message)))}><Icon name="keyboard" size={14} /> {tr('在 VS Code 打开')}</button>}
       {open && open.state !== 'history' && <button data-id={id('stop')} onClick={act(() => st.closeSession(s.sessionId))}><Icon name="stop" size={14} /> {tr('结束进程')}</button>}
@@ -84,25 +91,33 @@ export interface RowCtx {
   /** close the menu `key` if it is still the open one */
   closeMenu(key: string): void;
   sel: Selection;
+  /** the rows whose forks / side conversations are shown under them (stage 3: shown unless folded) */
   expanded: ReadonlySet<string>;
   toggleKids(id: string): void;
-  /** gray text instead of the time: a non-Claude agent's name */
+  /** how many forks / side conversations sit under this row (sidebar/filter.ts `families`) */
+  kidCount(s: SessionSummary): number;
+  /** gray text at the row's end: a non-Claude agent's name */
   tagFor(s: SessionSummary): string | null;
 }
 
 /** Key of a row's menu in the sidebar's one-menu state. */
 export const rowMenuKey = (where: RowCtx['where'], sessionId: string) => `row:${where}:${sessionId}`;
 
-/** The one status at the end of a row. */
+/**
+ * The one status at the end of a row (redesign 2026-11 stage 3, 图 7): an orange dot while it waits for you (a
+ * permission, a question), a red one when its process died, the running ring, +N −M; a non-Claude agent's name in
+ * gray. Never the time — the row's tooltip has it.
+ */
 export function StatusMark({ st }: { st: RowStatus }) {
   const id: RowId = 'status';
   switch (st.kind) {
     case 'confirm':
-    case 'ask': return <span className="st need" data-id={id} title={st.title}>{st.label}</span>;
-    case 'error': return <span className="st err" data-id={id} title={st.title}>{st.label}</span>;
-    case 'running': return <span className="st run" data-id={id} title={st.title} aria-label={st.label}><span className="spin" /></span>;
-    case 'diff': return <span className="st stat" data-id={id} title={st.title}><span className="a">+{st.added}</span> <span className="d">−{st.removed}</span></span>;
-    default: return <span className="st" data-id={id} title={st.title}>{st.label}</span>;
+    case 'ask': return <span className="st wait" data-id={id} data-kind={st.kind} role="img" title={st.title} aria-label={st.label} />;
+    case 'error': return <span className="st err" data-id={id} data-kind="error" role="img" title={st.title} aria-label={st.label} />;
+    case 'running': return <span className="st run" data-id={id} data-kind="running" title={st.title} aria-label={st.label}><span className="spin" /></span>;
+    case 'diff': return <span className="st stat" data-id={id} data-kind="diff" title={st.title}><span className="a">+{st.added}</span> <span className="d">−{st.removed}</span></span>;
+    case 'tag': return <span className="st" data-id={id} data-kind="tag" title={st.title}>{st.label}</span>;
+    default: return null;
   }
 }
 
@@ -116,25 +131,30 @@ export function useRowStatus(s: SessionSummary, tag: string | null): RowStatus {
   return rowStatus({ state: open ? open.state : s.live, pending: open?.pending, error: open?.error, diff, tag, lastModified: s.lastModified });
 }
 
-function rowTitle(s: SessionSummary, tag: string | null, st: RowStatus, sel: boolean): string {
+/** The row's tooltip: the first message, where it ran, what its status means, when it last changed (the row itself
+ *  shows no time, redesign 2026-11 stage 3) — and on a desktop what the pointer and keys do with it. */
+function rowTitle(s: SessionSummary, tag: string | null, st: RowStatus, sel: boolean, mobile: boolean): string {
   if (sel) return s.title;
   const lines = [s.firstPrompt ?? s.title];
   const where = [s.cwd, s.gitBranch].filter(Boolean).join(' · ');
   if (where) lines.push(where);
   if (tag) lines.push(tag);
   if (s.peer) lines.push(tr('在机器「{name}」上{v}', { name: s.peer.name, v: s.peer.offline ? tr('（离线，只读）') : '' }));
-  if (st.kind !== 'time') lines.push(st.title);
-  lines.push(tr('点击打开 · Ctrl / 中键：新{tile} · Shift：多选 · 右键：菜单 · 可拖到{pane}', { tile: TERMS.tile, pane: TERMS.pane }));
+  if (st.kind !== 'time' && st.kind !== 'tag') lines.push(st.title);
+  if (s.lastModified) lines.push(tr('更新于 {time}', { time: new Date(s.lastModified).toLocaleString(dateLocale()) }));
+  if (!mobile) lines.push(tr('点击打开 · Ctrl / 中键：新{tile} · Shift：多选 · 右键：菜单 · 可拖到{pane}', { tile: TERMS.tile, pane: TERMS.pane }));
   return lines.join('\n');
 }
 
 /**
- * One conversation: title + one status at its end (spec §5.1). Hover shows ··· in the status' place; right-click
- * opens the same menu. A parent of forks / sub-agent threads has an arrow in front that lists them underneath.
- * A conversation on another machine carries the machine's name in gray before the status (hidden inside that
- * machine's own group, whose header already says it).
- * On a phone holding the row for 500ms opens the same menu (an action sheet there) with a tick under the finger; the
- * row is not draggable there — a touch browser starts a drag from the same hold, and there is no pane to drop it on.
+ * One conversation: title + one status at its end (spec §5.1; redesign 2026-11 stage 3: no time — the tooltip has
+ * it). Hover shows ··· in the status' place; right-click opens the same menu. The forks / side conversations of a
+ * conversation sit one level in under it; its row has an arrow in front that folds them (shown on hover while they
+ * are shown, always while they are folded). A conversation on another machine carries the machine's name in gray
+ * before the status (hidden inside that machine's own group, whose header already says it).
+ * On a phone there is no ···: holding the row for 500ms opens the same menu (an action sheet there) with a tick under
+ * the finger; the row is not draggable there — a touch browser starts a drag from the same hold, and there is no pane
+ * to drop it on.
  */
 export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s: SessionSummary; ctx: RowCtx; depth?: number; flat?: boolean; pip?: boolean }) {
   const activeId = useStore((st) => st.activeId);
@@ -147,7 +167,8 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
   const key = rowMenuKey(ctx.where, id);
   const checked = sel.on && sel.ids.has(id);
   const archived = isArchived(s, meta ? { [id]: meta } : {});
-  const kids = !!s.childCount && depth === 0 && ctx.where === 'list';
+  const kidCount = depth === 0 && ctx.where === 'list' ? ctx.kidCount(s) : 0;
+  const kids = kidCount > 0;
   const open = ctx.expanded.has(id);
   const kidsId: RowId = 'kids';
   const onClick = (e: React.MouseEvent) => {
@@ -179,10 +200,10 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
       onDragStart={(e) => { e.dataTransfer.setData(MIME_SESSION, id); e.dataTransfer.effectAllowed = 'copyMove'; }}
       // (a phone's browser may report the hold itself, as a contextmenu, before the 500ms are up: the same long press)
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!press.trigger()) setMenu(key); }}
-      title={rowTitle(s, tag, st, sel.on)}
+      title={rowTitle(s, tag, st, sel.on, mobile)}
     >
       {kids && (
-        <button className="kids-toggle" data-id={kidsId} aria-expanded={open} title={tr('{childCount} 个子对话（分叉 / 子代理）', { childCount: s.childCount })} aria-label={open ? tr('收起子对话') : tr('展开子对话')} onClick={(e) => { e.stopPropagation(); ctx.toggleKids(id); }}>
+        <button className="kids-toggle" data-id={kidsId} aria-expanded={open} title={tr('{childCount} 个子对话（分叉 / 子代理）', { childCount: kidCount })} aria-label={open ? tr('收起子对话') : tr('展开子对话')} onClick={(e) => { e.stopPropagation(); ctx.toggleKids(id); }}>
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
         </button>
       )}
@@ -194,8 +215,8 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
       {meta?.handedOff && <span className="peer-tag" data-tag="handed-off" title={tr('已交给「{name}」继续', { name: meta.handedOff.peerName })}>{tr('已交给 {name}', { name: meta.handedOff.peerName })}</span>}
       {s.peer && <span className="peer-tag" title={tr('在机器「{name}」上{v}', { name: s.peer.name, v: s.peer.offline ? tr('（离线）') : '' })}>{s.peer.name}</span>}
       <StatusMark st={st} />
-      {!sel.on && <button className="more" title={tr('更多')} aria-label={tr('更多')} onClick={(e) => { e.stopPropagation(); setMenu(menu === key ? null : key); }}><Icon name="more" size={14} /></button>}
-      {menu === key && <SessionMenu s={s} onClose={() => closeMenu(key)} extra={<SidebarMenuExtra s={s} onClose={() => closeMenu(key)} />} />}
+      {!sel.on && !mobile && <button className="more" title={tr('更多')} aria-label={tr('更多')} onClick={(e) => { e.stopPropagation(); setMenu(menu === key ? null : key); }}><Icon name="more" size={14} /></button>}
+      {menu === key && <SessionMenu s={s} onClose={() => closeMenu(key)} extra={<SidebarMenuExtra s={s} onClose={() => closeMenu(key)} onSelect={ctx.where === 'attn' ? undefined : () => sel.range(id)} kids={kids ? { n: kidCount, open, toggle: () => ctx.toggleKids(id) } : undefined} />} />}
     </div>
   );
 }

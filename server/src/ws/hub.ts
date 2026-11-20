@@ -520,8 +520,11 @@ export class Hub {
         // a bot's thread, its runs and internal work are reached from the Bot page, never the list (bots/hidden.ts)
         const all = (await s.library.list()).filter((x) => !isBotSession(s.meta.sessionMeta(x.sessionId), x));
         const list = req.limit ? all.slice(0, req.limit) : all;
+        // the forks / sub-agent threads folded under these rows come too, each with its `parentId`: the sidebar shows
+        // them one level under their root (redesign 2026-11 stage 3); every other list keeps them folded
+        const kids = s.library.children(new Set(list.map((x) => x.sessionId))).filter((x) => !isBotSession(s.meta.sessionMeta(x.sessionId), x));
         // a folder the list could not read (issue #9) is known to the conversation's own process while it runs
-        return list.map((x) => {
+        return [...list, ...kids].map((x) => {
           const pending = s.meta.sessionMeta(x.sessionId).pendingTitle;
           return { ...x, ...(pending ? { title: pending } : {}), cwd: x.cwd || s.pool.get(x.sessionId)?.cwd || '', live: s.pool.stateOf(x.sessionId) };
         });

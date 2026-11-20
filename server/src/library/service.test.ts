@@ -458,6 +458,7 @@ describe('LibraryService', () => {
     const list = await lib.list();
     expect(list.map((s) => s.sessionId)).toEqual(['c2', 'codex-b', 'codex-a', 'c1']);
     expect(list.every((s) => !s.childCount)).toBe(true);
+    expect(lib.children()).toEqual([]);
   });
 
   it('nested sub-agents fold transitively under the top-level ancestor', async () => {
@@ -472,6 +473,11 @@ describe('LibraryService', () => {
     expect(list.map((s) => s.sessionId)).toEqual(['c2', 'codex-orphan', 'codex-root', 'c1']);
     expect(list.find((s) => s.sessionId === 'codex-root')?.childCount).toBe(2);
     expect(list.find((s) => s.sessionId === 'codex-orphan')?.childCount).toBeUndefined();
+    // what was folded away, for sessions.list (the sidebar shows them under their root): newest first, each with its
+    // parentId; cut to the roots a limited list has
+    expect(lib.children().map((s) => [s.sessionId, s.parentId])).toEqual([['codex-grandkid', 'codex-kid'], ['codex-kid', 'codex-root']]);
+    expect(lib.children(new Set(['codex-root'])).length).toBe(2);
+    expect(lib.children(new Set(['c2'])).length).toBe(0);
   });
 
   it('refreshIndex stamps indexedAt on a joined source with no sessions, not on a failed one', async () => {

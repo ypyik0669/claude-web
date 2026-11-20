@@ -18,21 +18,32 @@ export const TOP = ['app-menu', 'collapse', 'back', 'forward', 'new', 'search', 
 export const AUTOMATION = ['running', 'schedules', 'bots', 'goals', 'orchestra'] as const;
 /** Sections of the list, in order. */
 export const SECTIONS = ['attention', 'pinned', 'custom', 'projects', 'other', 'peers'] as const;
-/** The 项目 / 对话 header row. */
-export const PROJECTS_HEAD = ['view', 'add-project'] as const;
 /**
- * The 显示 menu (stage C3): the old funnel's filters (the box, 来源, 机器, 显示已归档, 选择) plus how the list is grouped,
- * ordered and how much of each group shows; the user's own sections; 恢复默认 / 查看全部.
+ * The 项目 / 对话 header row: 打开文件夹, and 显示 where no group header carries it (redesign 2026-11 stage 3: a
+ * desktop's 显示 is on each project / folder / date header — the flat list has none — and on a phone this is the
+ * list's one ≡).
  */
-export const VIEW = ['query', 'source', 'machine', 'group-by', 'sort-by', 'archived', 'other-agents', 'per-group', 'select', 'new-section', 'reset', 'all', 'library'] as const;
+export const PROJECTS_HEAD = ['view', 'add-project'] as const;
+/** A project / folder / date header (stage 3, 图 7): on hover 显示 and ＋ (a new conversation there). */
+export const GROUP_HEAD = ['group-view', 'new-here'] as const;
+/**
+ * The 显示 menu (stage 3, 图 7): six rows — 分组方式 › · 排序 › · 显示 › · 新建分区 · 恢复默认 · 查看全部; 显示 › holds
+ * 已归档的对话, 其它 Agent 的对话, 每组, 来源 › (with 管理来源 at its end) and 机器 › (when another machine has
+ * conversations). The stage C menu's filter box went to 搜索 and the list's / filter (`row:filter`), 选择多个 to Shift +
+ * click and the row menu's 选择 (`rowMenu:select`).
+ */
+export const VIEW = ['group-by', 'sort-by', 'show', 'archived', 'other-agents', 'per-group', 'source', 'machine', 'library', 'new-section', 'reset', 'all'] as const;
 /** A section of the user's own: its header (a drop target), its menu, the × on its rows. */
 export const CUSTOM = ['custom-section', 'custom-rename', 'custom-delete', 'custom-out'] as const;
-/** A project's ··· / right-click menu; `add-project` on a folder outside every project. */
+/**
+ * A project's right-click menu (a phone: a long press on its header), and a folder's (stage 3: its header shows 显示
+ * and ＋ like a project's, 设为项目 moved into the menu — still written out on the header while there is no project).
+ */
 export const PROJECT_MENU = ['new-here', 'worktree', 'terminal', 'move-top', 'move-up', 'move-down', 'edit', 'rename', 'explorer', 'vscode', 'remove', 'make-project'] as const;
-/** A conversation row's ··· / right-click menu (shown by capability). */
-export const ROW_MENU = ['open-tab', 'open-split', 'resume', 'pin', 'explorer', 'vscode', 'stop', 'reference', 'rename', 'fork', 'archive', 'handoff', 'handoff-peer', 'native-cli', 'copy-id', 'delete', 'section-add', 'section-out'] as const;
-/** On the rows themselves. */
-export const ROW = ['status', 'kids', 'more', 'less', 'select-bar', 'select-section'] as const;
+/** A conversation row's ··· / right-click menu (shown by capability); 选择 starts the multi-select with this row. */
+export const ROW_MENU = ['open-tab', 'open-split', 'resume', 'pin', 'select', 'kids', 'explorer', 'vscode', 'stop', 'reference', 'rename', 'fork', 'archive', 'handoff', 'handoff-peer', 'native-cli', 'copy-id', 'delete', 'section-add', 'section-out'] as const;
+/** In the list: on the rows themselves, and the filter box / opens at its top (stage 3). */
+export const ROW = ['status', 'kids', 'more', 'less', 'select-bar', 'select-section', 'filter'] as const;
 /**
  * The account row at the bottom and its menu (stage 1: eight rows — 设置 · 用量与账本 · 语言 › · 主题 › · 键盘快捷键 ·
  * 帮助与反馈 › · 更新内容 · 登录 / 退出; 字符画主题 / 外观 are in 主题 ›).
@@ -45,6 +56,7 @@ export type TopId = (typeof TOP)[number];
 export type AutomationId = (typeof AUTOMATION)[number];
 export type SectionId = (typeof SECTIONS)[number];
 export type ProjectsHeadId = (typeof PROJECTS_HEAD)[number];
+export type GroupHeadId = (typeof GROUP_HEAD)[number];
 export type ViewId = (typeof VIEW)[number];
 export type CustomId = (typeof CUSTOM)[number];
 export type ProjectMenuId = (typeof PROJECT_MENU)[number];
@@ -63,7 +75,7 @@ export const AUTOMATION_PANELS = { goals: 'goals', orchestra: 'orchestra' } as c
 export const ACCOUNT_PANELS = { usage: 'usage' } as const satisfies Partial<Record<AccountId, PanelId>>;
 
 export const PLACES = {
-  top: TOP, automation: AUTOMATION, section: SECTIONS, head: PROJECTS_HEAD, view: VIEW, custom: CUSTOM,
+  top: TOP, automation: AUTOMATION, section: SECTIONS, head: PROJECTS_HEAD, groupHead: GROUP_HEAD, view: VIEW, custom: CUSTOM,
   project: PROJECT_MENU, row: ROW, rowMenu: ROW_MENU, account: ACCOUNT, hint: HINT,
 } as const;
 export type Place = keyof typeof PLACES;
@@ -84,8 +96,8 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
   { old: tr('会话库发现横幅：以后再说'), now: ['hint:library-later'] },
   { old: tr('来源 chip 行'), now: ['view:source'] },
   { old: tr('机器 chip 行'), now: ['view:machine'] },
-  { old: tr('筛选会话…（输入框）'), now: ['view:query'] },
-  { old: tr('选择（多选）/ 全选 / 批量归档 / 批量删除'), now: ['view:select', 'row:select-bar'] },
+  { old: tr('筛选会话…（输入框）'), now: ['top:search', 'row:filter'] },
+  { old: tr('选择（多选）/ 全选 / 批量归档 / 批量删除'), now: ['rowMenu:select', 'row:select-bar'] },
   { old: tr('「运行中」分组'), now: ['row:status'] },
   { old: tr('置顶分组'), now: ['section:pinned'] },
   { old: tr('工作区 · 添加工作区'), now: ['head:add-project'] },
@@ -99,7 +111,7 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
   { old: tr('其它目录 · 设为工作区'), now: ['section:other', 'project:make-project'] },
   { old: tr('其它机器分组'), now: ['section:peers'] },
   { old: tr('展开更多（剩 N）'), now: ['row:more'] },
-  { old: tr('+N 子任务'), now: ['row:kids'] },
+  { old: tr('+N 子任务'), now: ['row:kids', 'rowMenu:kids'] },
   { old: tr('会话 ··· · 在新标签打开'), now: ['rowMenu:open-tab'] },
   { old: tr('会话 ··· · 在右侧分屏打开'), now: ['rowMenu:open-split'] },
   { old: tr('会话 ··· · 恢复运行'), now: ['rowMenu:resume'] },
@@ -129,10 +141,20 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
   { old: tr('图标栏 · 设置'), now: ['account:settings'] },
   { old: tr('图标栏 · 账号'), now: ['account:account', 'account:quota'] },
   { old: tr('账号菜单 · 字符画主题… / 外观与主题…'), now: ['account:theme', 'account:ascii-themes', 'account:appearance'] },
+  // the stage C 显示 menu (one long menu on the 项目 row) → 图 7 (redesign 2026-11 stage 3): six rows on every project /
+  // folder header, the choices in submenus; what was not a way of showing the list went where it belongs
+  { old: tr('显示 · 筛选对话…（菜单里的输入框）'), now: ['top:search', 'row:filter'] },
+  { old: tr('显示 · 分组方式 / 排序（原地展开）'), now: ['groupHead:group-view', 'view:group-by', 'view:sort-by'] },
+  { old: tr('显示 · 显示已归档的对话 / 其它 agent 的对话 / 每组'), now: ['view:show', 'view:archived', 'view:other-agents', 'view:per-group'] },
+  { old: tr('显示 · 来源 / 机器'), now: ['view:source', 'view:machine'] },
+  { old: tr('显示 · 选择多个…'), now: ['rowMenu:select', 'row:select-bar'] },
+  { old: tr('显示 · 管理对话来源…'), now: ['view:library'] },
+  { old: tr('工作区 ··· 按钮（项目标题上）'), now: ['project:new-here', 'groupHead:new-here'] },
+  { old: tr('其它目录 · 设为工作区（文件夹标题上的钉子）'), now: ['project:make-project'] },
 ];
 
 /** Where the spec's new L0 / L1 entries live (§4.2 / §5.1), beyond the old ones. */
-export const ADDED: `${Place}:${string}`[] = ['top:back', 'top:forward', 'top:artifacts', 'automation:running', 'automation:schedules', 'automation:bots', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:view', 'account:account', 'account:today', 'account:shortcuts', 'account:language', 'account:help', 'account:whats-new', 'view:library', 'view:group-by', 'view:sort-by', 'view:other-agents', 'view:per-group', 'view:new-section', 'view:reset', 'view:all', 'section:custom', 'custom:custom-section', 'custom:custom-rename', 'custom:custom-delete', 'custom:custom-out', 'row:less', 'project:move-top', 'project:move-up', 'project:move-down', 'project:edit', 'account:ascii-themes', 'account:expired', 'account:login', 'account:logout', 'rowMenu:handoff-peer', 'rowMenu:section-add', 'rowMenu:section-out', 'row:select-section'];
+export const ADDED: `${Place}:${string}`[] = ['top:back', 'top:forward', 'top:artifacts', 'automation:running', 'automation:schedules', 'automation:bots', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:view', 'account:account', 'account:today', 'account:shortcuts', 'account:language', 'account:help', 'account:whats-new', 'view:library', 'view:group-by', 'view:sort-by', 'view:other-agents', 'view:per-group', 'view:new-section', 'view:reset', 'view:all', 'section:custom', 'custom:custom-section', 'custom:custom-rename', 'custom:custom-delete', 'custom:custom-out', 'row:less', 'project:move-top', 'project:move-up', 'project:move-down', 'project:edit', 'account:ascii-themes', 'account:expired', 'account:login', 'account:logout', 'rowMenu:handoff-peer', 'rowMenu:section-add', 'rowMenu:section-out', 'row:select-section', 'view:show', 'groupHead:group-view', 'groupHead:new-here', 'rowMenu:select', 'row:filter'];
 
 export function resolves(ref: `${Place}:${string}`): boolean {
   const [place, id] = ref.split(':') as [Place, string];
