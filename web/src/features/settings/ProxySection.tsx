@@ -8,7 +8,7 @@ import { Row } from './controls';
 import { Segmented } from '@/ui/Segmented';
 import { tr } from '@/i18n';
 
-// 设置 → 供应商 → 网络代理 (server net/proxy.ts). A ladder in rule / PAC mode only sets the system proxy, which Node
+// 设置 → 模型 → 来源 → 网络代理 (server net/proxy.ts). A ladder in rule / PAC mode only sets the system proxy, which Node
 // never looks at (user report: 403「所在地区」with the ladder on); the server reads it — or HTTP(S)_PROXY — and hands it
 // to every Agent it starts and to its own requests (provider tests, model lists, IM).
 

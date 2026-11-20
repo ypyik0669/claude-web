@@ -57,7 +57,9 @@ function auditJs(scope, opts = {}) {
       const r = e.getBoundingClientRect();
       const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
       const c = clipBox(e);
-      if (cx < c.l || cx > c.r || cy < c.t || cy > c.b) continue; // scrolled out of its box: not on screen
+      // scrolled out of its box: not on screen (nor one whose centre is on the window's last pixel — elementFromPoint
+      // finds nothing there; the page scrolls it up for a finger)
+      if (cx < c.l || cx > c.r || cy < c.t || cy > c.b || cx >= vw - 1 || cy >= vh - 1) continue;
       out.controls++;
       if ((r.right > vw + 1 || r.left < -1) && !scrollsX(e)) out.off.push(name(e) + ' [' + Math.round(r.left) + '→' + Math.round(r.right) + ']');
       if (!owns(e, cx, cy)) { const h = document.elementFromPoint(cx, cy); out.covered.push(name(e) + ' ← ' + (h ? name(h) : '?')); continue; }

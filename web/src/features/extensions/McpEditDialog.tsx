@@ -6,7 +6,7 @@ import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
 import { trapTab } from '@/ui/focus-trap';
 import { Select } from '@/ui/Select';
-import { mcpChanged } from '@/features/panels/ConfigPanel';
+import { mcpChanged } from '@/features/settings/config-parts';
 import { tr } from '@/i18n';
 
 import { buildMcpConfig, renamesOf, toPairs, type McpKind as Kind, type Pair } from './mcp-edit-model';

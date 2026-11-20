@@ -141,10 +141,10 @@ interface State {
   /** 显示已归档的对话 (the 显示 menu, the palette, the home page): kept in meta.json with the sidebar's view (stage C3) */
   setShowArchived(v: boolean): void;
   shortcutsOpen: boolean;
-  configTab: string | null; // tab the config panel should open on next mount (one-shot)
-  settingsOpen: { section?: string; query?: string; reveal?: string } | null;
+  /** the settings dialog (features/settings): which page / tab / row it shows, or what to search for */
+  settingsOpen: { section?: string; tab?: string; query?: string; reveal?: string } | null;
   metaLoaded: boolean;
-  openSettings(o?: { section?: string; query?: string; reveal?: string }): void;
+  openSettings(o?: { section?: string; tab?: string; query?: string; reveal?: string }): void;
   viewer: { images: string[]; index: number } | null;
   openViewer(images: string[], index?: number): void;
   // workbench layout (groups → panes → tiles); `activeId` and `panels` are projections of it
@@ -492,7 +492,6 @@ export const useStore = create<State>((set, get) => ({
   paletteOpen: false,
   showArchived: false,
   shortcutsOpen: false,
-  configTab: null,
   viewer: null,
   customCss: null,
   openViewer(images, index = 0) {

@@ -1,4 +1,4 @@
-// The pure parts of 设置 › 通用 › 值班 Bot (BotsSection.tsx): budget parsing, what the duty switch shows, and
+// The pure parts of 自动化 › Bot › 设置 (BotsSection.tsx): budget parsing, what the duty switch shows, and
 // 放开全部 / 收回 one bot after another.
 
 /** 全局预算 text → what to store: a positive number, undefined (empty or 0 = no global budget), or an error. */

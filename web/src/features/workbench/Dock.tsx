@@ -7,7 +7,6 @@ import { Icon } from '@/ui/icons';
 import { TERMS } from '@/ui/terms';
 import { TasksPanel } from '@/features/panels/TasksPanel';
 import { UsagePanel } from '@/features/panels/UsagePanel';
-import { ConfigPanel } from '@/features/panels/ConfigPanel';
 import { TerminalPanel } from '@/features/panels/TerminalPanel';
 import { InspectorPanel } from '@/features/panels/InspectorPanel';
 import { MissionPanel } from '@/features/panels/MissionPanel';
@@ -75,7 +74,6 @@ function PanelContent({ id, visible, host }: { id: PanelId; visible: boolean; ho
     case 'files': return <ReviewView visible={visible} inDock={host === 'dock'} />;
     case 'explorer': return <FilesView visible={visible} inDock={host === 'dock'} />;
     case 'usage': return <UsagePanel />;
-    case 'config': return <ConfigPanel />;
     case 'terminal': return <TerminalPanel />;
     case 'inspector': return <InspectorPanel />;
     case 'mission': return <MissionPanel />;

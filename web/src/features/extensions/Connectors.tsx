@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImportDialog } from '@/features/providers/ImportDialog';
 import type { McpHealth, RegistryServer } from '@shared';
 import { ws } from '@/ws/client';
@@ -7,10 +7,11 @@ import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { dlg } from '@/ui/dialog';
 import { imeComposing } from '@/ui/ime';
-import { mcpChanged, useMcpChanged } from '@/features/panels/ConfigPanel';
+import { McpAddJson, mcpChanged, useMcpChanged } from '@/features/settings/config-parts';
 import { MCP_CATALOG } from '@/features/settings/mcp-catalog';
 import { connectorLook } from './brands';
 import { McpEditDialog } from './McpEditDialog';
+import { useExtensions } from './state';
 import { addedMessage, connectorNeeds, connectorStatus, downloadsOnFirstStart, filterCatalog, type Configured } from './connectors-model';
 import { tr } from '@/i18n';
 import { Select } from '@/ui/Select';
@@ -36,7 +37,8 @@ const SCOPE_LABEL: Record<Scope, string> = { user: tr('所有项目'), project: 
  * 连接器 (spec 2026-10-10-ui-structure §4): what is connected, then a directory to add from — each entry the
  * service's mark, its name, one line, one 「添加」. How an entry is launched (`npx …`, a URL) is a detail: it is the
  * row's tooltip, not its text. Searching the official registry and adding from a JSON config stay reachable at the
- * foot. The same requests as the settings page's MCP list (config.mcp, config.mcp.add / remove, mcp.registry, mcp.health).
+ * foot (the JSON form opens under it: since the redesign 2026-11 stage 2 the settings have no MCP page — the old id
+ * `mcp-json` opens this tab with the form). Requests: config.mcp, config.mcp.add / remove, mcp.registry, mcp.health.
  */
 export function Connectors() {
   const active = useScopedSession();
@@ -54,6 +56,17 @@ export function Connectors() {
   const [hBusy, setHBusy] = useState(false);
   const [importing, setImporting] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  // 用配置手动添加…: the JSON form under the foot, opened by the link or asked for from outside (openExtensions json)
+  const askJson = useExtensions((s) => s.askJson);
+  const [jsonOpen, setJsonOpen] = useState(askJson > 0);
+  const jsonRef = useRef<HTMLElement>(null);
+  const seenAsk = useRef(askJson);
+  useEffect(() => {
+    if (askJson === seenAsk.current) return;
+    seenAsk.current = askJson;
+    setJsonOpen(true);
+  }, [askJson]);
+  useEffect(() => { if (jsonOpen) jsonRef.current?.scrollIntoView({ block: 'nearest' }); }, [jsonOpen, askJson]);
 
   const reload = () => ws.request<{ servers: Configured[] }>({ kind: 'config.mcp' })
     .then((r) => { setConfigured(r.servers ?? []); setErr(''); })
@@ -182,8 +195,13 @@ export function Connectors() {
           ? <button className="btn sm" disabled={regBusy} onClick={searchRegistry}><Icon name="search" size={13} />{regBusy ? tr('搜索中…') : tr('在官方目录里搜「{q}」', { q: q.trim() })}</button>
           : <span className="cx-hint">{tr('没找到想要的？在上面输入名字，可以到官方目录里搜。')}</span>}
         <span className="grow" />
-        <button className="link" onClick={() => useStore.getState().openSettings({ section: 'mcp-json' })}>{tr('用配置手动添加…')}</button>
+        <button className="link" data-act="mcp-json" aria-expanded={jsonOpen} onClick={() => setJsonOpen(!jsonOpen)}>{tr('用配置手动添加…')}</button>
       </div>
+      {jsonOpen && (
+        <section className="cx-sec cx-json" data-id="json" ref={jsonRef}>
+          <McpAddJson />
+        </section>
+      )}
       {reg && (
         <section className="cx-sec" data-id="registry">
           <div className="cx-h"><h3>{tr('官方目录')}</h3><span className="n">{reg.length}</span></div>

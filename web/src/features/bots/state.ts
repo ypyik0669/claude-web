@@ -18,8 +18,11 @@ export interface BotsState {
   bots: BotStatus[];
   /** the bot whose conversation shows */
   selected?: string;
-  /** the middle column: the selected bot's conversation, or the New Bot page */
-  view: 'thread' | 'new';
+  /** the middle column: the selected bot's conversation, the New Bot page, or 设置 (the settings of all bots: the rows
+   *  that were 设置 › 通用 › 值班 Bot until the redesign 2026-11 stage 2) */
+  view: 'thread' | 'new' | 'settings';
+  /** a row of 设置 to scroll to and highlight (an old `openSettings({ reveal: 'bots.…' })`, a settings search hit) */
+  settingsReveal?: string;
   /** the profile column (right) is showing; hidden, never unmounted */
   profileOpen: boolean;
   /** the profile section it was left on (scrolled back into view when it opens again) */
@@ -115,6 +118,16 @@ export function closeBots(): void {
 export function showNewBot(): void {
   openBots();
   useBots.setState({ view: 'new', profileOpen: false, phoneScreen: 'thread' });
+}
+
+/**
+ * 自动化 › Bot › 设置: the bots' settings in the middle column (a phone: the screen after the roster), `reveal` a row of
+ * it to show. The roster's gear opens it; so do the old settings ids of these rows and the settings search.
+ */
+export function openBotSettings(reveal?: string): boolean {
+  openBots();
+  useBots.setState({ view: 'settings', profileOpen: false, phoneScreen: 'thread', settingsReveal: reveal });
+  return true;
 }
 
 /** Show / hide the profile column (a phone: its own screen). `section` scrolls to that part and is remembered. */

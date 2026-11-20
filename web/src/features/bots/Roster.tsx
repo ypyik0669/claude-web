@@ -14,7 +14,7 @@ import { tr } from '@/i18n';
 import { BotAvatar, type BotAvatarState } from './BotAvatar';
 import { lastLineOf, pendingByBot, rowState, usd } from './model';
 import { rosterView, rowTime } from './roster-model';
-import { deleteBot, openThread, pauseBot, showNewBot, stopAll, updateBot, useBots } from './state';
+import { deleteBot, openBotSettings, openThread, pauseBot, showNewBot, stopAll, updateBot, useBots } from './state';
 
 function faceState(b: BotStatus): BotAvatarState {
   const s = rowState(b);
@@ -152,15 +152,17 @@ function RosterBody({ phone }: { phone?: boolean }) {
   );
 }
 
-/** The roster: its head (Bot, ＋ 新 Bot), the search box, the groups, the load line. `phone`: the page's first screen
- *  (the pinned bots as faces on top); else the desktop page's first column. */
+/** The roster: its head (Bot, ⚙ 设置, ＋ 新 Bot), the search box, the groups, the load line. `phone`: the page's first
+ *  screen (the pinned bots as faces on top); else the desktop page's first column. */
 export function Roster({ phone }: { phone?: boolean }) {
+  const settingsOn = useBots((s) => s.view === 'settings');
   return (
     <div className={phone ? 'bots-phone-roster' : 'bots-roster-col'}>
       <div className="br-top">
         {/* a phone's page head already says Bot: the roster's own title would say it twice */}
         {!phone && <span className="sect-title">{tr('Bot')}</span>}
         <span className="grow" />
+        <button className={clsx('icon-btn', settingsOn && 'on')} title={tr('设置')} aria-label={tr('Bot 的设置')} aria-pressed={settingsOn} data-act="bot-settings" onClick={() => openBotSettings()}><Icon name="settings" size={16} /></button>
         <button className="icon-btn" title={tr('新 Bot')} aria-label={tr('新 Bot')} data-act="new-bot" onClick={showNewBot}><Icon name="plus" size={16} /></button>
       </div>
       <RosterBody phone={phone} />

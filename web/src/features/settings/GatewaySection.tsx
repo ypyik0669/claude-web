@@ -10,7 +10,7 @@ import { tr } from '@/i18n';
 import { SwitchChip } from '@/ui/Switch';
 
 /**
- * 设置 → 模型网关: the switch, the address and the key, and a way into the section that manages accounts,
+ * 设置 → 模型 → 路由 (the old 模型网关 page): the switch, the address and the key, and a way into the section that manages accounts,
  * route groups, keys, the LAN listener and the audit log. Group editing moved there (embedded gateway phase A).
  */
 export function GatewaySection() {
@@ -65,7 +65,7 @@ export function GatewaySection() {
           <div className="sub">
             {st.localError
               ? st.localError
-              : tr('这是固定地址，重启应用不变。对话里用：在「设置 → 供应商」新建一个类型为「模型网关」的供应商并选组，Claude / Codex / Gemini 的对话开始时自动拿到地址和密钥。')}
+              : tr('这是固定地址，重启应用不变。对话里用：在「设置 → 模型 → 来源」新建一个类型为「模型网关」的供应商并选组，Claude / Codex / Gemini 的对话开始时自动拿到地址和密钥。')}
           </div>
         </div>
       )}

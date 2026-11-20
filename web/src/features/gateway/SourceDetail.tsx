@@ -27,7 +27,7 @@ function Module({ title, note, children, id }: { title: string; note?: string; i
 
 /**
  * One source, on the same page (← back): its state, accounts, models, upkeep, connection component and its own
- * request log. A provider's settings stay in 设置 → 供应商 (linked); an account family's live here.
+ * request log. A provider's settings stay in 设置 → 模型 → 来源 (linked); an account family's live here.
  */
 export function SourceDetail({ source }: { source: SourceSummary }) {
   const accounts = useGateway((s) => s.accounts);

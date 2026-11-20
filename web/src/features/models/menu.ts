@@ -155,8 +155,8 @@ export function notForAgent(agent: AgentKind, type: ProviderType): string {
 /** Why profile `p` cannot be picked right now although the agent takes its type (null = it can). */
 export function profileUnavailable(p: Provider, i: Pick<BuildMenuInput, 'agent' | 'engine' | 'gatewayGroups' | 'gatewayEnabled'>): string | null {
   if (p.type === 'gateway') {
-    if (i.gatewayEnabled === false) return tr('模型网关未启用（设置 → 模型网关）');
-    if (i.gatewayEnabled && i.gatewayGroups && !i.gatewayGroups.some((g) => g.id === p.gatewayGroupId)) return tr('网关组不存在（设置 → 模型网关）');
+    if (i.gatewayEnabled === false) return tr('模型网关未启用（设置 → 模型 → 路由）');
+    if (i.gatewayEnabled && i.gatewayGroups && !i.gatewayGroups.some((g) => g.id === p.gatewayGroupId)) return tr('网关组不存在（设置 → 模型 → 路由）');
     return null;
   }
   return i.agent === 'claude' ? profileFitError('claude', p.type, effectiveRuntime(p, i.engine)) : null;

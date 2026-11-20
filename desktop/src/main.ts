@@ -601,7 +601,6 @@ function buildMenu() {
         cmd(tr('审阅（改动）'), 'CmdOrCtrl+Shift+2', 'panel.files'),
         cmd(tr('用量'), 'CmdOrCtrl+Shift+3', 'panel.usage'),
         ...(isMac ? [] : [cmd(tr('设置'), 'CmdOrCtrl+,', 'settings')]),
-        cmd(tr('配置中心（右侧面板）'), undefined, 'panel.config'),
         cmd(tr('终端'), 'CmdOrCtrl+`', 'panel.terminal'),
         { type: 'separator' },
         cmd(tr('键盘快捷键'), 'F1', 'shortcuts'),

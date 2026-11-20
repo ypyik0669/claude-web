@@ -148,7 +148,7 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true, preset: st
       </div>
       <div className="qc-actions">
         <button className="btn primary" data-qc="connect" disabled={busy} onClick={() => void connect()}>{busy ? tr('连接中…') : tr('连接')}</button>
-        {fallback && !busy && <button className="btn ghost" data-qc="force" onClick={() => void forceSave()} title={tr('模型列表读到了，只是测试消息没通过：先保存，之后在设置 → 供应商 里改模型')}>{tr('仍然保存')}</button>}
+        {fallback && !busy && <button className="btn ghost" data-qc="force" onClick={() => void forceSave()} title={tr('模型列表读到了，只是测试消息没通过：先保存，之后在设置 → 模型 → 来源 里改模型')}>{tr('仍然保存')}</button>}
       </div>
     </div>
   );

@@ -2,7 +2,8 @@
 // (always there, whether the app's sidebar is open or not), the conversation with the chosen bot, and its profile at
 // the right when asked for; no page head row (the roster's head says Bot, the conversation's head is the bot). A
 // phone: three screens — the roster, the conversation (or the New Bot page), the profile — all mounted, one shown.
-// No bot yet (the manager aside): the New Bot page.
+// No bot yet (the manager aside): the New Bot page. 设置 (the roster's gear, redesign 2026-11 stage 2) takes the
+// middle column (a phone: the screen after the roster) the way the New Bot page does.
 import { useEffect, useMemo } from 'react';
 import { useStore } from '@/store';
 import { OverPage } from '@/features/sections/OverPage';
@@ -10,6 +11,7 @@ import { Icon } from '@/ui/icons';
 import { tr } from '@/i18n';
 import { BotAvatar } from './BotAvatar';
 import { BotProfile } from './BotProfile';
+import { BotSettings } from './BotSettings';
 import { BotThread } from './BotThread';
 import { NewBot } from './NewBot';
 import { Roster } from './Roster';
@@ -17,17 +19,19 @@ import { rosterGroups } from './model';
 import { soleBot } from './roster-model';
 import { closeBots, setPhoneScreen, showProfile, useBots } from './state';
 
-/** Esc from inside the page: the profile first, then the New Bot page (back to a conversation), then a phone's screens. */
+/** Esc from inside the page: the profile first, then 设置 / the New Bot page (back to a conversation), then a phone's screens. */
 export function botsEscape(): boolean {
   const s = useBots.getState();
   const mobile = useStore.getState().mobile;
   const hasBot = !!s.selected && s.bots.some((b) => b.id === s.selected);
   if (mobile) {
     if (s.phoneScreen === 'profile') { showProfile(false); return true; }
+    if (s.phoneScreen === 'thread' && s.view === 'settings') { useBots.setState({ view: 'thread' }); setPhoneScreen('roster'); return true; }
     if (s.phoneScreen === 'thread') { setPhoneScreen('roster'); return true; }
     return false;
   }
   if (s.profileOpen && s.view === 'thread' && hasBot) { showProfile(false); return true; }
+  if (s.view === 'settings') { useBots.setState({ view: 'thread' }); return true; }
   if (s.view === 'new' && hasBot) { useBots.setState({ view: 'thread' }); return true; }
   return false;
 }
@@ -43,8 +47,9 @@ export function BotsPage() {
   const mobile = useStore((s) => s.mobile);
   const bot = useMemo(() => bots.find((b) => b.id === selected), [bots, selected]);
   const own = useMemo(() => bots.some((b) => !b.manager), [bots]);
-  // the New Bot page: asked for, or nothing chosen and no bot of your own yet
-  const showNew = view === 'new' || (!bot && !own);
+  // 设置: asked for; the New Bot page: asked for, or nothing chosen and no bot of your own yet
+  const showSettings = view === 'settings';
+  const showNew = !showSettings && (view === 'new' || (!bot && !own));
 
   // a desktop opens on a conversation, never on an empty column: the first in the roster's order (who needs you first)
   useEffect(() => {
@@ -91,22 +96,24 @@ export function BotsPage() {
             <div className="bots-ph-bar">
               <button className="btn sm ghost" aria-label={tr('返回名册')} onClick={() => setPhoneScreen('roster')}><Icon name="chevronLeft" size={14} />{tr('名册')}</button>
               <span className="grow" />
-              {bot && !showNew && (
+              {bot && !showNew && !showSettings && (
                 <button className="icon-btn bots-ph-face" title={tr('资料')} aria-label={tr('资料')} onClick={() => showProfile(true)}>
                   <BotAvatar name={bot.name} avatar={bot.avatar} size={26} />
                 </button>
               )}
             </div>
-            <div className="bots-ph-body" hidden={showNew}>{thread}</div>
+            <div className="bots-ph-body" hidden={showNew || showSettings}>{thread}</div>
             <div className="bots-ph-body" hidden={!showNew}><NewBot /></div>
+            <div className="bots-ph-body" hidden={!showSettings}><BotSettings shown={open && phoneScreen === 'thread' && showSettings} /></div>
           </div>
         </div>
       ) : (
         <div className="bots-body">
           <div className="bots-col bots-col-roster"><Roster /></div>
-          <div className="bots-col bots-col-thread" hidden={showNew}>{thread}</div>
+          <div className="bots-col bots-col-thread" hidden={showNew || showSettings}>{thread}</div>
           <div className="bots-col bots-col-new" hidden={!showNew}><NewBot /></div>
-          <div className="bots-col bots-col-profile" hidden={showNew || !profileOpen || !bot}>{bot && <BotProfile bot={bot} shown={open && !showNew && profileOpen} />}</div>
+          <div className="bots-col bots-col-settings" hidden={!showSettings}><BotSettings shown={open && showSettings} /></div>
+          <div className="bots-col bots-col-profile" hidden={showNew || showSettings || !profileOpen || !bot}>{bot && <BotProfile bot={bot} shown={open && !showNew && !showSettings && profileOpen} />}</div>
         </div>
       )}
     </OverPage>

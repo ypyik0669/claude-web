@@ -78,7 +78,7 @@ function HandoffDialog({ s }: { s: Target }) {
     <Shell id="handoff-dialog" label={tr('交给常开机器继续')}>
       <div className="dialog-msg">{tr('这个对话和它的改动（包括还没提交的）会推到项目远端的一个新分支，常开机器在那里接着做。你本地的分支、暂存区和文件都不会动。')}</div>
       {check && !check.ok && <div className="dialog-msg cloud-warn" data-act="reason"><Icon name="alert" size={13} /> {check.reason}</div>}
-      {peers && !peers.length && <div className="dialog-msg cloud-warn">{tr('还没有其它机器：先在 设置 → 其它机器 里加一台，并勾上「常开」。')}</div>}
+      {peers && !peers.length && <div className="dialog-msg cloud-warn">{tr('还没有其它机器：先在 设置 → 手机与远程 → 其它电脑 里加一台，并勾上「常开」。')}</div>}
       {!!peers?.length && (
         <div className="cloud-peers" role="radiogroup" aria-label={tr('交给哪台机器')}>
           {peers.map((p) => {

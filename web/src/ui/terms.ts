@@ -84,7 +84,7 @@ export const ULTRACODE = {
  * Where 「显示工作台工具」 lives in the settings window (the 通用 page since the settings regroup, redesign phase 6;
  * features/settings/catalog.test.ts checks it against the settings map). The one-time notice below follows.
  */
-export const WORKBENCH_SETTING_PATH = tr('设置 → 通用');
+export const WORKBENCH_SETTING_PATH = tr('设置 → 通知与窗口');
 /** One-time toast for people who knew the old screen and land on the simplified one (ui.simplifiedNotice). */
 export const SIMPLIFIED_NOTICE = tr('界面已简化；需要分屏 / 标签 / 面板图标栏可在 {WORKBENCH_SETTING_PATH} 打开「{workbench}」', { WORKBENCH_SETTING_PATH, workbench: TERMS.workbench });
 
@@ -124,6 +124,8 @@ export const EMPTY = {
   artifacts: { what: tr('生成的文件'), when: tr('Claude 新建了文件') },
   // the Artifacts page (redesign 2026-11 stage 1): the word is the same in both languages
   artifactsPage: { what: 'Artifacts', when: '', line: tr('还没有 Artifact。Claude 在对话里写出网页、文档、图片这类文件之后，会出现在这里。') },
+  // 自定义 › Artifact 类型 (redesign 2026-11 stage 2): a placeholder until open-artifact is wired in
+  artifactTypes: { what: tr('Artifact 类型'), when: '', line: tr('还没有 Artifact 类型。这里会列出 Claude 能做成的几种 Artifact：文档、幻灯片、设计、白板、表格这些；接上 open-artifact 之后，内置的类型会出现在这里。') },
   tasksNoChat: { what: tr('打开对话'), when: tr('打开一个对话'), subject: tr('它的子代理、后台任务和计划') },
   tasks: { what: tr('子代理或后台任务'), when: tr('Claude 派出子代理、在后台跑命令') },
   // 后台

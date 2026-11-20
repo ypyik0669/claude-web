@@ -196,7 +196,7 @@ function Links({ it }: { it: View }) {
           <button className="icon-btn" aria-label={tr('打开')} title={tr('打开')} onClick={() => openExternal(u!)}><Icon name="external" size={13} /></button>
         </div>
       ))}
-      {!it.peerId && !l.lan && <div className="dialog-msg pj-note"><div>{tr('局域网链接要先在 设置 → 远程 打开远程监听。')}</div></div>}
+      {!it.peerId && !l.lan && <div className="dialog-msg pj-note"><div>{tr('局域网链接要先在 设置 → 手机与远程 打开远程监听。')}</div></div>}
     </div>
   );
 }

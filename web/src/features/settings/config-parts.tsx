@@ -1,3 +1,7 @@
+// The settings parts that came from the old 配置中心 (features/panels/ConfigPanel.tsx, gone in the redesign 2026-11
+// stage 2 — its MCP / 插件 / Skills tabs are 自定义's, Hooks / 环境变量 / settings.json are 设置 › 高级): the runtime
+// overview, the JSON form for an MCP server (自定义 › 连接器), the read-only lists (子代理, Hooks), settings.json's
+// text, and the provider list with its editor (设置 › 模型 › 来源).
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
@@ -5,30 +9,16 @@ import { clsx } from '@/util';
 import type { GatewayGroup, GatewayStatus, Provider, ProviderType } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
-import { EnvEditor } from '@/features/settings/EnvEditor';
-import { ModelPicker, pickedOf, withPicked } from '@/features/settings/ModelPicker';
+import { ModelPicker, pickedOf, withPicked } from './ModelPicker';
 import { connectModel } from '@/features/providers/ConnectModel';
 import { ImportDialog } from '@/features/providers/ImportDialog';
-import { McpEditDialog } from '@/features/extensions/McpEditDialog';
 import { REGION_BLOCKED, REGION_RE } from '@/features/providers/quick';
 import { contextWindowFor, contextWindowSource } from '../../../../server/src/models/context-window';
 import { tr } from '@/i18n';
 import { Select } from '@/ui/Select';
 import { SwitchLine } from '@/ui/Switch';
-import { CompactAt } from '@/features/settings/CompactAt';
-import { compactWindowOfProvider } from '@/features/settings/compact-model';
-
-type Tab = 'overview' | 'providers' | 'plugins' | 'mcp' | 'skills' | 'agents' | 'hooks' | 'settings';
-const TABS: { id: Tab; l: string }[] = [
-  { id: 'overview', l: tr('概览') },
-  { id: 'providers', l: tr('供应商 / 环境') },
-  { id: 'plugins', l: tr('插件') },
-  { id: 'mcp', l: 'MCP' },
-  { id: 'skills', l: 'Skills' },
-  { id: 'agents', l: 'Agents' },
-  { id: 'hooks', l: 'Hooks' },
-  { id: 'settings', l: tr('设置') },
-];
+import { CompactAt } from './CompactAt';
+import { compactWindowOfProvider } from './compact-model';
 
 function useReq<T>(req: any, deps: any[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -55,7 +45,7 @@ function Cmd({ r }: { r: { code: number; stdout: string; stderr: string } | null
 
 /**
  * Runtime + login overview. `part="engine"` is the 运行内核 half only (settings → 账号与登录 → 更多选项; the login
- * state is at the top of that page already); the dock's 配置中心 shows both.
+ * state is at the top of that page already).
  */
 export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
   const { data, err } = useReq<any>({ kind: 'config.overview' });
@@ -88,54 +78,9 @@ export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
   );
 }
 
-export function Plugins() {
-  const { data, err, reload } = useReq<{ plugins: any[]; stderr?: string }>({ kind: 'config.plugins' });
-  const mk = useReq<{ marketplaces: any }>({ kind: 'config.marketplaces' });
-  const [spec, setSpec] = useState('');
-  const [mkSrc, setMkSrc] = useState('');
-  const [out, setOut] = useState<any>(null);
-  const [busy, setBusy] = useState(false);
-  const run = async (req: any) => { setBusy(true); try { setOut(await ws.request(req)); } catch (e: any) { setOut({ code: 1, stdout: '', stderr: e.message }); } setBusy(false); reload(); mk.reload(); };
-  const markets = mk.data?.marketplaces;
-  const marketList: any[] = Array.isArray(markets) ? markets : markets ? Object.entries(markets).map(([name, v]: any) => ({ name, ...v })) : [];
-  return (
-    <>
-      {err && <div className="empty" style={{ color: 'var(--red)' }}>{err}</div>}
-      <div className="list">
-        {(data?.plugins ?? []).map((p) => (
-          <div key={p.id} className="row">
-            <div className="grow">
-              <div>{p.manifest?.name ?? p.id.split('@')[0]} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>v{p.version} · {p.id.split('@')[1]} · {p.scope}</span></div>
-              <div className="sub">{p.manifest?.description ?? ''} {p.components ? `· skills ${p.components.skills} / commands ${p.components.commands} / agents ${p.components.agents}${p.components.hooks ? ' / hooks' : ''}${p.components.mcp ? ' / mcp' : ''}` : ''}</div>
-            </div>
-            <button className={clsx('toggle', p.enabled && 'on')} title={p.enabled ? tr('禁用') : tr('启用')} disabled={busy} onClick={() => run({ kind: 'config.plugin.toggle', name: p.id, enable: !p.enabled })} />
-            <button className="btn sm danger" disabled={busy} onClick={async () => { if (await dlg.confirm(tr('卸载 {id}?', { id: p.id }), { danger: true })) void run({ kind: 'config.plugin.uninstall', name: p.id }); }}>{tr('卸载')}</button>
-          </div>
-        ))}
-        {data && !data.plugins.length && <div className="empty">{tr('没有安装插件')}</div>}
-      </div>
-      <div className="section">
-        <h5>{tr('安装插件')}</h5>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <input className="field" style={{ flex: 1, minWidth: 0 }} aria-label={tr('安装插件')} value={spec} onChange={(e) => setSpec(e.target.value)} placeholder="plugin@marketplace" />
-          <button className="btn sm" disabled={busy || !spec} onClick={() => run({ kind: 'config.plugin.install', spec })}>{tr('安装')}</button>
-        </div>
-        <h5>{tr('市场 ({marketListCount})', { marketListCount: marketList.length })}</h5>
-        {marketList.map((m: any) => <div key={m.name} className="row"><div className="grow"><div>{m.name}</div><div className="sub">{m.source?.source ?? ''} {m.source?.repo ?? m.source?.url ?? m.source?.path ?? ''}</div></div></div>)}
-        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-          <input className="field" style={{ flex: 1, minWidth: 0 }} value={mkSrc} onChange={(e) => setMkSrc(e.target.value)} placeholder={tr('owner/repo 或 git URL 或本地路径')} aria-label={tr('owner/repo 或 git URL 或本地路径')} />
-          <button className="btn sm" disabled={busy || !mkSrc} onClick={() => run({ kind: 'config.marketplace.add', source: mkSrc })}>{tr('添加市场')}</button>
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--fg-2)', marginTop: 6 }}>{tr('启停 / 安装后要重启对话进程才生效（对话右上角 ··· →「结束进程」，再发一条消息继续）')}</div>
-      </div>
-      <Cmd r={out} />
-    </>
-  );
-}
-
 /**
- * The MCP list, the JSON form and the catalog are separate parts (settings → MCP 与插件 puts the form under 更多选项):
- * whoever adds or removes a server says so, every list on screen reloads.
+ * 自定义 › 连接器's list, its JSON form and the edit dialog are separate parts: whoever adds or removes a server says
+ * so, every list on screen reloads.
  */
 const MCP_CHANGED = 'cw:mcp-changed';
 export function mcpChanged() { window.dispatchEvent(new Event(MCP_CHANGED)); }
@@ -143,47 +88,6 @@ export function useMcpChanged(fn: () => void) {
   const ref = useRef(fn);
   ref.current = fn;
   useEffect(() => { const on = () => ref.current(); window.addEventListener(MCP_CHANGED, on); return () => window.removeEventListener(MCP_CHANGED, on); }, []);
-}
-
-/** Configured MCP servers (and the current session's live ones). */
-export function Mcp() {
-  const active = useScopedSession();
-  const { data, err, reload } = useReq<{ servers: any[]; userServers: any; projectServers: any; stderr?: string }>({ kind: 'config.mcp' });
-  const [out, setOut] = useState<any>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  useMcpChanged(reload);
-  const live = active?.info?.mcpServers;
-  const run = async (req: any) => { try { setOut(await ws.request(req)); } catch (e: any) { setOut({ code: 1, stdout: '', stderr: e.message }); } mcpChanged(); };
-  return (
-    <>
-      {err && <div className="empty" style={{ color: 'var(--red)' }}>{err}</div>}
-      <div className="list">
-        {live && (
-          <>
-            <h5 style={{ margin: '4px 8px', fontSize: 12, color: 'var(--fg-2)' }}>{tr('当前对话')}</h5>
-            {live.map((s) => (
-              <div key={s.name} className="row">
-                <span className={clsx('dot', s.status === 'connected' ? 'idle' : s.status === 'failed' ? 'error' : 'waiting')} />
-                <div className="grow"><div>{s.name}</div><div className="sub">{s.status} {s.error ?? ''} {s.tools?.length ? `· ${s.tools.length} tools` : ''}</div></div>
-              </div>
-            ))}
-          </>
-        )}
-        <h5 style={{ margin: '8px 8px 4px', fontSize: 12, color: 'var(--fg-2)' }}>{tr('已配置')}</h5>
-        {(data?.servers ?? []).map((s) => (
-          <div key={s.name} className="row">
-            <span className={clsx('dot', /Connected/.test(s.status) ? 'idle' : 'error')} />
-            <div className="grow"><div>{s.name}</div><div className="sub">{s.target} · {s.status}</div></div>
-            <button className="btn sm" data-act="edit" onClick={() => setEditing(s.name)}>{tr('编辑')}</button>
-            <button className="btn sm danger" onClick={async () => { if (await dlg.confirm(tr('移除 MCP {name}?', { name: s.name }), { danger: true })) void run({ kind: 'config.mcp.remove', name: s.name }); }}>{tr('移除')}</button>
-          </div>
-        ))}
-        {data && !data.servers.length && <div className="empty">{tr('没有配置 MCP server')}</div>}
-      </div>
-      {editing && <McpEditDialog name={editing} cwd={active?.cwd} onClose={() => setEditing(null)} />}
-      <Cmd r={out} />
-    </>
-  );
 }
 
 /** Add a server from a JSON config (`claude mcp add-json`). */
@@ -215,29 +119,6 @@ export function SimpleList({ kind, render, empty = tr('空') }: { kind: 'config.
   if (err) return <div className="empty" style={{ color: 'var(--red)' }}>{err}</div>;
   if (!data) return <div className="empty">{tr('加载中…')}</div>;
   return <div className="list">{data.map((x, i) => <div key={i} className="row">{render(x)}</div>)}{!data.length && <div className="empty">{empty}</div>}</div>;
-}
-
-/** UI preferences stored in meta.json (survive the desktop's per-launch origin). */
-export function UiSettings() {
-  const settings = useStore((s) => s.settings);
-  const setSetting = useStore((s) => s.setSetting);
-  const rows: { key: string; l: string; hint: string; def?: boolean }[] = [
-    { key: 'ui.workbench', l: tr('显示工作台工具'), hint: tr('一直显示分组栏、分屏标签条和右侧面板图标栏；关着时它们只在用到时出现') },
-    { key: 'ui.autoSave', l: tr('编辑器自动保存'), hint: tr('停止输入 0.8 秒后写回磁盘；关闭后用 Ctrl+S 保存'), def: true },
-    { key: 'ui.showThinking', l: tr('显示思考过程'), hint: tr('在对话里展开模型的 thinking 块') },
-    { key: 'autoContinueOnReset', l: tr('额度恢复后自动继续'), hint: tr('被限流时到重置时间自动重发上一条') },
-  ];
-  return (
-    <div className="section">
-      <h5>{tr('界面')}</h5>
-      {rows.map((r) => (
-        <div key={r.key} className="row">
-          <button className={clsx('toggle', (settings[r.key] ?? r.def ?? false) && 'on')} onClick={() => void setSetting(r.key, !(settings[r.key] ?? r.def ?? false))} />
-          <div className="grow"><div>{r.l}</div><div className="sub">{r.hint}</div></div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 export function Settings() {
@@ -272,7 +153,7 @@ const PROVIDER_TYPES: { v: ProviderType; l: string; hint: string }[] = [
   { v: 'openai', l: tr('OpenAI 兼容'), hint: 'https://api.openai.com/v1 · DeepSeek / Groq / Qwen / OpenRouter…' },
   { v: 'gemini', l: 'Gemini', hint: tr('留空用官方 generativelanguage.googleapis.com') },
   { v: 'grok', l: 'Grok (xAI)', hint: tr('留空用 https://api.x.ai') },
-  { v: 'gateway', l: tr('模型网关'), hint: tr('走本机模型网关的一个故障转移组（设置 → 模型网关）') },
+  { v: 'gateway', l: tr('模型网关'), hint: tr('走本机模型网关的一个故障转移组（设置 → 模型 → 路由）') },
 ];
 
 type Draft = Partial<Provider> & { apiKey: string };
@@ -447,7 +328,7 @@ export function ProviderProfiles() {
               <Select className="field" style={{ flex: 1 }} value={editing.gatewayGroupId ?? ''} onValueChange={(value) => setEditing({ ...editing, gatewayGroupId: String(value) })} aria-label={tr('网关组')} options={[{ value: '', label: tr('选择组…') }, ...gwGroups.map((g) => ({ value: g.id, label: g.name, description: tr('{n} 个成员', { n: g.members.length }) }))]} />
             </div>
           )}
-          {isGw && <div className="sub" style={{ marginBottom: 6 }}>{tr('地址与密钥在对话开始时由网关填入；Claude / Codex / Gemini 等 Agent 都能用这个供应商。组里有「只认官方二进制」的 Anthropic 成员时，Claude 对话默认也用官方二进制（下面的勾选优先）。Codex、Gemini CLI 即使登录了自己的账号，也会被强制走网关；Qwen Code 等其它 Agent 只注入环境变量，在 OAuth 登录状态下可能不走网关（先退出登录或改用 API Key 模式）。{gwGroupsCount}', { gwGroupsCount: !gwGroups.length && tr('还没有组：先去「设置 → 模型网关」建一个。') })}</div>}
+          {isGw && <div className="sub" style={{ marginBottom: 6 }}>{tr('地址与密钥在对话开始时由网关填入；Claude / Codex / Gemini 等 Agent 都能用这个供应商。组里有「只认官方二进制」的 Anthropic 成员时，Claude 对话默认也用官方二进制（下面的勾选优先）。Codex、Gemini CLI 即使登录了自己的账号，也会被强制走网关；Qwen Code 等其它 Agent 只注入环境变量，在 OAuth 登录状态下可能不走网关（先退出登录或改用 API Key 模式）。{gwGroupsCount}', { gwGroupsCount: !gwGroups.length && tr('还没有组：先去「设置 → 模型 → 路由」建一个。') })}</div>}
           {!isGw && <input className="field" style={{ width: '100%', marginBottom: 6 }} placeholder={`Base URL · ${PROVIDER_TYPES.find((t) => t.v === editing.type)?.hint}`} value={editing.baseUrl ?? ''} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} />}
           {!isGw && <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <input className="field" style={{ flex: 1 }} type={showKey ? 'text' : 'password'} placeholder={editing.id ? tr('API Key（留空保持 {apiKey}）', { apiKey: editing.apiKey || tr('现有值') }) : 'API Key'} value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} autoComplete="off" />
@@ -595,24 +476,5 @@ function CacheOptions({ editing, set }: { editing: Draft; set: (d: Draft) => voi
         </div>
       )}
     </>
-  );
-}
-
-export function ConfigPanel() {
-  const want = useStore((s) => s.configTab);
-  const [tab, setTab] = useState<Tab>((want as Tab) ?? 'overview');
-  useEffect(() => { if (want) { setTab(want as Tab); useStore.setState({ configTab: null }); } }, [want]);
-  return (
-    <div>
-      <div className="subtabs">{TABS.map((t) => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.l}</button>)}</div>
-      {tab === 'overview' && <Overview />}
-      {tab === 'providers' && <><ProviderProfiles /><EnvEditor /></>}
-      {tab === 'plugins' && <Plugins />}
-      {tab === 'mcp' && <><Mcp /><McpAddJson /></>}
-      {tab === 'skills' && <SimpleList kind="config.skills" render={(s) => <div className="grow"><div>/{s.name} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>{s.source}</span></div><div className="sub">{s.description}</div></div>} />}
-      {tab === 'agents' && <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} />}
-      {tab === 'hooks' && <SimpleList kind="config.hooks" render={(h) => <div className="grow"><div>{h.event} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} />}
-      {tab === 'settings' && <><UiSettings /><Settings /></>}
-    </div>
   );
 }

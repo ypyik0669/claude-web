@@ -45,7 +45,6 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'panel.files', label: tr('审阅面板（改动）'), desktop: 'Ctrl+Shift+2', browser: 'Ctrl+Shift+2', group: tr('面板') },
   { id: 'panel.usage', label: tr('用量面板'), desktop: 'Ctrl+Shift+3', browser: 'Ctrl+Shift+3', group: tr('面板') },
   { id: 'settings', label: tr('设置（可搜索）'), desktop: 'Ctrl+,', browser: 'Ctrl+,', group: tr('面板') },
-  { id: 'panel.config', label: tr('配置中心（右侧面板）'), desktop: tr('命令面板'), browser: tr('命令面板'), group: tr('面板') },
   { id: 'panel.terminal', label: tr('终端'), desktop: 'Ctrl+`', browser: 'Ctrl+`', group: tr('面板') },
   { id: 'interrupt', label: tr('中断当前轮'), desktop: 'Ctrl+Shift+C / Esc', browser: 'Esc', group: tr('对话') },
   { id: 'close', label: tr('结束当前对话的进程'), desktop: 'Ctrl+Shift+Q', browser: tr('命令面板'), group: tr('对话') },
@@ -103,7 +102,8 @@ export function matchBrowserKey(e: KeyboardEvent): string | null {
   if (ctrl && !alt && shift && lower === 'd') return 'pane.splitDown';
   if (ctrl && shift && k === 'Enter') return 'pane.zoom';
   if (ctrl && !alt && !shift && (k === '\\' || e.code === 'Backslash')) return 'pane.close';
-  if (ctrl && shift && /^[1-5]$/.test(k)) return `panel.${['tasks', 'files', 'usage', 'config', 'terminal'][Number(k) - 1]}`;
+  // Ctrl+Shift+4 was 配置中心 (gone in the redesign 2026-11 stage 2: 自定义 + 设置 › 高级): nothing now
+  if (ctrl && shift && /^[1-35]$/.test(k)) return `panel.${['tasks', 'files', 'usage', '', 'terminal'][Number(k) - 1]}`;
   if (ctrl && !alt && !shift && k === ',') return 'settings';
   if (ctrl && !alt && !shift && k === '`') return 'panel.terminal';
   if (ctrl && alt && /^[1-9]$/.test(k)) return `group.jump.${Number(k) - 1}`;

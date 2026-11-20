@@ -1,4 +1,4 @@
-// 设置 → 手机与其它电脑 → 在外面也能用 (spec 2026-10-01 §10): the words for a link and for the brokers' state, the
+// 设置 → 手机与远程 → 在外面也能用 (spec 2026-10-01 §10): the words for a link and for the brokers' state, the
 // recent connections, and the checks of the lists edited under 更多选项. Pure; RemoteSection.tsx / AnywhereMore.tsx draw it.
 import type { AnywhereRecent, AnywhereStatus, DeviceInfo, LinkKind } from '@shared';
 import { MAX_LIST_ENTRIES, MAX_PAIR_LINK_BYTES, isStunUrl, pairLinkBytes, type BrokerDef } from '@anywhere';

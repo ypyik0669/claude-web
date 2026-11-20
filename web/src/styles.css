@@ -1994,52 +1994,52 @@ html.desktop [role="dialog"], html.desktop .popover { -webkit-app-region: no-dra
 .memory-head .select-trigger, .ledger-bar .select-trigger { min-width: 0; }
 
 
-/* ---- redesign phase 6: settings ---- */
-/* Full-window settings (spec §5.7, mock-settings.png): grouped navigation + search on the left, the page in a 660px
-   column on the right, 「分节标题 + 卡片 + 行」. The root keeps `.modal.settings` because the section components were
-   tuned for `.modal input / select / label`; everything else is `sp-*`. */
+/* ---- settings (redesign phase 6; a dialog since the redesign 2026-11 stage 2) ---- */
+/* A dialog over the page you were on (spec #pages 「设置弹窗」, mocks.mjs mockSettings): the four groups' fourteen pages
+   on the left with a line between groups, the page in a 660px column on the right, × at the top-right; Esc or × and
+   you are back. A phone (`.sp-layer.phone`, the app's phone mode): a page pushed in — the list of pages in cards under
+   their group names, a tap pushes a page; each has its own bar (× / ‹ · its name). The dialog keeps `.modal.settings`
+   because the section components were tuned for `.modal input / select / label`; everything else is `sp-*`. */
+.sp-layer { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 40px var(--sp-6) var(--sp-6); }
+.sp-scrim { position: absolute; inset: 0; background: var(--scrim); animation: scrim-in var(--dur-base) var(--ease-out); }
 .modal.settings.sp {
-  position: fixed; inset: 0; z-index: 50; width: auto; height: auto; max-width: none; max-height: none;
-  margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: var(--surface-1);
-  display: grid; grid-template-columns: 260px minmax(0, 1fr); overflow: hidden; animation: sp-in var(--dur-2) var(--ease-out);
+  position: relative; width: min(1080px, 100%); height: min(800px, 100%); max-width: none; max-height: none;
+  margin: 0; padding: 0; border: 0; border-radius: var(--r-2xl); box-shadow: var(--elev-3); background: var(--surface-0);
+  display: grid; grid-template-columns: 248px minmax(0, 1fr); overflow: hidden; animation: modal-in var(--dur-slow) var(--ease-out);
 }
-@keyframes sp-in { from { opacity: 0; } to { opacity: 1; } } /* no slide: the page covers the whole window */
-.modal.settings.sp:focus-visible { outline: none; } /* focused itself on phones (cover.ts) — a ring around the whole window says nothing */
-.sp-nav { background: transparent; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 10px var(--sp-2) var(--sp-3); }
-.sp-nav-top { display: flex; align-items: center; min-height: 34px; }
-.sp-back { height: 34px; display: inline-flex; align-items: center; gap: var(--sp-2); padding: 0 10px; border-radius: var(--r-row); font-size: 14px; color: var(--ink-2); }
-.sp-back:hover { background: var(--layer-hover); color: var(--ink-1); }
-.sp-back svg { color: var(--ink-3); }
-.modal.settings .sp-search { display: flex; align-items: center; gap: var(--sp-2); height: 34px; margin: var(--sp-2) 2px 6px; padding: 0 8px 0 10px; border: 0; border-radius: var(--r-md); background: var(--surface-0); box-shadow: var(--elev-1); color: var(--ink-4); font-size: 14px; cursor: text; }
+.modal.settings.sp:focus-visible { outline: none; } /* focused itself on phones (cover.ts) — a ring around the whole dialog says nothing */
+.sp-nav { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: var(--sp-4) 10px var(--sp-3); background: color-mix(in oklab, var(--fg) 2.5%, var(--surface-0)); border-right: var(--hairline) solid var(--edge-subtle); }
+/* the bars are a phone's (the list's × and a page's ‹); the dialog has its × in the corner */
+.sp-bar { display: none; }
+.modal.settings .sp-search { display: flex; align-items: center; gap: var(--sp-2); height: 34px; margin: 0 2px 10px; padding: 0 8px 0 10px; border: 0; border-radius: var(--r-md); background: var(--surface-0); box-shadow: var(--elev-1); color: var(--ink-4); font-size: 14px; cursor: text; }
 .modal.settings .sp-search:focus-within { box-shadow: 0 0 0 1.5px var(--focus-ring); }
 .modal.settings .sp-search input { flex: 1; min-width: 0; width: auto; height: 100%; border: 0; border-radius: 0; background: transparent; padding: 0; font-size: 14px; color: var(--ink-1); box-shadow: none; }
 .modal.settings .sp-search input:focus-visible, .modal.settings .sp-search input:hover { outline: none; background: transparent; }
 .sp-search .kbd { font-family: var(--font); line-height: 14px; color: var(--ink-4); border-color: var(--edge-default); }
 .sp-groups { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: var(--sp-2); }
-.sp-g { margin-top: var(--sp-3); }
-.sp-gh { display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 10px; font-size: var(--fs-meta); letter-spacing: 0.02em; font-weight: 400; color: var(--ink-4); }
+/* groups: a line between them, no headings (the mock); a phone shows the headings over cards */
+.sp-g + .sp-g { margin-top: 6px; padding-top: 6px; border-top: var(--hairline) solid var(--edge-subtle); }
+.sp-gh { display: none; }
+.sp-gl { display: flex; flex-direction: column; gap: 1px; }
 .sp-si { display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; border-radius: var(--r-row); font-size: 14px; color: var(--ink-2); text-align: left; transition: background var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out); }
 .sp-si svg { color: var(--ink-3); flex: none; }
 .sp-si .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sp-si .r { flex: none; font-size: 12px; font-weight: 400; color: var(--ink-4); }
+.sp-si .sp-si-go { display: none; }
 .sp-si:hover { background: var(--layer-hover); color: var(--ink-1); }
 .sp-si.on { background: var(--layer-selected); color: var(--ink-1); font-weight: 400; }
 .sp-si.on svg { color: var(--ink-1); }
-.sp-adv-h { width: 100%; text-align: left; }
-.sp-adv-h:hover { color: var(--ink-2); }
-.sp-adv-sub { display: block; width: 100%; padding: 0 10px; text-align: left; font-size: 12px; line-height: 1.5; color: var(--ink-4); }
-.sp-adv-sub:hover { color: var(--ink-3); }
 .sp-ver { display: flex; align-items: center; gap: 6px; margin-top: var(--sp-2); padding: 4px 10px; border-radius: var(--r-row); font-size: var(--fs-meta); color: var(--ink-4); text-align: left; }
 .sp-ver:hover { background: var(--layer-hover); color: var(--ink-2); }
 .sp-ver .dot { width: 6px; height: 6px; background: var(--ink-5); }
 .sp-ver .dot.ok { background: var(--ok); }
 .sp-ver .dot.new { background: var(--accent); }
 
-.sp-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: var(--shell-gap) var(--shell-gap) var(--shell-gap) 0; background: var(--surface-0); border-radius: var(--r-card); box-shadow: var(--elev-1); overflow: hidden; }
-.sp-drag { display: none; flex: none; }
+.sp-main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface-0); }
+.sp-x { position: absolute; top: 12px; right: 12px; z-index: 2; width: 32px; height: 32px; border-radius: var(--r-row); color: var(--ink-3); }
+.sp-x:hover { background: var(--layer-hover); color: var(--ink-1); }
 .sp-scroll { flex: 1; min-height: 0; overflow-y: auto; }
-.sp-inner { max-width: calc(660px + 2 * var(--sp-6)); margin: 0 auto; padding: 34px var(--sp-6) 72px; }
-.sp-phone-back { display: none; align-items: center; gap: 6px; height: 32px; margin: 0 0 var(--sp-3) -8px; padding: 0 8px; border-radius: var(--r-row); font-size: 14px; color: var(--ink-3); }
+.sp-inner { max-width: calc(660px + 2 * var(--sp-7, 36px)); margin: 0 auto; padding: 30px var(--sp-7, 36px) 72px; }
 .sp-title { margin: 0; font-family: var(--display); font-size: var(--fs-title); line-height: 32px; font-weight: 600; letter-spacing: 0.01em; color: var(--ink-1); }
 /* the search title holds what the user typed: the heading face only has the glyphs of the page names */
 .sp-title.q { font-family: var(--font); font-size: var(--fs-xl); letter-spacing: -0.01em; }
@@ -2077,7 +2077,7 @@ html.desktop [role="dialog"], html.desktop .popover { -webkit-app-region: no-dra
 /* a setting's two / three-way choice is ui/Segmented (floating.css `.segmented`): as wide as its words need */
 .segmented.sp-seg { display: inline-grid; }
 .segmented.sp-seg > button { padding: 0 14px; white-space: nowrap; }
-/* a page's tabs (MCP · 插件): the same track, the chosen one a raised pill */
+/* a page's tabs (模型: 来源 · 路由 · 模型): the same track, the chosen one a raised pill */
 .sp-tabs { display: inline-flex; gap: 2px; padding: 3px; margin: 0 0 var(--sp-2); border-radius: var(--r-pill); background: var(--layer-selected); }
 .sp-tabs button { height: 28px; padding: 0 16px; border-radius: var(--r-pill); font-size: var(--fs-sm); color: var(--ink-3); white-space: nowrap; transition: color var(--dur-fast) var(--ease-out); }
 .sp-tabs button.on { background: var(--surface-elev); color: var(--ink-1); box-shadow: var(--elev-1); }
@@ -2108,6 +2108,8 @@ html.desktop [role="dialog"], html.desktop .popover { -webkit-app-region: no-dra
 .modal.settings.sp .sp-body input.field, .modal.settings.sp .sp-body select.field { padding: 5px 9px; border-radius: var(--r-row); }
 .modal.settings.sp .sp-body select.field { width: auto; max-width: 100%; }
 .modal.settings.sp .sp-body .btn { white-space: nowrap; }
+/* 用量与账本: the right panel's 用量 panel, in a page */
+.sp .sp-body[data-body="usage"] .subtabs { padding: 0; border: 0; margin-bottom: var(--sp-3); }
 
 /* search results: each row live in its card with a 分组 › 分区 crumb; pages / parts as jump rows */
 .sp-hits { display: flex; flex-direction: column; gap: var(--sp-3); }
@@ -2125,35 +2127,86 @@ button.sp-crumb:hover { color: var(--ink-1); text-decoration: underline; }
 .env-row code { flex: none; min-width: 200px; font-size: 12px; color: var(--ink-2); }
 .env-row .field { flex: 1; min-width: 0; }
 
-/* narrower windows: a slimmer navigation; phones: the navigation and the page take turns */
-@media (max-width: 900px) {
+/* narrower windows: a slimmer navigation, the dialog closer to the edges */
+@media (max-width: 1000px) {
+  .sp-layer { padding: 32px var(--sp-4) var(--sp-4); }
   .modal.settings.sp { grid-template-columns: 220px minmax(0, 1fr); }
   .sp-inner { padding: 26px var(--sp-5) 56px; }
 }
-@media (max-width: 600px) {
-  .modal.settings.sp { grid-template-columns: minmax(0, 1fr); background: var(--surface-0); }
-  .sp-main { margin: 0; border-radius: 0; box-shadow: none; }
-  .modal.settings.sp:not(.phone-page) .sp-main { display: none; }
-  .modal.settings.sp.phone-page .sp-nav { display: none; }
-  .sp-phone-back { display: inline-flex; }
-  .sp-inner { padding: 12px var(--sp-4) 48px; }
-  /* searching on a phone: the search box stays on top, the results fill the rest */
-  .modal.settings.sp.searching { grid-template-rows: auto minmax(0, 1fr); }
-  .modal.settings.sp.searching .sp-nav, .modal.settings.sp.searching .sp-main { display: flex; }
-  .modal.settings.sp.searching .sp-nav { border-right: 0; border-bottom: var(--hairline) solid var(--edge-subtle); padding-bottom: var(--sp-2); }
-  .modal.settings.sp.searching .sp-groups, .modal.settings.sp.searching .sp-ver, .modal.settings.sp.searching .sp-phone-back { display: none; }
-  .sp-row { flex-wrap: wrap; }
-  .env-row code { min-width: 0; }
-}
+/* the desktop app: the window's title bar stays the window's — the dialog starts under it, the strip above it drags */
+html.desktop .sp-layer { padding-top: calc(var(--h-head) + 6px); }
+html.desktop .sp-layer::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: var(--h-head); z-index: 1; -webkit-app-region: drag; }
 
-/* desktop: the top row of each column is the title bar (see 「desktop title bar」 above) */
-html.desktop .sp-nav-top, html.desktop .sp-drag { -webkit-app-region: drag; }
-html.desktop .sp-nav-top button { -webkit-app-region: no-drag; }
-html.desktop .sp-drag { display: block; height: 40px; }
-/* Windows / Linux: the caption buttons' area is as tall as a head row (tab-row.ts captionHeight) — the page starts under it */
-html.desktop:not(.mac) .sp-drag { height: var(--h-head); }
-html.desktop .sp-inner { padding-top: 6px; }
-html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: calc(76px / var(--zoom, 1)); }
+/* ---- a phone: a page pushed in (spec #phone 「设置」 / 「设置里的一页」) ---- */
+.sp-layer.phone { padding: 0; place-items: stretch; }
+.sp-layer.phone .sp-scrim, .sp-layer.phone .sp-x { display: none; }
+.sp-layer.phone .modal.settings.sp { width: 100%; height: 100%; border-radius: 0; box-shadow: none; grid-template-columns: minmax(0, 1fr); background: var(--surface-1); animation: sp-push var(--dur-3) var(--ease-out); }
+@keyframes sp-push { from { opacity: 0.6; transform: translateX(24px); } }
+.sp-layer.phone .modal.settings.sp:not(.phone-page) .sp-main { display: none; }
+.sp-layer.phone .modal.settings.sp.phone-page .sp-nav { display: none; }
+.sp-layer.phone .sp-nav { padding: 0 0 calc(var(--sp-3) + env(safe-area-inset-bottom, 0px)); background: transparent; border-right: 0; }
+.sp-layer.phone .sp-main { background: transparent; }
+.sp-layer.phone .sp-bar { display: flex; align-items: center; gap: 2px; flex: none; height: calc(54px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) 6px 0; }
+.sp-layer.phone .sp-bar-btn { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 50%; color: var(--ink-1); }
+.sp-layer.phone .sp-bar-btn:active { background: var(--layer-hover); }
+.sp-layer.phone .sp-bar-btn.ghost { visibility: hidden; }
+.sp-layer.phone .sp-bar-title { flex: 1; min-width: 0; text-align: center; font-size: 16px; font-weight: 600; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the search box: 16px, so iOS does not zoom into it; no keyboard hint */
+.sp-layer.phone .sp-search { height: 44px; margin: 4px 14px 8px; padding: 0 12px; border-radius: 12px; background: var(--fill-subtle); box-shadow: none; font-size: 16px; }
+.sp-layer.phone .sp-search input { font-size: 16px; }
+.sp-layer.phone .sp-groups { padding: 0 14px var(--sp-2); }
+.sp-layer.phone .sp-g + .sp-g { margin-top: 0; padding-top: 0; border-top: 0; }
+.sp-layer.phone .sp-gh { display: block; padding: 14px 4px 6px; font-size: 13px; color: var(--ink-3); }
+.sp-layer.phone .sp-gl { gap: 0; border-radius: 16px; background: var(--surface-elev); box-shadow: var(--elev-1); overflow: hidden; }
+.sp-layer.phone .sp-si { height: auto; min-height: 48px; gap: 12px; padding: 0 10px 0 14px; border-radius: 0; font-size: 15.5px; color: var(--ink-1); }
+.sp-layer.phone .sp-si + .sp-si { border-top: var(--hairline) solid var(--edge-subtle); }
+.sp-layer.phone .sp-si svg { color: var(--ink-2); }
+.sp-layer.phone .sp-si.on { background: transparent; }
+.sp-layer.phone .sp-si .r { font-size: 14px; color: var(--ink-3); }
+.sp-layer.phone .sp-si .sp-si-go { display: block; color: var(--ink-4); }
+.sp-layer.phone .sp-ver { align-self: center; margin-top: var(--sp-4); min-height: 44px; }
+/* a page: the bar says its name, so no big title; the column is the screen's width */
+.sp-layer.phone .sp-inner { max-width: none; padding: 4px var(--sp-4) calc(48px + env(safe-area-inset-bottom, 0px)); }
+.sp-layer.phone .sp-title { display: none; }
+.sp-layer.phone .sp-lead { margin: 0 2px 14px; font-size: 13.5px; }
+.sp-layer.phone .sp-blk-h { margin: 16px 4px 6px; font-size: 13px; font-weight: 400; color: var(--ink-3); }
+.sp-layer.phone .sp-card { border-radius: 16px; background: var(--surface-elev); }
+.sp-layer.phone .sp-row { min-height: 60px; padding: 12px 14px; }
+.sp-layer.phone .sp-row .l { font-size: 15.5px; }
+.sp-layer.phone .sp-row .sub { font-size: 13.5px; }
+/* wide controls (a segmented choice, a select, a text box…) go under the words instead of squeezing them into a
+   narrow column (spec #phone 问题 11); a lone switch stays on the right, and the whole row flips it */
+.sp-layer.phone .sp-row { flex-direction: column; align-items: stretch; gap: 10px; }
+.sp-layer.phone .sp-row > .ctl { width: 100%; flex-wrap: wrap; }
+.sp-layer.phone .sp-row:has(> .ctl > .toggle:only-child) { flex-direction: row; align-items: center; gap: 14px; }
+.sp-layer.phone .sp-row:has(> .ctl > .toggle:only-child) > .ctl { width: auto; }
+.sp-layer.phone .segmented.sp-seg { display: flex; width: 100%; }
+.sp-layer.phone .segmented.sp-seg > button { flex: 1 1 0; min-height: 44px; justify-content: center; }
+.sp-layer.phone .sp-row > .ctl > .select-trigger, .sp-layer.phone .sp-row > .ctl > input.field { flex: 1 1 auto; width: 100%; max-width: none; min-height: 44px; font-size: 16px; }
+.sp-layer.phone .sp-tabs { display: flex; width: 100%; }
+.sp-layer.phone .sp-tabs button { flex: 1 1 0; height: 38px; }
+/* searching: the list's bar and the search box stay on top, the results fill the rest */
+.sp-layer.phone .modal.settings.sp.searching { grid-template-rows: auto minmax(0, 1fr); }
+.sp-layer.phone .modal.settings.sp.searching .sp-nav, .sp-layer.phone .modal.settings.sp.searching .sp-main { display: flex; }
+.sp-layer.phone .modal.settings.sp.searching .sp-nav { padding-bottom: 0; }
+.sp-layer.phone .modal.settings.sp.searching :is(.sp-groups, .sp-ver, .sp-main > .sp-bar) { display: none; }
+.sp-layer.phone .env-row code { min-width: 0; }
+/* the parts inside a page (section components drawn for the desktop column): nothing scrolls sideways (spec #phone
+   问题 3) — long paths and addresses break, a row puts its actions under its words when they do not fit beside them,
+   a heading line wraps its buttons and puts its sentence under them */
+.sp-layer.phone .sp-inner { overflow-wrap: break-word; }
+.sp-layer.phone .sp-body code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; vertical-align: bottom; }
+.sp-layer.phone .sp-body .row { flex-wrap: wrap; row-gap: 6px; }
+.sp-layer.phone .sp-body .row > .grow { flex: 1 1 160px; }
+.sp-layer.phone .sp-body .section > :is(div, h5)[style*='display: flex'] { flex-wrap: wrap; row-gap: 6px; }
+.sp-layer.phone .sp-body .section > div[style*='display: flex'] > .muted { order: 9; flex: 1 1 100%; }
+/* an agent: its dot, mark and name on the first line, the switch and buttons on the next */
+.sp-layer.phone .agent-card > div:first-child { flex-wrap: wrap; row-gap: 6px; }
+.sp-layer.phone .agent-card > div:first-child > .grow { flex: 1 1 calc(100% - 56px); }
+/* 模型 › 模型: rows a finger apart, the star and the switch far enough apart for two fingers */
+.sp-layer.phone .models-table tbody tr { height: 50px; }
+.sp-layer.phone .models-table td.acts .mm-star { margin-right: 16px; opacity: 1; }
+:root[data-reduce-motion='1'] .sp-layer.phone .modal.settings.sp { animation: none; }
 
 /* ---- redesign phase 7: start page / automation page / phone ---- */
 /* spec §5.8 / §5.9 / §5.11, mock-home.png. The start page is one 720px column: title · composer · starters · notice ·

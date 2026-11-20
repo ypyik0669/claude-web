@@ -475,7 +475,7 @@ export class ProviderService {
     if (!p) throw new Error(tr('供应商不存在：{id}', { id }));
     if (p.type === 'gateway') {
       const ep = this.gatewayEndpoint?.(p.gatewayGroupId ?? '');
-      if (!ep) throw new Error(tr('供应商「{name}」走模型网关，但网关没有启用或组不存在（设置 → 模型网关）', { name: p.name }));
+      if (!ep) throw new Error(tr('供应商「{name}」走模型网关，但网关没有启用或组不存在（设置 → 模型 → 路由）', { name: p.name }));
       // runtime: the profile's explicit choice, else what the group's relays need (GatewayService.needsOfficialClient)
       return { ...p, baseUrl: ep.baseUrl, apiKey: ep.key, runtime: p.runtime ?? ep.runtime, leanTools: ep.leanTools };
     }
@@ -667,7 +667,7 @@ export class ProviderService {
   async probe(id?: string, draft?: Partial<Provider>, opts: { listOnly?: boolean } = {}): Promise<ProbeResult> {
     const saved = id ? this.meta.provider(id) : undefined;
     if ((draft?.type ?? saved?.type) === 'claude-account') return this.probeAccount(saved, draft, opts);
-    if ((draft?.type ?? saved?.type) === 'gateway') return { ok: false, models: [], error: tr('走模型网关的供应商请在「设置 → 模型网关」里用组的「测试」按钮'), ms: 0 };
+    if ((draft?.type ?? saved?.type) === 'gateway') return { ok: false, models: [], error: tr('走模型网关的供应商请在「设置 → 模型 → 路由」里用组的「测试」按钮'), ms: 0 };
     const key = draft?.apiKey && !draft.apiKey.includes('…') ? draft.apiKey : saved ? this.plainKey(saved) : '';
     const p = { type: draft?.type ?? saved?.type ?? 'anthropic', baseUrl: (draft?.baseUrl ?? saved?.baseUrl ?? '').trim(), apiKey: key.trim(), authStyle: draft?.authStyle ?? saved?.authStyle } as Pick<Provider, 'type' | 'baseUrl' | 'apiKey' | 'authStyle'>;
     if (!p.apiKey) return { ok: false, models: [], error: tr('没有 API Key'), ms: 0 };

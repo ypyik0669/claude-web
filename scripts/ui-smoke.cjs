@@ -49,7 +49,8 @@ function uiInventory() {
     const text = list.slice(s.at, i + 1 < sections.length ? sections[i + 1].at : list.length);
     const entries = tables[(/entries: (\w+)/.exec(text) || [])[1]] || [];
     const moreEntries = entries.filter((e) => e.more).map((e) => e.id);
-    const tabs = [...text.matchAll(/\{ id: '(\w+)', l: [^,]+, bodies: \[([^\]]*)\](?:, more: \[([^\]]*)\])?/g)];
+    // a tab's label: tr('…'), trAs('…', '…') (its comma is inside the call) or a constant
+    const tabs = [...text.matchAll(/\{ id: '(\w+)', l: (?:trAs\('[^']*', '[^']*'\)|[^,]+), bodies: \[([^\]]*)\](?:, more: \[([^\]]*)\])?/g)];
     if (tabs.length) {
       for (const t of tabs) { s.tabs.push(t[1]); s.pages.push({ tab: t[1], bodies: ids(t[2]), more: ids(t[3]), moreEntries }); }
     } else {
@@ -63,7 +64,7 @@ function uiInventory() {
   const block = layout.slice(layout.indexOf('export const PANELS'), layout.indexOf('];', layout.indexOf('export const PANELS')));
   const panels = [...block.matchAll(/\{ id: '(\w+)', title: (?:tr\()?'([^']+)'/g)].map((m) => ({ id: m[1], title: m[2] }));
   const withMore = sections.flatMap((s) => s.pages.filter((p) => p.more.length || p.moreEntries.length));
-  if (sections.length < 15 || aliases.length < 5 || !panels.length || !sections.some((s) => s.tabs.length) || withMore.length < 5 || !aliases.some((a) => a.more)) throw new Error('could not read the settings pages / 更多选项 / aliases / panels from the sources');
+  if (sections.length < 14 || aliases.length < 5 || !panels.length || !sections.some((s) => s.tabs.length) || withMore.length < 5 || !aliases.some((a) => a.more)) throw new Error('could not read the settings pages / 更多选项 / aliases / panels from the sources');
   // the sidebar's entry ids by place (web/src/features/sidebar/entries.ts PLACES): the sidebar phase must find each in the DOM
   const sbSrc = fs.readFileSync(path.join(ROOT, 'web/src/features/sidebar/entries.ts'), 'utf8');
   const lists = Object.fromEntries([...sbSrc.matchAll(/export const (\w+) = \[([^\]]*)\] as const;/g)].map((m) => [m[1], [...m[2].matchAll(/'([\w-]+)'/g)].map((x) => x[1])]));
@@ -92,6 +93,9 @@ function seedHome(home) {
   fs.writeFileSync(path.join(home, '.pencil', 'mcp', 'antigravity', 'out', process.platform === 'win32' ? 'mcp-server-windows-x64.exe' : `mcp-server-${process.platform === 'darwin' ? 'darwin' : 'linux'}-${process.arch}`), '');
   fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
   fs.writeFileSync(path.join(home, '.gemini', 'settings.json'), JSON.stringify({ mcpServers: { 'smoke-gone': { command: path.join(home, 'gone-ext-0.1', 'mcp.exe'), args: ['--app', 'x'] } } }));
+  // 自定义 › Artifact 类型 (redesign 2026-11 stage 2): one type of the user's own, in open-artifact's user type root
+  fs.mkdirSync(path.join(home, '.agents', 'artifact-types', 'smoke-poster'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.agents', 'artifact-types', 'smoke-poster', 'artifact-type.json'), JSON.stringify({ title: 'Smoke 海报', summary: 'smoke: a poster type of the user\'s own', version: '0.1.0' }));
   const repo = path.join(home, 'repo');
   fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
   fs.writeFileSync(path.join(repo, 'README.md'), '# smoke repo\n');
@@ -329,7 +333,7 @@ async function runner() {
   if (srv) {
     // the crash probe must have reached the server log through client.log
     if (r && !external && idle === 0) {
-      const ok = /\[web error\] 设置 · 模型与智能程度: /.test(srv.log());
+      const ok = /\[web error\] 设置 · 模型 · 模型列表: /.test(srv.log());
       console.log(`${ok ? 'PASS' : 'FAIL'} boundary error reached the server log (client.log)`);
       if (!ok) failed = true;
       // the emptied code block (chat-turns) reported what it saw: the translator's mark, the attribute it left
@@ -874,25 +878,23 @@ function driver() {
       await click('.menu.perm-menu [data-mode="default"]');
       check('composer menus without error boundary', !(await noBoundary('body')), await noBoundary('body'));
 
-      // ---- settings (redesign phase 6): a full-window page, 5 groups + a collapsed 高级, every page and tab, old ids
+      // ---- settings (redesign 2026-11 stage 2): a dialog over the page you were on — 4 groups / 14 pages with a line
+      // between groups, every page and tab, old ids (and the ids of what left the settings land in its new place)
       phase = 'settings';
       const onPage = (id, tab) => `(() => { const r = document.querySelector('.modal.settings.sp'); return !!r && r.dataset.section === ${JSON.stringify(id)}${tab ? ` && r.dataset.tab === ${JSON.stringify(tab)}` : ''}; })()`;
       await js('window.__store.getState().openSettings()');
-      check('settings open on 通用', await waitFor(onPage('general'), 5000));
-      const frame = await js(`(() => { const r = document.querySelector('.modal.settings.sp').getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width) - innerWidth, h: Math.round(r.height) - innerHeight }; })()`);
-      check('settings fill the window (not a dialog)', frame.l === 0 && frame.t === 0 && frame.w === 0 && frame.h === 0, JSON.stringify(frame));
-      const nav = await js(`({ items: document.querySelectorAll('.sp-nav .sp-si').length, groups: [...document.querySelectorAll('.sp-nav .sp-gh')].map((g) => g.textContent.trim()), adv: document.querySelector('.sp-adv-h')?.getAttribute('aria-expanded') })`);
-      check('settings nav: ≤ 15 pages in 5 groups, 高级 collapsed', nav.items <= 15 && nav.items === inv.sections.filter((s) => !s.advanced).length && nav.groups.join(',') === '常用,模型,扩展,连接,数据,高级' && nav.adv === 'false', JSON.stringify(nav));
-      const wbRow = await js(`!!document.querySelector('.modal.settings [data-entry="ui.workbench"] .toggle')`);
-      check('「显示工作台工具」 is on 通用', wbRow);
-      await shot('settings-general');
+      check('settings open on 对话', await waitFor(onPage('conversation'), 5000));
+      const frame = await js(`(() => { const d = document.querySelector('.modal.settings.sp').getBoundingClientRect(); const s = document.querySelector('.sp-layer > .sp-scrim')?.getBoundingClientRect(); return { l: Math.round(d.left), r: Math.round(innerWidth - d.right), t: Math.round(d.top), b: Math.round(innerHeight - d.bottom), w: Math.round(d.width), h: Math.round(d.height), scrim: !!s && Math.round(s.width) === innerWidth && Math.round(s.height) === innerHeight, app: !!document.querySelector('.app .sidebar') && !!document.querySelector('.app .pane') }; })()`);
+      check('settings are a dialog over the page: centred, at most 1080 × 800, a scrim over the app, which stays mounted', frame.l > 0 && frame.t > 0 && frame.b >= 0 && Math.abs(frame.l - frame.r) <= 2 && frame.w <= 1080 && frame.h <= 800 && frame.scrim && frame.app, JSON.stringify(frame));
+      const nav = await js(`({ items: [...document.querySelectorAll('.sp-nav .sp-si')].map((b) => b.dataset.section).join(','), groups: [...document.querySelectorAll('.sp-nav .sp-g')].map((g) => g.dataset.group + ':' + g.querySelector('.sp-gh').textContent.trim() + ':' + g.querySelectorAll('.sp-si').length).join(','), lines: [...document.querySelectorAll('.sp-nav .sp-g + .sp-g')].filter((g) => parseFloat(getComputedStyle(g).borderTopWidth) > 0).length, heads: [...document.querySelectorAll('.sp-nav .sp-gh')].filter((h) => h.getClientRects().length).length })`);
+      check('settings nav: 14 pages in 4 groups (账号 2 · 应用 4 · Claude Code 5 · 高级 3), a line between groups and no group headings on the desktop', nav.items === inv.sections.map((s) => s.id).join(',') && inv.sections.length === 14 && nav.groups === 'account:账号:2,app:应用:4,code:Claude Code:5,advanced:高级:3' && nav.lines === 3 && nav.heads === 0, JSON.stringify(nav));
+      await shot('settings-conversation');
       for (const s of inv.sections) {
         phase = `settings:${s.id}`;
         await js(`window.__store.getState().openSettings({ section: ${JSON.stringify(s.id)} })`);
         const opened = await waitFor(`${onPage(s.id)} && document.querySelector('.modal.settings .sp-title')?.textContent === ${JSON.stringify(s.label)}`, 5000);
         await sleep(1500); // requests the page fires on mount
-        let err = await noBoundary('.modal.settings');
-        if (s.advanced) err = err || ((await js(`document.querySelector('.sp-adv-h')?.getAttribute('aria-expanded')`)) === 'true' ? '' : '高级 did not expand for an advanced page');
+        const err = await noBoundary('.modal.settings');
         check(`settings · ${s.label}`, opened && !err, err || (opened ? '' : 'page did not open'));
         await shot(`settings-${s.id}`);
         for (const t of s.tabs.slice(1)) {
@@ -904,6 +906,14 @@ function driver() {
           await shot(`settings-${s.id}-${t}`);
         }
       }
+      // 通用 was split: its window rows are on 通知与窗口 now (the conversation rows on 对话)
+      await js(`window.__store.getState().openSettings({ section: 'window' })`);
+      check('「显示工作台工具」 is on 通知与窗口', await waitFor(`${onPage('window')} && !!document.querySelector('.modal.settings [data-entry="ui.workbench"] .toggle')`, 3000));
+      // 设置 › 模型: one page, its three tabs, and 打开看板 for the big board
+      await js(`window.__store.getState().openSettings({ section: 'model' })`);
+      await waitFor(onPage('model'), 3000);
+      const modelPage = await js(`({ tabs: [...document.querySelectorAll('.modal.settings .sp-tabs [data-tab]')].map((b) => b.dataset.tab + ':' + b.textContent).join(','), hub: document.querySelector('.modal.settings .sp-hub-link button')?.textContent ?? null })`);
+      check('设置 › 模型: one page with the tabs 来源 · 路由 · 模型 and 「打开看板」', modelPage.tabs === 'sources:来源,routing:路由,models:模型' && modelPage.hub === '打开看板', JSON.stringify(modelPage));
       // 2026-09-30 user reports: settings → Agents gives every other agent 「新对话用」 (its own login, the providers it
       // can use, 添加供应商…); an IM bot has 「用哪个供应商」 (跟新对话一样 / the account / the providers)
       // 从其它工具导入: the dialog reads the other tools' settings (read-only), shows no key, and goes away on 取消
@@ -1055,8 +1065,8 @@ function driver() {
         const noFakeIp = !!devRow && (await waitFor(`!!document.querySelector('${devRow}')`, 5000)) && !(await js(`document.querySelector('${devRow}').textContent`)).includes('127.0.0.1');
         check('a phone paired through this machine (the way the bridge does): its row shows no 127.0.0.1', noFakeIp, devRow ? await js(`document.querySelector('${devRow}')?.textContent ?? 'no row'`) : JSON.stringify(paired));
         // what the page shows by default (更多选项 still closed) has none of the network words
-        await js(`window.__store.getState().openSettings({ section: 'general' })`);
-        await waitFor(onPage('general'), 3000);
+        await js(`window.__store.getState().openSettings({ section: 'conversation' })`);
+        await waitFor(onPage('conversation'), 3000);
         await js(`window.__store.getState().openSettings({ section: 'remote' })`);
         await waitFor(`${onPage('remote')} && !!document.querySelector('${RS} [data-id="anywhere-status"]')`, 8000);
         const shownText = await js(`document.querySelector('.modal.settings .sp-inner').innerText`);
@@ -1091,9 +1101,9 @@ function driver() {
       // there is swallowed — no switch of that page flips — and the helper measures and clicks again. A transform, not
       // padding: the scroller's scroll anchoring cancels a padding shift above a scrolled-to button (tests nothing)
       phase = 'settings:click-guard';
-      await js(`window.__store.getState().openSettings({ section: 'general' })`);
-      await waitFor(onPage('general'), 3000);
-      const generalValues = `JSON.stringify(${JSON.stringify(['ui.defaultMode', 'autoContinueOnReset', 'ui.showThinking', 'ui.diffMode', 'ui.inlineDiffs', 'ui.workbench', 'ui.autoSave', 'ui.notifications', 'ui.closeToTray', 'ui.confirmExit'])}.map((k) => window.__store.getState().settings[k]))`;
+      await js(`window.__store.getState().openSettings({ section: 'conversation' })`);
+      await waitFor(onPage('conversation'), 3000);
+      const generalValues = `JSON.stringify(${JSON.stringify(['ui.defaultMode', 'autoContinueOnReset', 'claude.desktopSkills', 'ui.nodegraphHint', 'ui.viewMode', 'ui.showThinking', 'ui.promptSuggestions', 'ui.diffMode', 'ui.inlineDiffs', 'ui.infoPanel', 'sessions.mcp', 'ui.autoArchivePr', 'vcs.resolveOnReply'])}.map((k) => window.__store.getState().settings[k]))`;
       const valuesBefore = await js(generalValues);
       const shifted = await click('.modal.settings .sp-more-h', { beforeSend: `document.querySelector('.modal.settings .sp-inner').style.transform = 'translateY(44px)'` });
       const guardOpened = await waitFor(`document.querySelector('.modal.settings .sp-more-h')?.getAttribute('aria-expanded') === 'true'`, 3000);
@@ -1136,34 +1146,57 @@ function driver() {
           await shot(`settings-${s.id}${pg.tab ? `-${pg.tab}` : ''}-more`);
         }
       }
-      // the old flat-window ids still open the page (and tab) that has their content now; 引擎与账号 with 更多选项 open
+      // the old ids still open the page (and tab) that has their content now — a part that now shares a page is scrolled
+      // into view; 引擎与账号 with 更多选项 open
       for (const a of inv.aliases) {
         phase = `settings:alias:${a.old}`;
         await js(`window.__store.getState().openSettings({ section: ${JSON.stringify(a.old)} })`);
         const more = a.more ? ` && !!document.querySelector('.modal.settings .sp-more.open [data-body="${a.body}"]')` : '';
-        check(`settings · old id ${a.old} → ${a.section}${a.tab ? `/${a.tab}` : ''}${a.more ? ' › 更多选项' : ''}`, await waitFor(onPage(a.section, a.tab) + more, 3000));
+        const inView = a.body && !a.more ? ` && (() => { const e = document.querySelector('.modal.settings [data-body="${a.body}"]'), s = document.querySelector('.modal.settings .sp-scroll'); if (!e || !s) return false; const r = e.getBoundingClientRect(), b = s.getBoundingClientRect(); return r.top < b.bottom - 20 && r.bottom > b.top + 20; })()` : '';
+        check(`settings · old id ${a.old} → ${a.section}${a.tab ? `/${a.tab}` : ''}${a.more ? ' › 更多选项' : a.body ? ` (#${a.body} in view)` : ''}`, await waitFor(onPage(a.section, a.tab) + more + inView, 3000));
       }
+      // the ids of what left the settings (spec #ia: MCP 与插件、Skills → 自定义; Bot 的几项 → 自动化 › Bot › 设置) open its
+      // new place instead, with no settings dialog in between
+      phase = 'settings:away';
+      const extOn = (tab, extra = '') => `(() => { const p = document.querySelector('.over-page.ext-page'); return !document.querySelector('.modal.settings') && !!p && !p.hidden && p.dataset.tab === ${JSON.stringify(tab)}${extra}; })()`;
+      const away = {};
+      for (const [id, tab] of [['mcp', 'connectors'], ['plugins', 'plugins'], ['skills', 'skills']]) {
+        await js(`window.__store.getState().openSettings({ section: ${JSON.stringify(id)} })`);
+        away[id] = await waitFor(extOn(tab), 5000);
+      }
+      // the connector directory's old 「用配置手动添加…」 target: 自定义 › 连接器 with the JSON form open
+      await js(`window.__store.getState().openSettings({ section: 'mcp-json' })`);
+      away['mcp-json'] = await waitFor(extOn('connectors', ` && (() => { const f = document.querySelector('.ext-page .cx-json'); return !!f && f.getClientRects().length > 0; })()`), 5000);
+      await js(`document.querySelectorAll('.over-page:not([hidden]) .over-close').forEach((b) => b.click())`);
+      await sleep(300);
+      // a Bot row's old id: 自动化 › Bot › 设置, the row highlighted
+      await js(`window.__store.getState().openSettings({ reveal: 'bots.concurrency' })`);
+      away['reveal bots.concurrency'] = await waitFor(`(() => { const p = document.querySelector('.over-page.bots-page'); const b = p?.querySelector('.bot-settings'); return !document.querySelector('.modal.settings') && !!p && !p.hidden && !!b && !b.closest('[hidden]') && !!b.querySelector('[data-entry="bots.concurrency"].reveal'); })()`, 6000);
+      await shot('settings-away-bots');
+      await js(`document.querySelectorAll('.over-page:not([hidden]) .over-close').forEach((b) => b.click())`);
+      await sleep(300);
+      check('settings · the ids of what left open its new place: mcp → 自定义 › 连接器, plugins → 插件, skills → Skills, mcp-json → the JSON form, a Bot row → 自动化 › Bot › 设置', Object.values(away).every(Boolean), JSON.stringify(away));
       // reveal: an entry under 更多选项 opens it and is highlighted
       phase = 'settings:reveal';
       await js('window.__store.getState().openSettings({ reveal: "ui.softwareRender" })');
-      check('reveal opens 更多选项 and highlights the row', await waitFor(`${onPage('general')} && !!document.querySelector('.sp-more.open [data-entry="ui.softwareRender"].reveal')`, 3000));
+      check('reveal opens 更多选项 and highlights the row (on 通知与窗口)', await waitFor(`${onPage('window')} && !!document.querySelector('.sp-more.open [data-entry="ui.softwareRender"].reveal')`, 3000));
       // Ctrl+, again while open (openSettings() without a page): same page, search cleared and focused
       phase = 'settings:reopen';
       await js('window.__store.getState().openSettings({ section: "models" })');
-      await waitFor(onPage('models'), 3000);
+      await waitFor(onPage('model', 'models'), 3000);
       await js(`(() => { const i = document.querySelector('.sp-search input'); i.focus(); })()`);
       wc.insertText('zz');
       await sleep(200);
       await js('window.__store.getState().openSettings()');
       await sleep(300);
-      const reopen = await js(`({ page: document.querySelector('.modal.settings.sp')?.dataset.section, q: document.querySelector('.sp-search input').value, focus: document.activeElement === document.querySelector('.sp-search input') })`);
-      check('openSettings() while open keeps the page, clears and focuses the search', reopen.page === 'models' && reopen.q === '' && reopen.focus, JSON.stringify(reopen));
+      const reopen = await js(`({ page: document.querySelector('.modal.settings.sp')?.dataset.section, tab: document.querySelector('.modal.settings.sp')?.dataset.tab, q: document.querySelector('.sp-search input').value, focus: document.activeElement === document.querySelector('.sp-search input') })`);
+      check('openSettings() while open keeps the page, clears and focuses the search', reopen.page === 'model' && reopen.tab === 'models' && reopen.q === '' && reopen.focus, JSON.stringify(reopen));
       // a short window: the current page stays in view in the navigation (an advanced page at the bottom)
       phase = 'settings:nav-scroll';
       win.setContentSize(1360, 420);
       await sleep(400);
       await js('window.__store.getState().openSettings({ section: "raw" })');
-      await waitFor(onPage('raw'), 3000);
+      await waitFor(onPage('hooks'), 3000);
       await sleep(400);
       const navIn = await js(`(() => { const on = document.querySelector('.sp-si.on'), box = document.querySelector('.sp-groups'); if (!on || !box) return null; const a = on.getBoundingClientRect(), b = box.getBoundingClientRect(); return { inside: a.top >= b.top - 1 && a.bottom <= b.bottom + 1, scrolled: box.scrollTop > 0 }; })()`);
       check('the navigation scrolls the current page into view', navIn && navIn.inside, JSON.stringify(navIn));
@@ -1171,14 +1204,14 @@ function driver() {
       await sleep(400);
       // search: rows with a 分组 › 分区 crumb; a part under 更多选项 jumps there and opens it
       phase = 'settings:search';
-      await js('window.__store.getState().openSettings({ section: "general" })');
-      await waitFor(onPage('general'), 3000);
+      await js('window.__store.getState().openSettings({ section: "conversation" })');
+      await waitFor(onPage('conversation'), 3000);
       wc.focus();
       await key('/');
       const searchFocused = await js(`document.activeElement === document.querySelector('.sp-search input')`);
       if (!searchFocused) await click('.sp-search input');
       wc.insertText('托盘');
-      const tray = await waitFor(`[...document.querySelectorAll('.sp-hit')].some((h) => h.querySelector('[data-entry="ui.closeToTray"]') && h.querySelector('.sp-crumb')?.textContent === '常用 › 通用')`, 3000);
+      const tray = await waitFor(`[...document.querySelectorAll('.sp-hit')].some((h) => h.querySelector('[data-entry="ui.closeToTray"]') && h.querySelector('.sp-crumb')?.textContent === '应用 › 通知与窗口')`, 3000);
       check('search finds a row with its 分组 › 分区 crumb (「/」 focuses the search)', tray && searchFocused, JSON.stringify({ tray, searchFocused }));
       await shot('settings-search');
       await js(`(() => { const i = document.querySelector('.sp-search input'); i.select(); })()`);
@@ -1187,7 +1220,30 @@ function driver() {
       await click('.sp-jump[data-target="remote#hosts"]');
       const hosts = await waitFor(`${onPage('remote')} && !!document.querySelector('.sp-more.open [data-body="hosts"]') && !document.querySelector('.sp-hits')`, 3000);
       check('search finds a part under 更多选项 and opens it there', hostHit && hosts, JSON.stringify({ hostHit, hosts }));
+      // what left the settings is still found: a Bot row in place (its crumb says where it lives), MCP as a jump to 自定义
+      await js(`(() => { const i = document.querySelector('.sp-search input'); i.focus(); i.select(); })()`);
+      wc.insertText('同时运行几个');
+      const botHit = await waitFor(`[...document.querySelectorAll('.sp-hit[data-away="bots"]')].some((h) => h.querySelector('[data-entry="bots.concurrency"]') && h.querySelector('.sp-crumb')?.textContent === '自动化 › Bot › 设置')`, 3000);
+      await js(`(() => { const i = document.querySelector('.sp-search input'); i.focus(); i.select(); })()`);
+      wc.insertText('mcp');
+      const mcpHit = await waitFor(`(document.querySelector('.sp-jump[data-target="away:mcp"] .sp-crumb')?.textContent ?? '') === '自定义 › 连接器'`, 3000);
+      if (mcpHit) await click('.sp-jump[data-target="away:mcp"]');
+      const mcpLanded = mcpHit && await waitFor(extOn('connectors'), 5000);
+      check('search: a Bot row shows in place with 自动化 › Bot › 设置; 「mcp」 is a jump to 自定义 › 连接器 that closes the settings', botHit && mcpHit && mcpLanded, JSON.stringify({ botHit, mcpHit, mcpLanded }));
+      await js(`document.querySelectorAll('.over-page:not([hidden]) .over-close').forEach((b) => b.click())`);
+      await sleep(300);
+      // × (top right) closes the dialog and gives the focus back where it was; Esc does the same
+      phase = 'settings:close';
+      await js(`(() => { const b = document.querySelector('.sidebar .sb-search, .sidebar [data-id="new"]'); b?.focus(); window.__smokeFocus = document.activeElement; })()`);
+      await js('window.__store.getState().openSettings({ section: "appearance" })');
+      await waitFor(onPage('appearance'), 3000);
+      await click('.modal.settings .sp-main > .sp-x');
+      const xClosed = await waitFor(`!document.querySelector('.modal.settings') && !!document.querySelector('.sidebar') && !!document.querySelector('.pane')`, 3000);
+      const xFocus = await js(`!!window.__smokeFocus && document.activeElement === window.__smokeFocus`);
+      check('× closes the settings dialog; the page underneath is as it was and the focus is back', xClosed && xFocus, JSON.stringify({ xClosed, xFocus }));
       // Esc in the page closes it; the app underneath was never unmounted
+      await js('window.__store.getState().openSettings({ section: "remote" })');
+      await waitFor(onPage('remote'), 3000);
       await click('.modal.settings .sp-title');
       await key('Escape');
       check('Esc closes the settings page', await waitFor('!document.querySelector(".modal.settings") && !!document.querySelector(".sidebar") && !!document.querySelector(".pane")', 3000));
@@ -1637,14 +1693,14 @@ function driver() {
           const onTop = await js(`(() => { const m = document.querySelector('.sb-acct-menu'); if (!m) return null; const b = m.getBoundingClientRect(); return [[b.right - 10, b.top + 16], [b.right - 10, b.bottom - 16], [b.left + 10, b.top + 16]].every(([x, y]) => m.contains(document.elementFromPoint(x, y))); })()`);
           await key('Escape');
           check('the account menu lies over the 自定义 page, not under it', onTop === true, String(onTop));
-          // 模型 (redesign 2026-11 stage 1: 设置 › 模型 opens the hub — the rail's 模型 is gone): one hub with eight pages
-          // as its tabs (no 高级设置); 上游 has one filter strip; 设置 holds sharing
+          // 模型 (redesign 2026-11 stage 1; stage 2: 设置 › 模型's 「打开看板」, the old id 供应商 lands on its 来源 tab): one
+          // hub with eight pages as its tabs (no 高级设置); 上游 has one filter strip; 设置 holds sharing
           await js(`window.__store.getState().openSettings({ section: 'providers' })`);
           await waitFor(`!!document.querySelector('.modal.settings .sp-hub-link button')`, 4000);
           await click('.modal.settings .sp-hub-link button');
           const hubReady = await waitFor(`(() => { const p = document.querySelector('.over-page.hub-page'); return !!p && !p.hidden && !document.querySelector('.modal.settings') && document.querySelectorAll('.hub-page .over-tabs [data-id]').length >= 8; })()`, 20000);
           const hub = hubReady ? await js(`(() => ({ pages: [...document.querySelectorAll('.hub-page .over-tabs [data-id]')].map((x) => x.dataset.id).join(','), extGone: !!document.querySelector('.ext-page')?.hidden, adv: document.body.innerText.includes('高级设置') }))()`) : null;
-          check('设置 › 模型 › 打开模型看板: the hub over the main area with eight tabs (概览 · 上游 · 路由 · 用量 · 隐私 · 插件 · 接入 · 设置), the settings closed, no 高级设置', hub && hub.pages === 'overview,sources,routing,usage,privacy,plugins,agents,settings' && hub.extGone && !hub.adv, JSON.stringify(hub));
+          check('设置 › 模型 › 打开看板: the hub over the main area with eight tabs (概览 · 上游 · 路由 · 用量 · 隐私 · 插件 · 接入 · 设置), the settings closed, no 高级设置', hub && hub.pages === 'overview,sources,routing,usage,privacy,plugins,agents,settings' && hub.extGone && !hub.adv, JSON.stringify(hub));
           await click('.hub-page .over-tabs [data-id="sources"]');
           await waitFor(`document.querySelectorAll('.hub-filters [data-id]').length >= 6`, 10000);
           const filters = await js(`(() => ({ ids: [...document.querySelectorAll('.hub-filters [data-id]')].map((x) => x.dataset.id).join(','), cards: document.querySelectorAll('.hub-pgrid .hub-provider').length }))()`);
@@ -1879,16 +1935,16 @@ function driver() {
           await sleep(400);
           const noDrawer = await js(`({ open: window.__store.getState().sidebarOpen, drawer: document.querySelector('.app').classList.contains('drawer-open') })`);
           check('phone: Ctrl+B with settings open does not bring the drawer over the page', !noDrawer.open && !noDrawer.drawer, JSON.stringify(noDrawer));
-          // settings at phone width (≤ 600px): the page list first, a page replaces it, 全部设置 brings the list back
+          // settings on a phone: the page list first, a page replaces it, ‹ (全部设置, the page's bar) brings the list back
           win.setContentSize(480, 860);
           await sleep(600);
           const spVis = `(() => { const d = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none'; }; return { nav: d('.sp-nav'), main: d('.sp-main'), drawer: document.querySelector('.app').classList.contains('drawer-open') }; })()`;
           const listFirst = await js(spVis);
           await click('.sp-nav .sp-si[data-section="appearance"]');
           const pageNow = await js(spVis);
-          await click('.sp-phone-back');
+          await click('.sp-main .sp-bar [data-act="back"]');
           const listAgain = await js(spVis);
-          check('phone settings: the list first (drawer closed), a page replaces it, 全部设置 returns', listFirst.nav && !listFirst.main && !listFirst.drawer && !pageNow.nav && pageNow.main && listAgain.nav && !listAgain.main, JSON.stringify({ listFirst, pageNow, listAgain }));
+          check('phone settings: the list first (drawer closed), a page replaces it, ‹ returns', listFirst.nav && !listFirst.main && !listFirst.drawer && !pageNow.nav && pageNow.main && listAgain.nav && !listAgain.main, JSON.stringify({ listFirst, pageNow, listAgain }));
           win.setContentSize(740, 860);
           await sleep(400);
           await js('window.__store.setState({ settingsOpen: null, sidebarOpen: false })');
@@ -1967,7 +2023,7 @@ function driver() {
           await phoneMenu();
           await click('.menu.sess-menu [data-view="changes"]');
           await waitFor(`(${drawerUp.toString()})(${sheet}, 'files')`, 4000);
-          await js(`window.__store.getState().openSettings({ section: 'general' })`);
+          await js(`window.__store.getState().openSettings({ section: 'conversation' })`);
           await waitFor('!!document.querySelector(".modal.settings")', 3000);
           await sleep(300);
           const overSettings = [await hitAt(0.5), await hitAt(0.75)];
@@ -2017,9 +2073,10 @@ function driver() {
 
           // ---- redesign 2026-11 stage 1: the phone check (scripts/lib/phone-audit.cjs) at 390 × 844, 360 × 780 and
           // 430 × 932, light and dark. This stage's screens — the drawer, the account sheet, 自动化's head and tab row on
-          // each of its five tabs, 自定义's, Artifacts — get every rule: tap targets 44 × 44, text boxes 16px, nothing
+          // each of its five tabs, Artifacts — get every rule: tap targets 44 × 44, text boxes 16px, nothing
           // scrolls sideways or sticks out, nothing covered. So do the automation piece's (redesign 2026-11): 运行中's
-          // list, its ⋯, the cafe and its ⋯, 跑过的 and a run of it, 定时任务's tasks and a task's ⋯. The conversation,
+          // list, its ⋯, the cafe and its ⋯, 跑过的 and a run of it, 定时任务's tasks and a task's ⋯; stage 2's 自定义
+          // (all four tabs) and 设置 (the list and its pages); stage 3's ≡ sheet and its pushed pages. The conversation,
           // the new-conversation page and the other pages' bodies get all but the 44 rule (stage 4 does those)
           phase = 'phone-audit';
           {
@@ -2213,13 +2270,81 @@ function driver() {
                   else await audit(`${tag} · 自动化 › ${tab} (page)`, '.over-page:not([hidden])', { tapTargets: false });
                 }
                 await putAway();
-                // 自定义
+                // 自定义 (stage 2): each of its four tabs with every rule; its tab row and the connector categories are one
+                // row each that scrolls sideways (spec #phone 问题 13)
                 await drawerIn();
                 await click('.sidebar .sb-nav [data-id="extensions"]');
                 await waitFor(`(() => { const p = document.querySelector('.ext-page'); return !!p && !p.hidden; })()`, 4000);
-                await sleep(500);
-                await audit(`${tag} · 自定义`, '.ext-page :is(.over-head, .over-tabs)');
-                await audit(`${tag} · 自定义 (page)`, '.ext-page', { tapTargets: false });
+                for (const tab of ['skills', 'connectors', 'plugins', 'types']) {
+                  await js(`document.querySelector('.ext-page .over-tabs [data-id="${tab}"]')?.click()`);
+                  await waitFor(`document.querySelector('.ext-page')?.dataset.tab === '${tab}'`, 3000);
+                  await sleep(tab === 'connectors' ? 900 : 500);
+                  await audit(`${tag} · 自定义 › ${tab}`, '.ext-page');
+                  if (tab === 'connectors') {
+                    const rows = await js(`(() => { const one = (sel) => { const el = document.querySelector(sel); if (!el) return null; const kids = [...el.children].filter((c) => c.getClientRects().length); return { lines: new Set(kids.map((c) => Math.round(c.getBoundingClientRect().top))).size, scrolls: /(auto|scroll)/.test(getComputedStyle(el).overflowX) }; }; return { tabs: one('.ext-page .over-tabs'), cats: one('.ext-page .ext-body[data-body="connectors"] .cx-cats') }; })()`);
+                    if (!rows.tabs || rows.tabs.lines !== 1 || !rows.tabs.scrolls || !rows.cats || rows.cats.lines !== 1 || !rows.cats.scrolls) faults.push(`${tag} · 自定义's tab row / categories are not one sideways row: ${JSON.stringify(rows)}`);
+                    if (w === 390) await shot(`phone-check-${theme}-customize`);
+                  }
+                }
+                await putAway();
+                // 设置 (stage 2): the list of pages; every page, tab and 更多选项 at 390 × 844 light, the densest ones at the
+                // other sizes — every rule, and the page's own scroller never scrolls sideways
+                if (w === 390 && theme === 'light') {
+                  // the phone's settings (spec #phone 「设置」 / 「设置里的一页」): 14 pages under their group names, a tap pushes
+                  // the page (‹ back at the top left), the search 16px with no key hint; switches 51 × 31 that a tap on the
+                  // row flips; a wide control under its words; no keyboard words in a row's sentence (问题 1 / 8 / 11)
+                  await js('window.__store.getState().openSettings()');
+                  await waitFor('!!document.querySelector(".sp-layer.phone .modal.settings.sp:not(.phone-page)")', 3000);
+                  await sleep(400);
+                  const list = await js(`({ heads: [...document.querySelectorAll('.sp-layer .sp-gh')].filter((h) => h.getClientRects().length).map((h) => h.textContent).join(','), items: document.querySelectorAll('.sp-layer .sp-si').length, search: getComputedStyle(document.querySelector('.sp-layer .sp-search input')).fontSize, kbd: !!document.querySelector('.sp-layer .sp-search .kbd'), main: document.querySelector('.sp-layer .sp-main')?.getClientRects().length ?? 0 })`);
+                  await click('.sp-layer .sp-si[data-section="window"]');
+                  const pushed = await waitFor(`(() => { const d = document.querySelector('.modal.settings.sp'); return !!d && d.classList.contains('phone-page') && d.dataset.section === 'window' && !document.querySelector('.sp-layer .sp-nav').getClientRects().length && document.querySelector('.sp-layer .sp-main .sp-bar-title')?.textContent === '通知与窗口'; })()`, 3000);
+                  const swSel = '.sp-layer [data-entry="ui.confirmExit"] .toggle';
+                  const sw = await js(`(() => { const t = document.querySelector('${swSel}'); if (!t) return null; const r = t.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), on: t.getAttribute('aria-checked') }; })()`);
+                  const rowWords = '.sp-layer [data-entry="ui.confirmExit"] .sp-row .l';
+                  await click(rowWords);
+                  const flipped = !!sw && await waitFor(`document.querySelector('${swSel}')?.getAttribute('aria-checked') === ${JSON.stringify(sw.on === 'true' ? 'false' : 'true')}`, 2000);
+                  await click(rowWords);
+                  const flippedBack = !!sw && await waitFor(`document.querySelector('${swSel}')?.getAttribute('aria-checked') === ${JSON.stringify(sw.on)}`, 2000);
+                  await click('.sp-layer .sp-main .sp-bar [data-act="back"]');
+                  const listAgain = await waitFor(`!document.querySelector('.modal.settings.sp').classList.contains('phone-page') && document.querySelector('.sp-layer .sp-nav').getClientRects().length > 0`, 3000);
+                  await click('.sp-layer .sp-si[data-section="conversation"]');
+                  await waitFor(`document.querySelector('.modal.settings.sp')?.dataset.section === 'conversation'`, 3000);
+                  await sleep(300);
+                  const kb = await js(`[...document.querySelectorAll('.sp-layer .sp-row .sub')].map((e) => e.textContent).filter((t) => /\\b(?:Ctrl|Alt|Shift|Cmd)\\b|按 ?Tab|\\bEnter\\b|⌘/.test(t))`);
+                  const wide = await js(`(() => { const r1 = document.querySelector('.sp-layer [data-entry="ui.viewMode"] .sp-row'), r2 = document.querySelector('.sp-layer [data-entry="ui.showThinking"] .sp-row'); if (!r1 || !r2) return null; const a = r1.querySelector('.grow').getBoundingClientRect(), b = r1.querySelector('.ctl').getBoundingClientRect(), c = r2.querySelector('.grow').getBoundingClientRect(), d = r2.querySelector('.ctl').getBoundingClientRect(); return { under: b.top >= a.bottom - 1, beside: d.left >= c.right - 1 && d.top < c.bottom && d.bottom > c.top }; })()`);
+                  await shot('phone-settings-conversation');
+                  await putAway();
+                  check('phone 设置: 14 pages under 账号 · 应用 · Claude Code · 高级; a tap pushes the page, ‹ goes back; the search 16px, no key hint; a switch 51 × 31 that a tap on its row flips; a wide control under its words; no keyboard words', list.heads === '账号,应用,Claude Code,高级' && list.items === 14 && list.search === '16px' && !list.kbd && !list.main && pushed && !!sw && sw.w === 51 && sw.h === 31 && flipped && flippedBack && listAgain && !kb.length && !!wide && wide.under && wide.beside, JSON.stringify({ list, pushed, sw, flipped, flippedBack, listAgain, kb, wide }));
+                }
+                await js('window.__store.getState().openSettings()');
+                await waitFor('!!document.querySelector(".sp-layer.phone .modal.settings.sp:not(.phone-page)")', 3000);
+                await sleep(400);
+                await audit(`${tag} · 设置`, '.sp-layer');
+                if (w === 390) await shot(`phone-check-${theme}-settings`);
+                for (const s of inv.sections.filter((x) => (w === 390 && theme === 'light') || ['account', 'remote', 'model', 'agents'].includes(x.id))) {
+                  await js(`document.querySelector('.sp-layer .sp-si[data-section="${s.id}"]')?.click()`);
+                  await waitFor(`(() => { const d = document.querySelector('.modal.settings.sp'); return !!d && d.classList.contains('phone-page') && d.dataset.section === '${s.id}'; })()`, 3000);
+                  await sleep(700);
+                  const pass = async (what) => {
+                    await audit(`${tag} · 设置 › ${what}`, '.sp-layer');
+                    const side = await js(`(() => { const sc = document.querySelector('.sp-layer .sp-scroll'); return sc ? sc.scrollWidth - sc.clientWidth : -1; })()`);
+                    if (side > 1) faults.push(`${tag} · 设置 › ${what}: the page scrolls sideways by ${side}px`);
+                  };
+                  await pass(s.id);
+                  for (const t of s.tabs.slice(1)) {
+                    await js(`document.querySelector('.sp-layer .sp-tabs [data-tab="${t}"]')?.click()`);
+                    await sleep(600);
+                    await pass(`${s.id} › ${t}`);
+                  }
+                  if (await js(`document.querySelector('.sp-layer .sp-more-h')?.getAttribute('aria-expanded') === 'false'`)) {
+                    await js(`document.querySelector('.sp-layer .sp-more-h').click()`);
+                    await sleep(600);
+                    await pass(`${s.id} › 更多选项`);
+                  }
+                  await js(`document.querySelector('.sp-layer .sp-main .sp-bar [data-act="back"]')?.click()`);
+                  await waitFor(`!document.querySelector('.modal.settings.sp')?.classList.contains('phone-page')`, 3000);
+                }
                 await putAway();
                 // Artifacts
                 await drawerIn();
@@ -2245,7 +2370,7 @@ function driver() {
             win.setContentSize(740, 860);
             await waitFor('innerWidth === 740', 4000);
             await sleep(300);
-            check('phone check (390 / 360 / 430 × light / dark): stage 1\'s screens and the automation piece\'s (运行中: the list, ⋯, the cafe and its ⋯, 跑过的 and a run; 定时任务\'s tasks and their ⋯) with 44 × 44 targets, no text box under 16px, nothing sideways or covered; the others but the 44 rule', screens === 6 && !faults.length, faults.slice(0, 12).join(' | ') + (faults.length > 12 ? ` … (${faults.length})` : ''));
+            check('phone check (390 / 360 / 430 × light / dark): the redesign\'s screens (the drawer, the account sheet, the ≡ sheet; 自动化 with 运行中\'s list, ⋯, the cafe and its ⋯, 跑过的 and a run, 定时任务\'s tasks and their ⋯; 自定义, 设置, Artifacts) with 44 × 44 targets, no text box under 16px, nothing sideways or covered; the others but the 44 rule', screens === 6 && !faults.length, faults.slice(0, 12).join(' | ') + (faults.length > 12 ? ` … (${faults.length})` : ''));
           }
           await js('window.__store.getState().setSetting("ui.workbench", true)');
           win.setContentSize(1360, 860);
@@ -3044,8 +3169,23 @@ function driver() {
             await sleep(300);
           }
           await closeMenus();
-          // 账户 → 用量与账本: two clicks to that right-panel tab (配置中心 is 自定义's and 设置 › 高级's now; the gear's
-          // right-click still opens it in the right panel)
+          // 设置 opens from the account menu's 设置 and from the account row's ⚙ (stage 2: a right-click on ⚙ opened the old
+          // 配置中心 in the right panel; it went with it — 插件 is 自定义's, Hooks / 环境变量 / settings.json 设置 › 高级's)
+          await click('.sidebar .sb-account [data-id="account"]');
+          await click('.menu.sb-acct-menu [data-id="settings"]');
+          const fromMenu = await waitFor('!!document.querySelector(".modal.settings.sp")', 3000);
+          await js('window.__store.setState({ settingsOpen: null })');
+          await sleep(300);
+          await click('.sidebar .sb-account [data-id="settings"]');
+          const fromGear = await waitFor('!!document.querySelector(".modal.settings.sp")', 3000);
+          await js('window.__store.setState({ settingsOpen: null })');
+          await sleep(300);
+          const dockBefore = await js('window.__store.getState().layout.dock.active ?? null');
+          await js(`document.querySelector('.sidebar .sb-account [data-id="settings"]')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }))`);
+          await sleep(400);
+          const gearCtx = await js(`({ dock: window.__store.getState().layout.dock.active ?? null, menus: document.querySelectorAll('.menu').length, settings: !!document.querySelector('.modal.settings') })`);
+          check('设置 opens from the account menu and from the account row\'s ⚙; a right-click on ⚙ opens nothing (the 配置中心 is gone)', fromMenu && fromGear && gearCtx.menus === 0 && !gearCtx.settings && gearCtx.dock === dockBefore, JSON.stringify({ fromMenu, fromGear, dockBefore, gearCtx }));
+          // 账户 → 用量与账本: two clicks to that right-panel tab
           for (const [item, label] of [['usage', '用量与账本']]) {
             await js(dockClosed);
             await sleep(300);
@@ -3514,10 +3654,19 @@ function driver() {
         moved.usage = (await viaPalette('用量与账本', '打开用量面板')) && await waitFor(`!!document.querySelector('.dock .dock-panel[data-panel="usage"]:not([hidden])')`, 5000);
         // the panel away and the right panel shut (the 自定义 checks below measure a page as wide as the main area)
         await js(`(() => { const st = window.__store.getState(); st.dispatchLayout({ t: 'dock.close', panel: 'usage', workbench: false }); st.dispatchLayout({ t: 'dock.set', patch: { open: false } }); })()`);
-        moved.memory = (await viaPalette('共享记忆', '设置 › 共享记忆')) && await waitFor(`!!document.querySelector('.modal.settings.sp')`, 4000);
+        moved.memory = (await viaPalette('共享记忆', '设置 › 记忆与对话库')) && await waitFor(`document.querySelector('.modal.settings.sp')?.dataset.section === 'memory'`, 4000);
         await js('window.__store.setState({ settingsOpen: null })');
         await sleep(300);
-        check('the rail\'s old names in the palette: 后台 → 自动化 › 运行中, 扩展 → 自定义 › Skills, 模型 → 模型看板 › 路由, 用量与账本 → its panel, 共享记忆 → 设置', Object.values(moved).every(Boolean), JSON.stringify(moved));
+        // stage 2: the 配置中心 taken apart — its name finds where the pieces went; 值班 Bot → 自动化 › Bot › 设置
+        moved.configHooks = (await viaPalette('配置中心', '设置 › Hooks 与 settings.json')) && await waitFor(`document.querySelector('.modal.settings.sp')?.dataset.section === 'hooks'`, 4000);
+        await js('window.__store.setState({ settingsOpen: null })');
+        await sleep(300);
+        moved.configPlugins = (await viaPalette('配置中心', '自定义 › 插件')) && await waitFor(pageUp('ext-page', 'plugins'), 4000);
+        await click('.over-page:not([hidden]) .over-close');
+        moved.botSettings = (await viaPalette('值班 Bot', '自动化 › Bot › 设置')) && await waitFor(`${pageUp('bots-page')} && (() => { const b = document.querySelector('.bots-page .bot-settings'); return !!b && !b.closest('[hidden]'); })()`, 5000);
+        await click('.over-page:not([hidden]) .over-close');
+        await sleep(300);
+        check('the old names in the palette: 后台 → 自动化 › 运行中, 扩展 → 自定义 › Skills, 模型 → 模型看板 › 路由, 用量与账本 → its panel, 共享记忆 → 设置 › 记忆与对话库, 配置中心 → 设置 › Hooks 与 settings.json / 自定义 › 插件, 值班 Bot → 自动化 › Bot › 设置', Object.values(moved).every(Boolean), JSON.stringify(moved));
         await shot('palette-moved');
 
         // 自定义 (the old 扩展, redesign 2026-11 stage 1): the connector directory on a page from the sidebar; its three parts
@@ -3528,7 +3677,7 @@ function driver() {
         await click('.ext-page .over-tabs [data-id="connectors"]');
         const extUp = await waitFor(`!!document.querySelector('.ext-page:not([hidden]) .ext-body[data-body="connectors"] .cx-grid .cx-row')`, 10_000);
         const extInfo = await js(`({ rows: document.querySelectorAll('.ext-page .ext-body[data-body="connectors"] [data-id="directory"] .cx-row, .ext-page .ext-body[data-body="connectors"] .cx-grid .cx-row').length, tabs: [...document.querySelectorAll('.ext-page .over-tabs [data-id]')].map((b) => b.dataset.id).join(','), title: document.querySelector('.ext-page .over-title h2')?.textContent, marks: document.querySelectorAll('.ext-page .tile-ic svg').length, entryOn: !!document.querySelector('.sidebar .sb-nav [data-id="extensions"].on'), side: !!document.querySelector('.sidebar .ext-side, .sidebar .sect-side'), close: (() => { const c = document.querySelector('.ext-page .over-close'); return !!c && c.getClientRects().length > 0; })() })`);
-        check('自定义 opens a page: the connector directory (each with its mark), its three parts as its own tabs (连接器 · Skills · 插件), the sidebar entry lit and no column of its own, its ×', extUp && extInfo.rows >= 20 && extInfo.marks >= 20 && extInfo.tabs === 'connectors,skills,plugins' && extInfo.title === '自定义' && extInfo.entryOn && !extInfo.side && extInfo.close, JSON.stringify(extInfo));
+        check('自定义 opens a page: the connector directory (each with its mark), its four parts as its own tabs (Skills · 连接器 · 插件 · Artifact 类型), the sidebar entry lit and no column of its own, its ×', extUp && extInfo.rows >= 20 && extInfo.marks >= 20 && extInfo.tabs === 'skills,connectors,plugins,types' && extInfo.title === '自定义' && extInfo.entryOn && !extInfo.side && extInfo.close, JSON.stringify(extInfo));
         // one left edge (the plan's pages; before, a narrow page was centred): the title, the tabs' first label and the
         // column (860 at most) start together, and the head's actions end where the column ends
         const edges = await js(`(() => { const h = document.querySelector('.ext-page .over-head-in').getBoundingClientRect(); const t = document.querySelector('.ext-page .over-tabs .ht')?.getBoundingClientRect(); const tl = document.querySelector('.ext-page .over-tabs .ht svg')?.getBoundingClientRect(); const b = document.querySelector('.ext-page .ext-body[data-body="connectors"] > *').getBoundingClientRect(); return { head: Math.round(h.left), tab: Math.round(tl ? tl.left : t ? t.left : -1), body: Math.round(b.left), width: Math.round(b.width), right: Math.abs(h.right - b.right) <= 1 }; })()`);
@@ -3560,19 +3709,26 @@ function driver() {
           await js(`(() => { const d = document.querySelector('.import-dialog'); d?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); })()`);
           await waitFor(`!document.querySelector('.import-dialog')`, 3000);
         }
-        await js(`(() => { const i = document.querySelector('.ext-page .cx-search input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'github'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+        // (the connectors' own box: Skills, now the first tab, has one too)
+        await js(`(() => { const i = document.querySelector('.ext-page .ext-body[data-body="connectors"] .cx-search input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'github'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
         const narrowed = await waitFor(`(() => { const n = document.querySelectorAll('.ext-page .ext-body[data-body="connectors"] .cx-grid .cx-row').length; return n >= 1 && n <= 4; })()`, 3000);
         check('…searching narrows the directory', narrowed, String(await js(`document.querySelectorAll('.ext-page .ext-body[data-body="connectors"] .cx-grid .cx-row').length`)));
-        await js(`(() => { const i = document.querySelector('.ext-page .cx-search input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+        await js(`(() => { const i = document.querySelector('.ext-page .ext-body[data-body="connectors"] .cx-search input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
         await click('.ext-page .over-tabs [data-id="skills"]');
         const skillsUp = await waitFor(`document.querySelector('.ext-page')?.dataset.tab === 'skills' && !!document.querySelector('.ext-page .ext-body[data-body="skills"]:not([hidden]) .cx') && document.querySelector('.ext-page .over-tabs [data-id="skills"]')?.getAttribute('aria-selected') === 'true'`, 8000);
         await shot('extensions-skills');
         await click('.ext-page .over-tabs [data-id="plugins"]');
         const pluginsUp = await waitFor(`document.querySelector('.ext-page')?.dataset.tab === 'plugins' && !!document.querySelector('.ext-page .ext-body[data-body="plugins"]:not([hidden]) [data-id="install"]')`, 8000);
         await sleep(1200);
-        const extErr = await noBoundary('.ext-page');
-        check('Skills and 插件 are its other two parts; each is mounted when first shown and the three stay', skillsUp && pluginsUp && !extErr && (await js(`document.querySelectorAll('.ext-page .ext-body').length`)) === 3, extErr || JSON.stringify({ skillsUp, pluginsUp }));
         await shot('extensions-plugins');
+        // Artifact 类型 (stage 2, a placeholder until open-artifact is wired in): the user's own types — the folder the seed
+        // put in ~/.agents/artifact-types, read from its artifact-type.json — and no built-in list
+        await click('.ext-page .over-tabs [data-id="types"]');
+        const typesUp = await waitFor(`document.querySelector('.ext-page')?.dataset.tab === 'types' && !!document.querySelector('.ext-page .ext-body[data-body="types"]:not([hidden]) .cx-row[data-type]')`, 8000);
+        const types = await js(`(() => { const b = document.querySelector('.ext-page .ext-body[data-body="types"]'); return b && { rows: [...b.querySelectorAll('.cx-row[data-type]')].map((r) => r.dataset.type + ':' + r.querySelector('.cx-n')?.firstChild?.textContent + ':' + (r.querySelector('.cx-need')?.textContent ?? '')), path: b.querySelector('.cx-row[data-type] .cx-d.mono')?.textContent ?? '', search: !!b.querySelector('.cx-search input') }; })()`);
+        await shot('extensions-types');
+        const extErr = await noBoundary('.ext-page');
+        check('Skills, 插件 and Artifact 类型 are its other parts, each mounted when first shown and kept; Artifact 类型 lists the user\'s own type (自己加的) and nothing built in', skillsUp && pluginsUp && typesUp && !extErr && !!types && JSON.stringify(types.rows) === JSON.stringify(['smoke-poster:Smoke 海报:自己加的']) && types.path === '~/.agents/artifact-types/smoke-poster · artifact-type.json' && types.search && (await js(`document.querySelectorAll('.ext-page .ext-body').length`)) === 4, extErr || JSON.stringify({ skillsUp, pluginsUp, typesUp, types }));
         await key('Escape');
         const extClosed = await waitFor(`document.querySelector('.ext-page')?.hidden === true && !document.querySelector('.sidebar .sb-nav [data-id="extensions"].on') && !!document.querySelector('.pane.focused')`, 3000);
         check('Esc leaves the page: the conversation is in front again, the 自定义 entry no longer lit', extClosed);
@@ -3833,12 +3989,13 @@ function driver() {
 
       {
         phase = 'structure';
-        await js(`(() => { const d = window.__store.getState().dispatchLayout; d({ t: 'dock.set', patch: { open: true, minimized: false, width: 440 } }); d({ t: 'dock.show', panel: 'config' }); })()`);
+        // (the 配置中心 was this temporary tab until stage 2 took it apart: Issue 与 PR, the longest name left, now)
+        await js(`(() => { const d = window.__store.getState().dispatchLayout; d({ t: 'dock.set', patch: { open: true, minimized: false, width: 440 } }); d({ t: 'dock.show', panel: 'board' }); })()`);
         await sleep(700);
-        const cut = await js(`(() => { const tab = document.querySelector('.dock .dock-tablist .tab[data-panel="config"]'); const list = document.querySelector('.dock .dock-tablist'); const head = document.querySelector('.dock .dock-foldhead[data-panel="config"] .t'); if (!tab || !list) return { folded: true, head: head ? head.textContent : null, badge: document.querySelector('.dock .dock-more-n')?.textContent ?? null }; const a = tab.getBoundingClientRect(); const b = list.getBoundingClientRect(); return { folded: false, whole: a.left >= b.left - 1 && a.right <= b.right + 1, tab: Math.round(a.width), strip: Math.round(b.width) }; })()`);
-        check('a temporary tab is shown whole or not at all: 配置中心 is a whole tab of the strip, or folded into 「更多」 with its name on the panel', cut.folded ? cut.head === '配置中心' && cut.badge === '1' : cut.whole, JSON.stringify(cut));
-        await shot('panel-config-folded');
-        await js(`window.__store.getState().dispatchLayout({ t: 'dock.close', panel: 'config', workbench: false })`);
+        const cut = await js(`(() => { const tab = document.querySelector('.dock .dock-tablist .tab[data-panel="board"]'); const list = document.querySelector('.dock .dock-tablist'); const head = document.querySelector('.dock .dock-foldhead[data-panel="board"] .t'); if (!tab || !list) return { folded: true, head: head ? head.textContent : null, badge: document.querySelector('.dock .dock-more-n')?.textContent ?? null }; const a = tab.getBoundingClientRect(); const b = list.getBoundingClientRect(); return { folded: false, whole: a.left >= b.left - 1 && a.right <= b.right + 1, tab: Math.round(a.width), strip: Math.round(b.width) }; })()`);
+        check('a temporary tab is shown whole or not at all: Issue 与 PR is a whole tab of the strip, or folded into 「更多」 with its name on the panel', cut.folded ? cut.head === 'Issue 与 PR' && cut.badge === '1' : cut.whole, JSON.stringify(cut));
+        await shot('panel-board-folded');
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.close', panel: 'board', workbench: false })`);
         await sleep(250);
       }
 
@@ -5251,6 +5408,21 @@ window.desktop = {
           await key('Escape');
           await waitFor(`window.__cwBots.state().open === false`, 3000);
 
+          // ⚙ (redesign 2026-11 stage 2): 自动化 › Bot › 设置 — the seven rows that were 设置's 值班 Bot, drawn as settings
+          // rows with their controls; Esc goes back to the conversation
+          await js(`(() => { ${inject}; window.__cwBots.open('b_smoke1'); })()`);
+          await waitFor(`!!document.querySelector('.bots-col-roster [data-act="bot-settings"]')`, 3000);
+          await click('.bots-col-roster [data-act="bot-settings"]');
+          const BS = '.bots-col-settings:not([hidden]) .bot-settings';
+          const bsUp = await waitFor(`window.__cwBots.state().view === 'settings' && document.querySelectorAll('${BS} [data-entry^="bots."]').length === 7`, 5000);
+          const bsInfo = await js(`({ rows: [...document.querySelectorAll('${BS} [data-entry]')].map((r) => r.dataset.entry).join(','), title: document.querySelector('${BS} .bs-head h2')?.textContent ?? null, ctls: document.querySelectorAll('${BS} .sp-row .ctl').length, err: !!document.querySelector('${BS} .err-boundary') })`);
+          check('bots: the roster\'s ⚙ opens Bot 设置 with the seven rows that left the settings, each with its control', bsUp && bsInfo.title === '设置' && bsInfo.ctls >= 6 && !bsInfo.err, JSON.stringify(bsInfo));
+          await shot('bots-settings');
+          await key('Escape');
+          check('bots: Esc on Bot 设置 goes back to the conversation', await waitFor(`window.__cwBots.state().view === 'thread' && window.__cwBots.state().open === true`, 3000));
+          await key('Escape');
+          await waitFor(`window.__cwBots.state().open === false`, 3000);
+
           // 总览 · 需要你 still has the approval with 批准
           await js(`(() => { ${inject}; window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'mission' }); })()`);
           const MP = '.dock-panel[data-panel="mission"]:not([hidden])';
@@ -5298,17 +5470,16 @@ window.desktop = {
       // ---- error boundary probe: a crash in one settings section stays in that section, 重试 recovers it
       if (E.SMOKE_READONLY !== '1') {
         phase = 'crash-probe';
+        // (stage 2: the old id 模型与智能程度 is 设置 › 模型's 模型 tab; its list is one part, 思考用的语言 a row beside it)
         await js('window.__store.getState().openSettings({ section: "models" })');
         await sleep(800);
         expectErrors = true;
-        await js('window.__cwCrash("设置 · 模型与智能程度")');
-        const caught = await waitFor('!!document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型与智能程度"]\')', 5000);
-        const rest = await js('!!document.querySelector(".modal.settings .sp-nav") && !!document.querySelector(".sidebar")');
-        check('boundary catches a crash in its own section only', caught && rest);
+        await js('window.__cwCrash("设置 · 模型 · 模型列表")');
+        const caught = await waitFor('!!document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型 · 模型列表"]\')', 5000);
+        const rest = await js('!!document.querySelector(".modal.settings .sp-nav") && !!document.querySelector(".sidebar") && !!document.querySelector(\'.modal.settings [data-entry="ai.thinkingLanguage"] .select-trigger\')');
+        check('boundary catches a crash in its own section only (the row beside it still works)', caught && rest);
         await shot('crash-boundary');
-        // the section's rows have boundaries of their own whose area starts the same (「… · 思考用的语言」): they took
-        // the crash too — each one's 重试
-        await js('document.querySelectorAll(\'.modal.settings .err-boundary[data-area^="设置 · 模型与智能程度"] .eb-actions .btn:first-child\').forEach((b) => b.click())');
+        await js('document.querySelectorAll(\'.modal.settings .err-boundary[data-area^="设置 · 模型 · 模型列表"] .eb-actions .btn:first-child\').forEach((b) => b.click())');
         await sleep(600);
         expectErrors = false;
         check('重试 remounts the section', !(await js('!!document.querySelector(".modal.settings .err-boundary")')));

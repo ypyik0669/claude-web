@@ -2,6 +2,9 @@
 
 spec §5.7、`mock-settings.png`。
 
+> 2026-11-20 起设置是弹窗、4 组 14 页，MCP / 插件 / Skills 去了自定义——分组、页、旧 id 以「界面改版（2026-11）阶段 2」为准；
+> 下面的渲染方式（纯数据 catalog + `CONTROLS` / `BODIES`）、更多选项、搜索的做法还是这样。
+
 - **设置表是纯数据**：`web/src/features/settings/catalog.ts`（`SETTINGS_GROUPS` 常用 / 模型 / 扩展 / 连接 / 数据 / 高级，`SETTINGS_SECTIONS` 每页 `group`、`advanced`、一句 `desc`、`entries`（行：`EntryId`，带 `block` 分节标题、`more`、`tag`）、`bodies`（页面部分：`BodyId`）、`more`（收进「更多选项」的部分）、`tabs`（MCP + 插件、其它 Agent + 子代理两页各两个 tab）；`BODY_INFO` 是每个部分的名字和搜索词）。`SettingsModal.tsx` 只负责渲染：`CONTROLS: Record<EntryId, …>`、`BODIES: Record<BodyId, …>`，**少一个渲染器编译不过**。加一项设置 = catalog 里加一行 + 一个控件；加一个部分 = `BodyId` + `BODY_INFO` + `BODIES`。
 - **可见一级分区 14 个**（3 + 3 + 4 + 2 + 2），高级 6 个（Hooks / 环境变量 / CLI 工具 / 诊断 / 更新 / settings.json）默认折叠成一行灰字，当前页在高级里时自动展开。左栏行尾状态（`navStatus()`）只用便宜的数据：`config.auth`（服务端 30 s 共享）→ 已登录 / 未登录、供应商个数、`gateway.status` → 开 / 关；**不显示 MCP 个数**（`claude mcp list` 会拉起所有 MCP server，打开设置不该触发它）。左下角是版本（桌面版 `desktop.version` + 更新状态，点它去「更新」）。
 - **旧 id 全部可用**：`LEGACY_SECTIONS`（`interface` / `session` → `general`、`engine` → `account` 并展开「更多选项」滚到运行内核（`{more: true, body: 'engine'}`）、`plugins` → `mcp` 的「插件」tab、`subagents` → `agents` 的「子代理」tab），其它旧 id 就是新页面 id。`resolveSettingsTarget({section, reveal})` 是唯一解析入口（`reveal` 优先，条目在「更多选项」里就展开它；未知 id → 通用）。`catalog.test.ts` 把旧设置窗的 22 个分区原样写成契约：旧的每个 entry id 都在且只出现一次、每个旧部分都在某一页、每个旧 id 打开的页面（和 tab）包含它原来的内容，并区分「打开就看得见」和「收在更多选项里」（`BEHIND_MORE` 表逐项列出，其余必须直接可见；环境变量是唯一搬家的，断言它在「高级 → 环境变量」）、可见 ≤ 15、分组和 spec 表一致、`WORKBENCH_SETTING_PATH` 与「显示工作台工具」所在页一致。

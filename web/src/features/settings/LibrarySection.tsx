@@ -63,7 +63,7 @@ function SourceRow({ x, busy, onToggle }: { x: SourceStatus; busy: boolean; onTo
   );
 }
 
-/** 设置 → 对话库: which agents' own session records show up in the sidebar, and the search index. */
+/** 设置 → 记忆与对话库: which agents' own session records show up in the sidebar, and the search index. */
 export function LibrarySection() {
   const sources = useStore((s) => s.librarySources);
   const load = useStore((s) => s.loadLibrarySources);

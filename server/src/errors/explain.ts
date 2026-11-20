@@ -20,7 +20,7 @@ const RULES: Rule[] = [
   { test: /\bspawn\b[^\n]*\b(EACCES|EPERM)\b|\b(EACCES|EPERM)\b[^\n]*\bspawn\b/i, say: () => tr('没能启动程序：没有运行它的权限，常见是被杀毒软件或系统安全策略拦截。把本软件加入白名单后重试。') },
   { test: /\bcannot find module\b|\bMODULE_NOT_FOUND\b|\bERR_MODULE_NOT_FOUND\b/i, say: () => tr('程序文件缺失：安装可能不完整或被杀毒软件删掉了文件。重新安装本软件（从源码运行的话执行 npm install）。') },
   { test: /no conversation found with session id/i, say: () => tr('找不到这个对话的记录：它还没发过消息，或者记录文件被移动 / 删除了。新开一个对话再试。') },
-  { test: /\bnot logged in\b|please run \/login|invalid x-api-key|oauth token (?:has )?expired/i, say: () => tr('没有登录或登录过期：终端里运行 claude auth login 重新登录，或者在 设置 → 供应商 接一个模型。') },
+  { test: /\bnot logged in\b|please run \/login|invalid x-api-key|oauth token (?:has )?expired/i, say: () => tr('没有登录或登录过期：终端里运行 claude auth login 重新登录，或者在 设置 → 模型 → 来源 接一个模型。') },
 
   // ---- files and the disk ----
   { test: /\bENOSPC\b|no space left on device/i, say: () => tr('磁盘空间不足：清理一些空间后重试。') },
@@ -35,7 +35,7 @@ const RULES: Rule[] = [
 
   // ---- the network ----
   { test: /\bEADDRINUSE\b|address already in use/i, say: () => tr('端口被占用：有另一个程序（或另一个本软件）正在用这个端口。关掉它，或换一个端口。') },
-  { test: /\bENOTFOUND\b|\bEAI_AGAIN\b|getaddrinfo/i, say: () => tr('域名解析失败：地址可能拼错了，或者网络 / DNS / 代理有问题。检查地址，开着梯子的话看看 设置 → 供应商 → 网络代理。') },
+  { test: /\bENOTFOUND\b|\bEAI_AGAIN\b|getaddrinfo/i, say: () => tr('域名解析失败：地址可能拼错了，或者网络 / DNS / 代理有问题。检查地址，开着梯子的话看看 设置 → 模型 → 来源 → 网络代理。') },
   { test: /\bECONNREFUSED\b|connection refused/i, say: () => tr('连接被拒绝：那个地址上没有服务在监听。检查地址和端口；如果是本机代理（如 127.0.0.1:7890），确认梯子开着。') },
   // a stream the CLI gave up on halfway (the relay or a proxy broke it): pay-per-token routes no longer re-send it whole
   // as a non-streaming request (session-runner: CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK) — the turn stops here instead
@@ -46,13 +46,13 @@ const RULES: Rule[] = [
   { test: /\bfetch failed\b|network error|failed to fetch/i, say: () => tr('请求没发出去：网络、代理或地址有问题。') },
 
   // ---- what the API answered ----
-  { test: /unsupported_country|access from this region|(?:region|country|territory|location)\b[^\n]{0,40}\b(?:not supported|unsupported|not available|restricted|not allowed)|not available in your (?:location|area|region|country)/i, say: () => tr('地区限制：这个服务不对你当前所在的地区开放。在 设置 → 供应商 → 网络代理 里走代理，或换一个中转。') },
+  { test: /unsupported_country|access from this region|(?:region|country|territory|location)\b[^\n]{0,40}\b(?:not supported|unsupported|not available|restricted|not allowed)|not available in your (?:location|area|region|country)/i, say: () => tr('地区限制：这个服务不对你当前所在的地区开放。在 设置 → 模型 → 来源 → 网络代理 里走代理，或换一个中转。') },
   { test: /insufficient(?:[_ ]\w+)?[_ ](?:balance|quota|funds|credit)|credit balance is too low|quota exceeded|exceeded your (?:current )?quota|billing|余额不足|额度不足/i, say: () => tr('余额或额度不足：去供应商那里充值，或者换一个供应商。') },
   { test: /prompt is too long|context[_ ]length|maximum context|context window|too many tokens/i, say: () => tr('对话太长，超过了模型能处理的上下文：发送 /compact 压缩，或从某条消息分叉一个新对话。') },
-  { test: /model[_ ]not[_ ]found|model .{0,40}(?:does not exist|not found|not supported|is not available)|no such model|invalid model/i, say: () => tr('模型不存在：这个供应商没有这个模型名。在 设置 → 供应商 里点「测试连接」看看它支持哪些模型。') },
-  { test: new RegExp(`${status('401').source}|unauthorized|invalid[_ ]api[_ ]key|incorrect api key|authentication[_ ](?:error|failed)`, 'i'), say: () => tr('API Key 不对或已经失效：在 设置 → 供应商 里重新填 Key 并测试连接。') },
+  { test: /model[_ ]not[_ ]found|model .{0,40}(?:does not exist|not found|not supported|is not available)|no such model|invalid model/i, say: () => tr('模型不存在：这个供应商没有这个模型名。在 设置 → 模型 → 来源 里点「测试连接」看看它支持哪些模型。') },
+  { test: new RegExp(`${status('401').source}|unauthorized|invalid[_ ]api[_ ]key|incorrect api key|authentication[_ ](?:error|failed)`, 'i'), say: () => tr('API Key 不对或已经失效：在 设置 → 模型 → 来源 里重新填 Key 并测试连接。') },
   { test: new RegExp(`${status('403').source}|forbidden`, 'i'), say: () => tr('没有权限访问：这个 Key 没开通该模型，或被供应商 / 中转拒绝了。') },
-  { test: new RegExp(`${status('404').source}`, 'i'), say: () => tr('地址不对：接口不存在。检查 设置 → 供应商 里的地址（Base URL）有没有填错。') },
+  { test: new RegExp(`${status('404').source}`, 'i'), say: () => tr('地址不对：接口不存在。检查 设置 → 模型 → 来源 里的地址（Base URL）有没有填错。') },
   { test: new RegExp(`${status('429').source}|rate[_ ]limit|too many requests`, 'i'), say: () => tr('请求太频繁，被限流了：等一会儿再试。') },
   { test: new RegExp(`${status('5\\d\\d').source}|overloaded|internal server error|bad gateway|service unavailable|gateway timeout`, 'i'), say: () => tr('对方服务出错或过载（5xx）：通常稍后重试就好。') },
   { test: /unexpected token .{0,20}in json|unexpected end of json|is not valid json|<!doctype html/i, say: () => tr('收到的内容不是接口数据：地址可能指向了网页而不是 API。检查 Base URL（通常以 /v1 结尾或是中转给的接口地址）。') },

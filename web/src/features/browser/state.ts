@@ -63,7 +63,7 @@ export function cookiesMode(settings: Record<string, unknown> | undefined): Cook
   return settings?.['web.browser.isolated'] === true ? 'separate' : 'shared';
 }
 
-/** How 保留 Cookie words each choice (the ⋯ menu and 设置 → 联网 say the same). */
+/** How 保留 Cookie words each choice (the ⋯ menu and 设置 → 联网与浏览器 say the same). */
 export function cookieModeText(mode: CookieMode): { label: string; desc: string } {
   if (mode === 'separate') return { label: tr('分开'), desc: tr('Claude 用单独的一份，你登录过的网站对它来说都没登录') };
   if (mode === 'session') return { label: tr('关掉就清'), desc: tr('你和 Claude 共用一份，关掉应用就全部清掉') };

@@ -33,7 +33,7 @@ describe('headingChars', () => {
 describe('HEADING_STRINGS', () => {
   it('has the home greeting, every settings page name, the automation title and the first-run titles', () => {
     expect(HEADING_STRINGS).toContain(GREETING);
-    expect(SETTINGS_SECTIONS.length).toBeGreaterThan(15);
+    expect(SETTINGS_SECTIONS.length).toBe(14); // 4 groups, 14 pages (redesign 2026-11 stage 2)
     for (const s of SETTINGS_SECTIONS) expect(HEADING_STRINGS, `settings page ${s.id}`).toContain(s.l); // the advanced pages too
     expect(HEADING_STRINGS).toContain(AUTOMATION_TITLE);
     for (const t of Object.values(STEP_TITLE)) expect(HEADING_STRINGS).toContain(t);
