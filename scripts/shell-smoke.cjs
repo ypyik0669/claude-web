@@ -14,7 +14,8 @@
 //     rewritten in Cache Storage (what a tampered PC's app could do on this origin) is not served: the real one comes
 //     from the network and the copy is dropped (F3);
 //   · the opening (phone-opening.ts) plays over the pairing the QR's page starts, and over the list on a start, and
-//     goes by itself;
+//     goes by itself; a home-screen app (navigator.standalone made true by the preload) with one PC connects behind
+//     it — no list — says the step with 换电脑 while the (slow) dial goes on, and shows the app when it goes;
 //   · 扫码配对: Chromium's fake camera plays a Y4M file with the QR of a fresh pairing code (the settings page's whole
 //     link); the shell's scanner reads it (jsQR: Windows' Chromium has no BarcodeDetector), pairs and opens the app;
 //   · the localStorage override (cw.shell.brokers / cw.shell.stun) is said in the console, as an info line;
@@ -306,7 +307,11 @@ function runElectron(env, timeoutMs) {
 
 // Runs in the shell page before its scripts (contextIsolation off): records each RTCPeerConnection config, and with
 // localStorage smoke.noDirect = 1 gives the page a relay-only policy with no TURN server, so ICE has no candidate.
+// With smoke.standalone = 1 the page is a home-screen app (navigator.standalone, as iOS has it).
 const PRELOAD = `(() => {
+  try {
+    if (localStorage.getItem('smoke.standalone') === '1') Object.defineProperty(navigator, 'standalone', { get: () => true, configurable: true });
+  } catch { /* no storage here */ }
   const Orig = window.RTCPeerConnection;
   if (typeof Orig !== 'function') return;
   const seen = (window.__smokeRtc = []);
@@ -460,6 +465,19 @@ function driver() {
       check('the relay dial\'s attempt used no ICE server either (the record\'s STUN list)', cfg2.every((n) => n === 0), JSON.stringify(cfg2));
       await shot('relay');
 
+      // ---- a home-screen app with one PC (ICE still made to fail, so the dial is slow): the opening plays and the
+      // app connects behind it — no list, no tap; once its motion has played it says the step, with 换电脑 ----
+      await js(`localStorage.setItem('smoke.standalone', '1'); true`);
+      await win.loadURL(E.SHELL_URL);
+      const appCover = await waitFor(opening, 5_000);
+      const standalone = await js('navigator.standalone === true');
+      const statusLine = await waitFor(`(() => { const s = document.querySelector('.ph-status'); return !!s && !s.hidden && !!s.querySelector('.ph-status-act') && s.innerText; })()`, 20_000);
+      if (statusLine) await shot('opening-connecting');
+      const noListMeanwhile = await js(`!document.querySelector('button.device')`);
+      const straightIn = await waitFor(`${appUp} && !${opening}`, 120_000);
+      check('a home-screen app with one PC: the opening plays while it connects, says the step with 换电脑, and the app shows when it goes', appCover && standalone && !!statusLine && noListMeanwhile && !!straightIn, JSON.stringify({ appCover, standalone, statusLine, noListMeanwhile, straightIn: !!straightIn }));
+      await js(`localStorage.removeItem('smoke.standalone'); true`);
+
       // ---- offline: the shell from its precache, every file checked against the hashes in sw.js (F3) ----
       await js(`localStorage.removeItem('smoke.noDirect'); true`);
       const hitsNow = () => js(`fetch('/__hits', { cache: 'no-store' }).then((r) => r.json())`);
@@ -492,21 +510,30 @@ function driver() {
       check('a shell file rewritten in Cache Storage is not served: the page runs the real one from the network and the copy is dropped', !!tamper && !!listedAgain && !ran && kept === false && refetched, JSON.stringify({ tamper, listedAgain, ran, kept, refetched }));
 
       // ---- 扫码配对: the shell's own scanner reads a fresh pairing QR off the camera (Chromium's fake one plays the
-      // QR the runner drew, the settings page's whole link) and pairs; the app opens ----
-      const fresh = await js(`fetch('/__paircode', { cache: 'no-store' }).then((r) => r.json())`).catch((e) => ({ error: String(e.message || e) }));
+      // runner's Y4M file: blank first, then the QR of the settings page's whole link) and pairs; the app opens ----
       await win.loadURL(E.SHELL_URL);
       const scanOffered = await waitFor(`!!document.querySelector('button.scan-btn')`, 15_000);
       const pasteFolded = await js(`(() => { const f = document.querySelector('.paste'); return !!f && f.hidden && !!document.querySelector('.paste-toggle'); })()`);
       check('the list offers 扫码配对, the paste field folded away under its 扫不了？ line', scanOffered && pasteFolded, JSON.stringify({ scanOffered, pasteFolded }));
       await waitFor(`!${opening}`, 8_000);
-      const before2 = await js(deviceCount);
+      // every camera session's size, as its video gets it (a QR in front of the camera is read in a frame or two)
+      await js(`(() => { window.__smokeCam = []; document.addEventListener('loadedmetadata', (e) => { const v = e.target; if (v && v.classList && v.classList.contains('scan-video')) window.__smokeCam.push(v.videoWidth + 'x' + v.videoHeight); }, true); return true; })()`);
+      // nothing in front of the camera yet: the scanner full screen, its video playing; × goes back with the camera off
       await js(`document.querySelector('button.scan-btn').click(); true`);
       const camera = await waitFor(`(() => { const v = document.querySelector('.scan video'); return !!(v && v.srcObject && v.videoWidth) && v.videoWidth + 'x' + v.videoHeight; })()`, 15_000);
-      if (camera) await shot('scanner');
+      if (camera) { await sleep(700); await shot('scanner'); }
       check('扫码配对 opens the camera full screen (the fake camera\'s frames reach its video)', !!camera, String(camera));
+      await js(`(() => { window.__smokeStream = document.querySelector('.scan video')?.srcObject ?? null; document.querySelector('.scan .scan-x')?.click(); return true; })()`);
+      const closed = await waitFor(`!document.querySelector('.scan') && !!document.querySelector('button.scan-btn') && !!window.__smokeStream && window.__smokeStream.getTracks().every((t) => t.readyState === 'ended')`, 5_000);
+      check('× closes the scanner: back to the list, the camera stopped', closed);
+      // the QR of a fresh code goes in front of the camera, and the scanner opens again
+      const fresh = await js(`fetch('/__paircode', { cache: 'no-store' }).then((r) => r.json())`).catch((e) => ({ error: String(e.message || e) }));
+      const before2 = await js(deviceCount);
+      await js(`document.querySelector('button.scan-btn').click(); true`);
       const scannedIn = await waitFor(`${appUp} && !document.querySelector('.scan')`, 90_000);
       const after2 = await js(deviceCount);
-      check('the scanned QR pairs (the PC\'s fresh code over its own lists) and the app opens',!!(fresh && fresh.ok) && !!scannedIn && after2 === before2 + 1, JSON.stringify({ fresh, scannedIn: !!scannedIn, before2, after2 }));
+      const cams = await js('JSON.stringify(window.__smokeCam)');
+      check('the scanned QR pairs (the PC\'s fresh code over its own lists) and the app opens', !!(fresh && fresh.ok) && !!scannedIn && after2 === before2 + 1, JSON.stringify({ fresh, scannedIn: !!scannedIn, before2, after2, cams }));
       if (!scannedIn) await shot('scan-failed');
 
       // ---- the localStorage override: said in the console as an info line (not a warning) ----
