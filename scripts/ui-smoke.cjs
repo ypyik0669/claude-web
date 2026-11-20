@@ -1298,6 +1298,94 @@ function driver() {
         check('closing settings after that leaves nothing inert', !clean.open && clean.inert === 0, JSON.stringify(clean));
       }
 
+      // ---- 开场和背景 (features/opening; docs/notes/opening.md「开场 第二批」): the cards — 点火 · 星图 · 字符雨 · 网吧开门
+      // after the built-in pack, 自己的视频 last —, a card's little preview while the pointer rests on it, what 星图 /
+      // 字符雨 leave behind the app, 试放一次 playing over the window and going away by itself (and on a key), 动画包's
+      // three ways in, and the widget at phone width. Found by what they are (data-opening / data-act / data-preview), not
+      // by the settings page's structure: the page is opened with `reveal`.
+      if (E.SMOKE_READONLY !== '1') {
+        phase = 'opening';
+        const opWas = await js(`(() => { const s = window.__store.getState().settings; return { pack: s['ui.opening.pack'] ?? null, keep: s['ui.opening.keep'] ?? null }; })()`);
+        await js(`window.__store.getState().setSetting('ui.opening.keep', true)`);
+        await js(`window.__store.getState().openSettings({ reveal: 'ui.opening.pack' })`);
+        const onScreen = (sel) => `(() => { const e = document.querySelector(${JSON.stringify(sel)}); return !!e && !e.closest('[hidden]') && e.getBoundingClientRect().width > 0; })()`;
+        const cardsShown = await waitFor(onScreen('.op-cards [data-opening="cafe"]'), 6000);
+        // the built-in pack comes in front once the list has come (it is there when desktop/openings is)
+        await waitFor(`document.querySelector('.op-cards [data-opening]')?.dataset.opening === 'claude-web-chan'`, 4000);
+        const cards = await js(`[...document.querySelectorAll('.op-cards [data-opening]')].map((e) => e.dataset.opening)`);
+        const at = ['ignite', 'stars', 'ascii', 'cafe'].map((id) => cards.indexOf(id));
+        await shot('opening-cards');
+        check('opening · the cards: 点火 · 星图 · 字符雨 · 网吧开门 in a row after the built-in pack, 自己的视频 last', cardsShown && at.every((i, k) => i >= 0 && (k === 0 || i === at[k - 1] + 1)) && cards[cards.length - 1] === 'add-video' && (at[0] === 0 || cards[0] === 'claude-web-chan'), JSON.stringify({ cardsShown, cards }));
+        // the pointer resting on 星图's card: its preview (the opening page itself, `thumb` mode, a sandboxed frame) over
+        // the picture after a moment; the pointer leaving takes it away
+        const card = await js(`(() => { const e = document.querySelector('.op-cards [data-opening="stars"]'); e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 3) }; })()`);
+        await sleep(300);
+        wc.sendInputEvent({ type: 'mouseMove', x: card.x, y: card.y });
+        const hover = await waitFor(`(() => { const f = document.querySelector('.op-cards .op-hover[data-preview="stars"] iframe'); return !!f && f.getAttribute('sandbox') === 'allow-scripts' && (f.getAttribute('srcdoc') || '').includes('cwOpening'); })()`, 6000);
+        await sleep(800);
+        await shot('opening-hover');
+        wc.sendInputEvent({ type: 'mouseMove', x: card.x, y: Math.max(4, card.y - 400) });
+        const hoverGone = await waitFor(`!document.querySelector('.op-hover')`, 3000);
+        check('opening · a card\'s little preview: the pointer resting on 星图 plays it in a sandboxed frame over the picture; leaving takes it away', hover && hoverGone, JSON.stringify({ hover, hoverGone, card }));
+        // picking: the setting, the card lit, and what stays behind the app (星图 its stars, 字符雨 its characters)
+        await click('.op-cards [data-opening="stars"]');
+        const starsOn = await waitFor(`window.__store.getState().settings['ui.opening.pack'] === 'stars' && document.querySelector('.op-cards [data-opening="stars"]')?.getAttribute('aria-checked') === 'true' && !!document.querySelector('.obd[data-kind="stars"] > canvas[data-drift="stars"].on')`, 4000);
+        await click('.op-cards [data-opening="ascii"]');
+        const rainOn = await waitFor(`window.__store.getState().settings['ui.opening.pack'] === 'ascii' && document.querySelector('.op-cards [data-opening="ascii"]')?.getAttribute('aria-checked') === 'true' && !!document.querySelector('.obd[data-kind="rain"] > canvas[data-drift="rain"].on') && document.querySelectorAll('.op-cards [aria-checked="true"]').length === 1`, 4000);
+        check('opening · picking 星图 / 字符雨: the setting, one card lit, and its stars / characters drifting behind the app', starsOn && rainOn, JSON.stringify({ starsOn, rainOn, obd: await js(`document.querySelector('.obd')?.outerHTML.slice(0, 120) ?? null`) }));
+        // 试放一次: the chosen one over the window, gone by itself once it has played; a click on it skips it (a plain
+        // mouse click in the middle of the window: it lands in the frame, which the click helper's guard cannot see)
+        await click('[data-act="opening-try"]');
+        const playing = await waitFor(`!!document.querySelector('iframe.op-preview[data-kind="ascii"]')`, 6000);
+        await sleep(1500);
+        await shot('opening-try');
+        const ended = await waitFor(`!document.querySelector('iframe.op-preview')`, 15_000);
+        await click('[data-act="opening-try"]');
+        const again = await waitFor(`!!document.querySelector('iframe.op-preview')`, 6000);
+        await sleep(700);
+        const [cw, chh] = win.getContentSize();
+        const mid = { x: Math.round(cw / 2), y: Math.round(chh / 2) };
+        wc.sendInputEvent({ type: 'mouseMove', ...mid });
+        wc.sendInputEvent({ type: 'mouseDown', ...mid, button: 'left', clickCount: 1 });
+        wc.sendInputEvent({ type: 'mouseUp', ...mid, button: 'left', clickCount: 1 });
+        const skipped = await waitFor(`!document.querySelector('iframe.op-preview')`, 4000);
+        check('opening · 试放一次 plays 字符雨 over the window and goes away by itself; a click skips it', playing && ended && again && skipped, JSON.stringify({ playing, ended, again, skipped }));
+        // 动画包: 从文件夹导入 · 从 GitHub 安装 · 让 Claude 做一个. An address that is not GitHub's is turned down by the server
+        // before anything goes out (no network here)
+        const packBtns = await js(`['opening-import', 'opening-github', 'opening-make'].map((a) => !!document.querySelector('.opening-packs [data-act="' + a + '"]'))`);
+        await click('.opening-packs [data-act="opening-github"]');
+        const ghAsk = await waitFor(`document.querySelector('.modal.dialog h3')?.textContent === '从 GitHub 安装开场动画' && document.activeElement === document.querySelector('.modal.dialog input.field')`, 3000);
+        wc.insertText('https://example.com/not-a-repo');
+        await key('Enter');
+        const ghNo = await waitFor(`!document.querySelector('.modal.dialog') && [...document.querySelectorAll('.toast')].some((t) => /github\\.com/.test(t.textContent))`, 5000);
+        check('opening · 动画包: 从文件夹导入, 从 GitHub 安装 and 让 Claude 做一个; GitHub asks for an address and turns down one that is not GitHub\'s', packBtns.every(Boolean) && ghAsk && ghNo, JSON.stringify({ packBtns, ghAsk, ghNo, toasts: await js(`[...document.querySelectorAll('.toast')].map((t) => t.textContent.slice(0, 60))`) }));
+        // the widget at phone width: nothing sideways, covered or out of the window (the 44 rule is the settings page's)
+        const sizeWas = win.getContentSize();
+        win.setContentSize(390, 844);
+        await waitFor(`innerWidth === 390 && window.__store.getState().mobile === true`, 4000);
+        await js(`window.__store.getState().openSettings({ reveal: 'ui.opening.pack' })`);
+        const phoneCards = await waitFor(onScreen('.op-cards [data-opening="cafe"]'), 4000);
+        await js('window.__store.setState({ toasts: [] })'); // (GitHub's no above is still on screen, over the cards)
+        await sleep(500);
+        const { auditJs: opAudit, problems: opProblems } = require(path.join(ROOT, 'scripts', 'lib', 'phone-audit.cjs'));
+        const opPhone = opProblems(await js(opAudit('.op-picker')), { tapTargets: false });
+        await shot('opening-phone');
+        win.setContentSize(sizeWas[0], sizeWas[1]);
+        await waitFor(`innerWidth === ${sizeWas[0]} && window.__store.getState().mobile === false`, 4000);
+        check('opening · the cards at phone width (390): nothing sideways, covered or out of the window', phoneCards && !opPhone.length, opPhone.join(' | '));
+        // 让 Claude 做一个: the page closes, a new conversation's input holds the ask (one pane: the start page itself)
+        if (await js(`window.__store.getState().settings['ui.workbench'] !== true`)) {
+          await js(`window.__store.getState().openSettings({ reveal: 'ui.opening.pack' })`);
+          await waitFor(onScreen('.opening-packs [data-act="opening-make"]'), 4000);
+          await click('.opening-packs [data-act="opening-make"]');
+          const asked = await waitFor(`!document.querySelector('.modal.settings') && /^用 opening-pack /.test(document.querySelector('.pane.focused .composer textarea')?.value ?? '')`, 4000);
+          check('opening · 让 Claude 做一个: the page closes and a new conversation\'s input holds the ask', asked, JSON.stringify({ asked, value: await js(`document.querySelector('.pane.focused .composer textarea')?.value ?? null`) }));
+          if (asked) { await click('.pane.focused .composer textarea'); wc.selectAll(); wc.delete(); await sleep(300); }
+        }
+        await js(`(() => { const st = window.__store.getState(); void st.setSetting('ui.opening.pack', ${JSON.stringify(opWas.pack)} ?? 'claude-web-chan'); if (${JSON.stringify(opWas.keep)} !== null) void st.setSetting('ui.opening.keep', ${JSON.stringify(opWas.keep)}); window.__store.setState({ settingsOpen: null }); })()`);
+        await sleep(300);
+      }
+
       // ---- every dock panel
       for (const p of inv.panels) {
         if (E.SMOKE_READONLY === '1' && p.id === 'terminal') continue; // would start a pty on that server
