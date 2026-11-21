@@ -15,8 +15,13 @@ async function unpack(archive, file, dest) {
   if (archive === 'zip') {
     if (process.platform === 'win32') {
       const q = (s) => `'${s.replace(/'/g, "''")}'`;
-      const r = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${q(file)} -DestinationPath ${q(dest)} -Force`], opts);
-      return `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
+      // told to stop on errors (an error of its own used to pass as success); what it said goes to the log
+      try {
+        const r = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath ${q(file)} -DestinationPath ${q(dest)} -Force`], opts);
+        return `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
+      } catch (e) {
+        return String(e?.stderr || e?.message || e).trim();
+      }
     }
     await exec('unzip', ['-o', file, '-d', dest], opts);
     return '';
@@ -61,8 +66,10 @@ async function defenderSays() {
 
 /**
  * Unpacks `packed` into `dir` and returns where `entry` is. Windows: when Expand-Archive leaves the entry missing it says
- * what was there (and what Defender last caught), then tar.exe tries — 2026-11-21, on GitHub's windows-2025 image of
- * 11-16, Expand-Archive exited 0 without the workbuddy sidecar's wb2api.exe, twice (the same archive unpacked on 11-19).
+ * what was there (and what Defender last caught), then tar.exe tries. 2026-11-21, GitHub's windows-2025 image of 11-16:
+ * a newer Archive module under Windows PowerShell 5.1 wrote "Cannot find an overload for ExtractToDirectory and the
+ * argument count: 3", unpacked nothing and exited 0 — the workbuddy and CLIProxyAPI executables were missing (the app's
+ * own downloads have the same fallback: server/src/upstreams/sidecar.ts unpackZipWindows).
  */
 export async function unpackEntry(archive, packed, dir, entry, log = console.log) {
   const said = await unpack(archive, packed, dir);

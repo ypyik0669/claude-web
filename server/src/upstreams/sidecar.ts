@@ -17,23 +17,40 @@ const execFileAsync = promisify(execFile);
 const LOG_MAX = 5 * 1024 * 1024;
 const READY_MS = 30_000;
 
+// Windows: `tar` on PATH may be Git's GNU tar (a `C:\…` path reads as a remote host, and it has no zip); System32's
+// tar.exe is bsdtar, which reads zip as well
+const SYS_TAR = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+
 /**
- * Unpack a release asset. On Windows `tar` on PATH is Git's GNU tar (it reads `C:\…` as a remote host, and has no
- * zip support), so zip goes through PowerShell and tar.gz through the bsdtar Windows ships.
+ * Unpack a release asset. On Windows zip goes through PowerShell's Expand-Archive (bsdtar when that fails) and tar.gz
+ * through the bsdtar Windows ships.
  */
 export async function unpack(archive: 'zip' | 'tar.gz', file: string, dest: string): Promise<void> {
   const opts = { windowsHide: true, timeout: 120_000 };
   if (archive === 'zip') {
-    if (process.platform === 'win32') {
-      const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
-      await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${q(file)} -DestinationPath ${q(dest)} -Force`], opts);
-    } else {
-      await execFileAsync('unzip', ['-o', file, '-d', dest], opts);
-    }
+    if (process.platform === 'win32') await unpackZipWindows(file, dest);
+    else await execFileAsync('unzip', ['-o', file, '-d', dest], opts);
     return;
   }
-  const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-  await execFileAsync(tar, ['-xzf', file, '-C', dest], opts);
+  await execFileAsync(process.platform === 'win32' ? SYS_TAR : 'tar', ['-xzf', file, '-C', dest], opts);
+}
+
+export type RunFile = (cmd: string, args: string[], opts: { windowsHide: boolean; timeout: number }) => Promise<unknown>;
+
+/**
+ * A zip on Windows: Expand-Archive, told to stop on errors, and System32's tar.exe when it fails. A newer Archive module
+ * (from the PowerShell Gallery) under Windows PowerShell 5.1 writes "Cannot find an overload for ExtractToDirectory",
+ * unpacks nothing and still exits 0 — GitHub's windows-2025 image of 2026-11-16 has one: the 0.5.15 build lost the
+ * workbuddy and CLIProxyAPI executables that way, and a download here would have said the package had no executable.
+ */
+export async function unpackZipWindows(file: string, dest: string, run: RunFile = execFileAsync): Promise<void> {
+  const opts = { windowsHide: true, timeout: 120_000 };
+  const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  try {
+    await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath ${q(file)} -DestinationPath ${q(dest)} -Force`], opts);
+  } catch (e) {
+    try { await run(SYS_TAR, ['-xf', file, '-C', dest], opts); } catch { throw e; }
+  }
 }
 
 export interface PlatformAsset { url: string; sha256: string; size: number; entry: string; archive?: 'zip' | 'tar.gz' }

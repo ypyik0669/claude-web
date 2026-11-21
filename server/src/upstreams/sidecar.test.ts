@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { SidecarManager, platformKey, sidecarManifest } from './sidecar.js';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+import { SidecarManager, platformKey, sidecarManifest, unpackZipWindows, type RunFile } from './sidecar.js';
 
 const dirs: string[] = [];
 const mks = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-sidecar-')); dirs.push(d); return d; };
@@ -12,6 +14,49 @@ afterEach(() => {
   delete process.env.CW_SIDECAR_GEMINI_BIN;
   delete process.env.CW_SIDECAR_GEMINI_CMD;
   for (const d of dirs.splice(0)) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* held */ } }
+});
+
+describe('unpacking a zip on Windows', () => {
+  const win = process.platform === 'win32';
+  const tar = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+  const run = promisify(execFile) as unknown as RunFile;
+  /** a zip with tool.exe in it (bsdtar writes zip for a .zip name with -a), and an empty folder to unpack into */
+  const zipped = () => {
+    const d = mks();
+    fs.mkdirSync(path.join(d, 'src'));
+    fs.writeFileSync(path.join(d, 'src', 'tool.exe'), 'MZ fake');
+    execFileSync(tar, ['-a', '-c', '-f', path.join(d, 'download.zip'), '-C', path.join(d, 'src'), 'tool.exe'], { windowsHide: true });
+    fs.mkdirSync(path.join(d, 'out'));
+    return { zip: path.join(d, 'download.zip'), out: path.join(d, 'out') };
+  };
+
+  it.skipIf(!win)('Expand-Archive unpacks it, told to stop on errors', async () => {
+    const { zip, out } = zipped();
+    const seen: string[][] = [];
+    await unpackZipWindows(zip, out, (cmd, args, opts) => { seen.push([cmd, ...args]); return run(cmd, args, opts); });
+    expect(fs.readFileSync(path.join(out, 'tool.exe'), 'utf8')).toBe('MZ fake');
+    expect(seen).toHaveLength(1);
+    expect(seen[0].join(' ')).toContain("$ErrorActionPreference = 'Stop'; Expand-Archive");
+  }, 60_000);
+
+  it.skipIf(!win)('when Expand-Archive fails (a newer Archive module: no ExtractToDirectory overload), tar.exe unpacks it', async () => {
+    const { zip, out } = zipped();
+    const seen: string[] = [];
+    await unpackZipWindows(zip, out, async (cmd, args, opts) => {
+      seen.push(path.basename(cmd).toLowerCase());
+      if (/powershell/i.test(cmd)) throw new Error('Cannot find an overload for "ExtractToDirectory" and the argument count: "3".');
+      return run(cmd, args, opts);
+    });
+    expect(seen).toEqual(['powershell.exe', 'tar.exe']);
+    expect(fs.readFileSync(path.join(out, 'tool.exe'), 'utf8')).toBe('MZ fake');
+  }, 60_000);
+
+  it.skipIf(!win)('a file that is no zip: both fail and the PowerShell error is the one reported', async () => {
+    const d = mks();
+    fs.writeFileSync(path.join(d, 'download.zip'), 'not a zip at all');
+    fs.mkdirSync(path.join(d, 'out'));
+    await expect(unpackZipWindows(path.join(d, 'download.zip'), path.join(d, 'out'))).rejects.toThrow(/powershell/i);
+  }, 60_000);
 });
 
 const manifestWith = (id: 'gemini' | 'workbuddy', url: string, sha256: string, size: number, entry: string) => ({

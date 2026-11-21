@@ -50,6 +50,13 @@
   extraResources 放到 `<resources>/engines`，`desktop/src/server-host.ts` 用 `CLAUDE_WEB_ENGINES` 告诉服务器；
   `EngineManager` 先找用户装过的版本，再找随包的 build（`bundled: true`），两者都没有才联网下载。所以新装的桌面版
   第一次点「启动」不会先下载引擎。`build:desktop*` 和 release workflow 都会先跑 `engines:fetch`。
+- **Windows 上解 zip**（2026-11-21，0.5.15 的 Windows 包在 CI 上打不出来查出来的）：Expand-Archive 先来，但要带
+  `$ErrorActionPreference = 'Stop'`，失败了退回 System32 的 `tar.exe`（bsdtar，也认 zip；PATH 上的 tar 可能是 Git 的
+  GNU tar，不认 zip、把 `C:\…` 当远程主机）。原因：从 PowerShell Gallery 装了新版 Archive 模块的 Windows PowerShell 5.1
+  （GitHub 11-16 的 windows-2025 镜像就是），Expand-Archive 报「Cannot find an overload for "ExtractToDirectory" and
+  the argument count: "3"」，什么都没解出来，**退出码还是 0**——以前只会说「组件包里没有 wb2api.exe」。应用自己下载用
+  `upstreams/sidecar.ts` 的 `unpackZipWindows`，打包脚本用 `scripts/lib/unpack.mjs`（缺文件时还会打出解出了什么、
+  PowerShell 的原话和 Defender 最近的拦截，再退回 tar.exe）。
 - 下载（开发 / 浏览器版，或随包版本缺失）：GitHub releases API（`/releases/latest` 或某个 tag）。按文件名里的
   系统 / CPU 词挑 asset，排除校验文件和安装器。下面这些 asset 名是 2026-10-26 当时测的（随包版本见上）：
   - CLIProxyAPI `router-for-me/CLIProxyAPI` v8.0.44：`CLIProxyAPI_<v>_<os>_<amd64|aarch64>.tar.gz|zip`，另有
