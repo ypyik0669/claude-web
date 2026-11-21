@@ -1438,6 +1438,9 @@ function driver() {
         await click('.opening-packs [data-act="opening-github"]');
         const ghAsk = await waitFor(`document.querySelector('.modal.dialog h3')?.textContent === '从 GitHub 安装开场动画' && document.activeElement === document.querySelector('.modal.dialog input.field')`, 3000);
         wc.insertText('https://example.com/not-a-repo');
+        // insertText goes out on its own: wait until the field holds it, or the Enter can get there first (an empty
+        // address only closes the dialog — no request, no toast; 2026-11-21 it failed that way once)
+        await waitFor(`document.querySelector('.modal.dialog input.field')?.value === 'https://example.com/not-a-repo'`, 3000);
         await key('Enter');
         const ghNo = await waitFor(`!document.querySelector('.modal.dialog') && [...document.querySelectorAll('.toast')].some((t) => /github\\.com/.test(t.textContent))`, 5000);
         check('opening · 动画包: 从文件夹导入, 从 GitHub 安装 and 让 Claude 做一个; GitHub asks for an address and turns down one that is not GitHub\'s', packBtns.every(Boolean) && ghAsk && ghNo, JSON.stringify({ packBtns, ghAsk, ghNo, toasts: await js(`[...document.querySelectorAll('.toast')].map((t) => t.textContent.slice(0, 60))`) }));
