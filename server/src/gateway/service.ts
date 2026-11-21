@@ -12,6 +12,7 @@ import type { SecretService } from '../secrets/service.js';
 import type { LedgerEntry, Provider } from '../protocol.js';
 import { memberKey, type GatewayAuditConfig, type GatewayGroup, type GatewayKeyGroup, type GatewayLanConfig, type GatewayLanStatus, type GatewayMember, type GatewayMemberState, type GatewayProtocol, type GatewayStatus, type GatewayTarget, type GatewayTestResult, type PluginHookSkip } from './types.js';
 import { GatewayListener } from './listener.js';
+import { assertUsablePort } from '../net/safe-port.js';
 import { CLAUDE_CODE_SYSTEM_PREFIX, OAUTH_BETA } from '../upstreams/claude.js';
 import { accountProxyAgent } from '../upstreams/proxy.js';
 import { clientFingerprint } from './fingerprint/index.js';
@@ -630,6 +631,7 @@ export class GatewayService extends EventEmitter {
     // allowlist / CORS / body size are read per request; only a network change restarts the listener
     // (with `port: 0` a restart picks a new port, which would break a client holding the old URL)
     const before = { enabled: c.enabled, bind: c.bind, port: c.port };
+    if (patch.port) assertUsablePort(Math.floor(patch.port));
     if (patch.bind !== undefined) {
       const priv = patch.bind === '0.0.0.0' || patch.bind === '127.0.0.1'
         || /^10\./.test(patch.bind) || /^192\.168\./.test(patch.bind) || /^172\.(1[6-9]|2\d|3[01])\./.test(patch.bind);
@@ -668,6 +670,7 @@ export class GatewayService extends EventEmitter {
   async setLocalPort(port: number): Promise<GatewayStatus> {
     const nextPort = port;
     if (!Number.isInteger(nextPort) || nextPort < 1024 || nextPort > 65535) throw new Error(tr('本机网关端口必须在 1024 到 65535 之间'));
+    assertUsablePort(nextPort);
     let result!: GatewayStatus;
     let failure: unknown;
     this.localSwitch = this.localSwitch.then(async () => {

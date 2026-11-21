@@ -78,6 +78,19 @@ describe('gateway status: stable loopback endpoint', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('turns down a port browsers and fetch refuse (6000) for the local and the LAN listener, saving nothing', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-gwlocal-bad-'));
+    const meta = new MetaStore(path.join(dir, 'meta.json'));
+    await meta.load();
+    const gw = new GatewayService({ meta, member: () => null } as never);
+    await expect(gw.setLocalPort(6000)).rejects.toThrow('6000');
+    expect(meta.gatewayConfig().localPort).toBeUndefined();
+    await expect(gw.setLan({ port: 6000, bind: '127.0.0.1' })).rejects.toThrow('6000');
+    expect(meta.gatewayLan()).toMatchObject({ port: 0, enabled: false });
+    await gw.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('does not persist a port that is already occupied', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-gwlocal-conflict-'));
     const meta = new MetaStore(path.join(dir, 'meta.json'));

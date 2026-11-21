@@ -35,4 +35,13 @@ describe('RemoteService', () => {
     expect(remote.status().running).toBe(false);
     wss.close();
   }, 15_000);
+
+  it('a port the phone\'s browser would refuse (6000) is turned down before it is saved', async () => {
+    const saved: Record<string, unknown> = {};
+    const meta = { settings: () => saved, setSetting: async (k: string, v: unknown) => { saved[k] = v; }, devices: () => [] } as unknown as MetaStore;
+    const remote = new RemoteService(meta, () => http.createServer(), '127.0.0.1');
+    await expect(remote.set({ port: 6000 })).rejects.toThrow('6000');
+    expect(saved['remote.port']).toBeUndefined();
+    expect(remote.status().running).toBe(false);
+  });
 });

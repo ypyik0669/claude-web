@@ -7,6 +7,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
 import type { MetaStore } from '../meta/store.js';
 import { getLocale, tr } from '../i18n/index.js';
+import { assertUsablePort } from '../net/safe-port.js';
 import type { DeviceInfo, RemotePairCode, RemoteStatus } from '../protocol.js';
 
 const PAIR_TTL_MS = 10 * 60_000;
@@ -110,7 +111,11 @@ export class RemoteService extends EventEmitter {
   }
 
   async set(patch: { enabled?: boolean; port?: number }) {
-    if (patch.port !== undefined) await this.meta.setSetting('remote.port', Math.max(1, Math.min(65535, Math.floor(patch.port))));
+    if (patch.port !== undefined) {
+      const port = Math.max(1, Math.min(65535, Math.floor(patch.port)));
+      assertUsablePort(port); // the phone's browser would refuse it
+      await this.meta.setSetting('remote.port', port);
+    }
     if (patch.enabled !== undefined) await this.meta.setSetting('remote.enabled', !!patch.enabled);
     await this.stop();
     if (this.enabled()) await this.start();

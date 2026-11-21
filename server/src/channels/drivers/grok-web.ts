@@ -10,6 +10,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tr } from '../../i18n/index.js';
 import type { MetaStore } from '../../meta/store.js';
+import { badPort, listenSafe } from '../../net/safe-port.js';
 import type { CatalogEntry, SourceHealth, SourceSummary } from '../types.js';
 import { projectProvider } from '../registry.js';
 import {
@@ -75,8 +76,9 @@ export class GrokWebServer {
     if (this.server) return this.port;
     const server = http.createServer((req, res) => { void this.handle(req, res); });
     server.requestTimeout = 0;
-    const listen = (p: number) => new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(p, '127.0.0.1', () => { server.off('error', reject); resolve(); }); });
-    await listen(port).catch(async (e) => { if (port === 0) throw e; await listen(0); });
+    // the last port (one fetch refuses, kept from before, is dropped: net/safe-port.ts), else any free one
+    const want = badPort(port) ? 0 : port;
+    await listenSafe(server, want, '127.0.0.1').catch(async (e) => { if (want === 0) throw e; await listenSafe(server, 0, '127.0.0.1'); });
     this.server = server;
     return this.port;
   }

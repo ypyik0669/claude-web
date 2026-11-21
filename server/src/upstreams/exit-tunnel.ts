@@ -10,6 +10,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import { once } from 'node:events';
 import { tr } from '../i18n/index.js';
+import { listenSafe } from '../net/safe-port.js';
 
 const CONNECT_TIMEOUT_MS = 20_000;
 
@@ -148,11 +149,8 @@ export async function startExitTunnel(upstreamUrl: string): Promise<ExitTunnel> 
       client.on('close', done);
     }).catch(() => { client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); });
   });
-  await new Promise<void>((ok, no) => {
-    server.once('error', no);
-    server.listen(0, '127.0.0.1', () => ok());
-  });
-  const port = (server.address() as net.AddressInfo).port;
+  // Chrome is pointed at this proxy: never a port it refuses
+  const port = await listenSafe(server, 0, '127.0.0.1');
   return { port, close: () => new Promise<void>((ok) => server.close(() => ok())) };
 }
 

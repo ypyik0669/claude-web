@@ -3,6 +3,7 @@ import net from 'node:net';
 import { EventEmitter } from 'node:events';
 import type { RemoteHost, TunnelInfo } from '../protocol.js';
 import { tr } from '../i18n/index.js';
+import { freePort } from '../net/safe-port.js';
 import { addedHostKey, classifySshProbe, keygenFingerprints, knownHostSpec, sshProbeArgs, type NewHostKey, type SshProbe } from './ssh-probe.js';
 
 /** The fingerprints known_hosts now has for this host (`ssh-keygen -l -F`; none if it cannot be read). */
@@ -113,9 +114,6 @@ export function assertTarget(target: string) {
   if (!target?.trim() || target.trim().startsWith('-')) throw new Error(tr('无效的 SSH 目标：{target}', { target }));
 }
 
-function freePort(): Promise<number> {
-  return new Promise((res, rej) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = (s.address() as { port: number }).port; s.close(() => res(p)); }); s.on('error', rej); });
-}
 function canConnect(port: number): Promise<boolean> {
   return new Promise((res) => { const s = net.connect({ port, host: '127.0.0.1' }); s.once('connect', () => { s.destroy(); res(true); }); s.once('error', () => res(false)); s.setTimeout(500, () => { s.destroy(); res(false); }); });
 }

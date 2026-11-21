@@ -129,6 +129,7 @@ import { BotService } from './bots/service.js';
 import { isBotSession } from './bots/hidden.js';
 import { tr } from './i18n/index.js';
 import { CLAUDE_PROVIDER_ID } from './protocol.js';
+import { listenSafe } from './net/safe-port.js';
 
 /** the backdrop worker's own CSP: its scripts from here (and the theme's code through new Function), nothing else */
 export const BACKDROP_WORKER_CSP = "default-src 'none'; script-src 'self' 'unsafe-eval'";
@@ -741,11 +742,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     setInterval(() => void keepCurrent(), 6 * 60 * 60_000).unref();
   }
 
-  await new Promise<void>((res, rej) => {
-    server.once('error', rej);
-    server.listen(PORT, HOST, () => res());
-  });
-  const port = (server.address() as { port: number }).port;
+  // never a port the desktop window's Chromium refuses (PORT=0 there: a widened ephemeral range can hand out 6000 —
+  // net/safe-port.ts)
+  const port = await listenSafe(server, PORT, HOST);
   gateway.port = port;
   listenPort = port;
   // from here on new conversations are told about the `web` MCP server: it calls back to this port

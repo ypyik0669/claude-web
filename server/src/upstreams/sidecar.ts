@@ -3,12 +3,12 @@
 import fs from 'node:fs/promises';
 import { appendFile, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
 import { dataDir } from '../files/service.js';
+import { freePort } from '../net/safe-port.js';
 import type { SidecarId, SidecarStatus } from './types.js';
 import { tr } from '../i18n/index.js';
 import manifest from './sidecars.json' with { type: 'json' };
@@ -70,14 +70,8 @@ export function assetFor(id: SidecarId, platform = platformKey()): PlatformAsset
   return (manifest as Manifest)[id]?.platforms[platform] ?? null;
 }
 
-/** A port nobody holds right now (the sidecar binds it a moment later). */
-export async function freePort(): Promise<number> {
-  const srv = net.createServer();
-  await new Promise<void>((r, j) => { srv.once('error', j); srv.listen(0, '127.0.0.1', () => r()); });
-  const port = (srv.address() as net.AddressInfo).port;
-  await new Promise<void>((r) => srv.close(() => r()));
-  return port;
-}
+/** A port nobody holds right now (the sidecar binds it a moment later), never one fetch refuses (net/safe-port.ts). */
+export { freePort };
 
 const envBin = (id: SidecarId) => process.env[`CW_SIDECAR_${id.toUpperCase()}_BIN`];
 

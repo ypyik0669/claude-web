@@ -1221,6 +1221,7 @@ export const EN_SERVER: Record<string, string> = {
   "本机地址 {port} 无法启用：旧监听没有关掉": "The local address on port {port} could not start: the old listener did not stop",
   "本机模型": "Local models",
   "本机网关端口必须在 1024 到 65535 之间": "The local gateway port must be between 1024 and 65535",
+  "端口 {port} 会被浏览器拒绝连接，换一个": "Browsers refuse to connect to port {port}. Pick another one",
   "机器「{name}」令牌失效，请重新配对": "The token for the computer “{name}” is no longer valid. Please pair again",
   "机器「{name}」已停用": "The computer “{name}” is disabled",
   "机器「{name}」现在连不上": "Can't reach the machine “{name}” right now",

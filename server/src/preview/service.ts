@@ -8,6 +8,8 @@ import { resolveSpawn } from '../agents/resolve.js';
 import { killTree } from '../agents/kill-tree.js';
 import { localEnv } from '../runtime/local-env.js';
 import { commandOf, readLaunch, type LaunchConfig } from './launch.js';
+// the browser pane opens the preview: never a port it refuses
+import { badPort, freePort } from '../net/safe-port.js';
 
 const LOG_LINES = 2000;
 
@@ -26,14 +28,6 @@ function bindable(port: number, host: string): Promise<boolean> {
 export async function portFree(port: number): Promise<boolean> {
   for (const host of ['127.0.0.1', '::1', '0.0.0.0', '::']) if (!(await bindable(port, host))) return false;
   return true;
-}
-
-async function freePort(): Promise<number> {
-  return new Promise((res, rej) => {
-    const s = net.createServer();
-    s.once('error', rej);
-    s.listen({ port: 0, host: '127.0.0.1' }, () => { const p = (s.address() as net.AddressInfo).port; s.close(() => res(p)); });
-  });
 }
 
 async function connects(port: number): Promise<boolean> {
@@ -86,7 +80,9 @@ export class PreviewService {
 
   private async launch(root: string, c: LaunchConfig, key: string): Promise<{ name: string; url: string; port: number }> {
     let port = c.port;
-    if (!(await portFree(port))) {
+    // the browser pane refuses some ports outright (6000, 5060, …): the page would only show ERR_UNSAFE_PORT
+    if (badPort(port) && c.autoPort !== true) throw new Error(`Port ${port} is one browsers refuse to open (ERR_UNSAFE_PORT). Use another port for "${c.name}" in .claude/launch.json, or set "autoPort": true.`);
+    if (badPort(port) || !(await portFree(port))) {
       if (c.autoPort === true) port = await freePort();
       else if (c.autoPort === false) throw new Error(`Port ${port} is taken and "${c.name}" has autoPort: false.`);
       else throw new Error(`Port ${port} is taken. Stop what uses it, or set "autoPort": true in .claude/launch.json for "${c.name}" to use a free port (passed to it as PORT).`);

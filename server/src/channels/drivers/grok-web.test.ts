@@ -88,6 +88,13 @@ describe('GrokWebServer', () => {
     expect(j.choices[0].message.tool_calls[0].function).toEqual({ name: 'Bash', arguments: '{"cmd":"ls"}' });
   });
 
+  it('a kept port fetch refuses (6000, picked before) is dropped for a free one', async () => {
+    server = new GrokWebServer(fakeGrok([]));
+    const port = await server.start(6000);
+    expect(port).not.toBe(6000);
+    expect((await fetch(`http://127.0.0.1:${port}/v1/models`)).status).toBe(200);
+  });
+
   it('passes grok.com failures on with their status, and refuses a request without a cookie', async () => {
     server = new GrokWebServer(fakeGrok([], 401));
     const port = await server.start();

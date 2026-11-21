@@ -3,6 +3,7 @@
 // serves. The one upgrade it takes is the data plane's own (`/v1/responses` / `/v1/ws`, ws-relay.ts).
 import http from 'node:http';
 import type { Duplex } from 'node:stream';
+import { listenSafe } from '../net/safe-port.js';
 
 export type UpgradeHandler = (req: http.IncomingMessage, socket: Duplex, head: Buffer, url: URL) => boolean;
 
@@ -30,12 +31,9 @@ export class GatewayListener {
       try { url = new URL(req.url ?? '/', `http://${bind}`); } catch { socket.destroy(); return; }
       if (!this.onUpgrade?.(req, socket, head, url)) socket.destroy();
     });
-    await new Promise<void>((resolve, reject) => {
-      srv.once('error', reject);
-      srv.listen(port, bind, () => resolve());
-    });
+    // port 0: never one a client's fetch refuses (net/safe-port.ts)
+    this._port = await listenSafe(srv, port, bind);
     this.srv = srv;
-    this._port = (srv.address() as { port: number }).port;
     return this._port;
   }
 

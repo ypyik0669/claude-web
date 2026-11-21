@@ -46,3 +46,17 @@
   键值视图（`BodyGuard`）——工具的输入是模型写的，什么形状都可能。`askQuestions` 认 JSON 字符串和单个对象，标题、已答卡片、
   `util.ts` 的摘要都走它。
 - 新加工具卡片时不用自己防，但别绕过 `getToolDef` 直接拿 `DEFS`。只有单元测试，没拿那位用户的对话记录实测。
+
+## 浏览器 / fetch 不肯连的端口（2026-11-21，测试里偶发「bad port」查出来的）
+
+- **现象**：`library/opencode-source.test.ts` 偶尔挂在 `fetch failed: bad port`，单跑又过。**根因**：Fetch 标准有一张「bad ports」
+  表（6000、5060、6665–6669、10080 ……），Chromium 报 `ERR_UNSAFE_PORT`，Node 的 undici fetch 直接抛 `bad port`。Windows 默认的
+  随机端口从 49152 起，碰不到这张表；但有软件会把范围放宽（这台开发机 `netsh int ipv4 show dynamicport tcp` 是 1024 起），这时
+  `listen(0)` 偶尔会落到 5060 / 6000——桌面窗口加载自己的服务地址就是空白页，fetch sidecar 就失败。
+- **改了什么**：`server/src/net/safe-port.ts` 一处：`listenSafe(server, port, host)`（port 0 时落到坏端口就还回去重拿，最多 20 次；
+  指定的端口照用）、`freePort()`（同样不给坏端口）、`assertUsablePort()`（用户填的端口是坏的就拒绝，说清楚原因）。用到的地方：
+  主服务（桌面版 PORT=0）、网关监听（本机 + 局域网）、sidecar / 托管程序的空闲端口、Claude 账号桥接、Grok 网页、远程 SSH 隧道、
+  出口代理（Chrome 指向它）、预览服务器（`autoPort` 时；launch.json 写死坏端口时直接报错说明）。以前随机拿到又存下来的端口
+  （桥接、Grok、托管程序下次还用它）是坏的就作废重选。本机网关端口、局域网端口、手机远程端口在设置里填坏端口会被拒绝。
+- **测试里的 freePort 小函数**（40 来个测试文件各写了一个 `listen(0)`）没改：只在放宽了端口范围的机器上偶发，CI 上碰不到；
+  再遇到「bad port」单跑那个文件就行。新写的测试想省事可以直接用 `net/safe-port.ts` 的 `freePort`。

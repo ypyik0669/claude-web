@@ -53,6 +53,15 @@ describe('preview servers', () => {
     } finally { holder.close(); }
   }, 30_000);
 
+  it('a port browsers refuse (6000): refused saying why; with autoPort a free one is taken', async () => {
+    await expect(svc.start(project([{ name: 'x', program: 'server.js', port: 6000 }]))).rejects.toThrow(/ERR_UNSAFE_PORT/);
+    const auto = project([{ name: 'y', program: 'server.js', port: 6000, autoPort: true }]);
+    const r = await svc.start(auto);
+    expect(r.port).not.toBe(6000);
+    expect(r.url).toBe(`http://localhost:${r.port}`);
+    await svc.stop(auto);
+  }, 30_000);
+
   it('no launch.json, an unknown name, a server that dies: each says so', async () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-preview-'));
     roots.push(bare);

@@ -15,6 +15,7 @@ import type { MetaStore } from '../meta/store.js';
 import type { ProviderService } from '../providers/service.js';
 import type { SecretService } from '../secrets/service.js';
 import { freePort, unpack } from '../upstreams/sidecar.js';
+import { badPort } from '../net/safe-port.js';
 import { planModels } from '../channels/plan.js';
 import { proxy } from '../net/proxy.js';
 import { MANIFESTS, type EngineManifest } from './manifests/index.js';
@@ -666,14 +667,15 @@ export class EngineManager extends EventEmitter {
     if (!bin) throw new Error(tr('{name} 没有装好', { name: m.name }));
     const { clientKey, managementKey } = await this.keys(id, m);
     this.emit('progress', id, 'start');
-    // the port it had last time when it is free (the provider's address stays the same), else a new one
-    const port = st.port && st.port !== m.defaultPort && await portFree(st.port) ? st.port : await freePort();
+    // the port it had last time when it is free (the provider's address stays the same), else a new one; a kept
+    // port fetch refuses (picked before net/safe-port.ts) is dropped
+    const port = st.port && st.port !== m.defaultPort && !badPort(st.port) && await portFree(st.port) ? st.port : await freePort();
     if (st.port !== port) { st.port = port; await this.save(); }
     // Magpie's web page carries the vendor sign-ins; keep it on a port of our own and a key we know.
     let webPort: number | undefined;
     let webKey: string | undefined;
     if (id === 'magpie') {
-      webPort = st.webPort && await portFree(st.webPort) ? st.webPort : await freePort();
+      webPort = st.webPort && !badPort(st.webPort) && await portFree(st.webPort) ? st.webPort : await freePort();
       if (st.webPort !== webPort) { st.webPort = webPort; await this.save(); }
       webKey = await this.reveal(st.webKey).catch(() => '');
       if (!webKey) {

@@ -134,6 +134,14 @@ describe('claude bridge: loop guard', () => {
 });
 
 describe('claude bridge: serving', () => {
+  it('a kept port fetch refuses (6000, picked before) is dropped for a free one', async () => {
+    const s = new ClaudeBridgeServer({ key: KEY, models: () => ['opus'] });
+    servers.push(s);
+    const port = await s.start(6000);
+    expect(port).not.toBe(6000);
+    expect((await fetch(`http://127.0.0.1:${port}/v1/models`, { headers: { authorization: `Bearer ${KEY}` } })).status).toBe(200);
+  });
+
   it('needs the key, lists models', async () => {
     const { url } = await bridge();
     expect((await fetch(`${url}/v1/messages`, { method: 'POST', body: '{}' })).status).toBe(401);

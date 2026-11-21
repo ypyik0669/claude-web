@@ -13,6 +13,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tr } from '../../i18n/index.js';
 import type { MetaStore } from '../../meta/store.js';
+import { badPort, listenSafe } from '../../net/safe-port.js';
 import { accountModels } from '../../providers/service.js';
 import { findOnPath, resolveSpawn } from '../../agents/resolve.js';
 import type { CatalogEntry, SourceHealth, SourceSummary } from '../types.js';
@@ -97,16 +98,12 @@ export class ClaudeBridgeServer {
     if (this.server) return this.port;
     const server = http.createServer((req, res) => { void this.handle(req, res); });
     server.requestTimeout = 0;
-    await new Promise<void>((resolve, reject) => {
-      const fail = (e: Error) => { server.off('listening', ok); reject(e); };
-      const ok = () => { server.off('error', fail); resolve(); };
-      server.once('error', fail);
-      server.once('listening', ok);
-      server.listen(port, '127.0.0.1');
-    }).catch(async (e) => {
-      if (port === 0) throw e;
+    // the last port (one fetch refuses, kept from before, is dropped: net/safe-port.ts)
+    const want = badPort(port) ? 0 : port;
+    await listenSafe(server, want, '127.0.0.1').catch(async (e) => {
+      if (want === 0) throw e;
       // the last port is taken now: any free one
-      await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve()); });
+      await listenSafe(server, 0, '127.0.0.1');
     });
     this.server = server;
     return this.port;
