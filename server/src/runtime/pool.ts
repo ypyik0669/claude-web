@@ -57,6 +57,9 @@ export class RunnerPool extends EventEmitter {
 
   constructor(private providers: ProviderService, private agents?: AgentRegistry, private transcripts?: AgentTranscripts) {
     super();
+    // a dozen services listen for good (the hub, background, goals, IM, keep-awake, …) and each orchestration step for
+    // a while: Node's default of 10 printed a MaxListenersExceededWarning on every start, which reads like a leak
+    this.setMaxListeners(200);
     setInterval(() => this.reap(), 60_000).unref();
     // the own login's 200K / 1M picks and 自动压缩 point (A7) are settings: every save of meta.json says so
     const meta = providers.meta as (ProviderService['meta'] & Partial<Pick<EventEmitter, 'on'>>) | undefined;

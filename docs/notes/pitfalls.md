@@ -6,6 +6,9 @@
 - **一条 API 消息会拆成多条 `assistant` 事件**（同一个 `message.id`，每个 content block 一条），reducer 按 id 合并（`web/src/model/conversation.ts`）。
 - **子代理对话不在主 jsonl 里**：`<session-id>/subagents/agent-<id>.jsonl`，用 SDK `getSubagentMessages` 按需加载；agentId 从 Agent 工具的 result 文本里正则取。
 - **AskUserQuestion / ExitPlanMode 都走 `canUseTool`**：回答 = `{behavior:'allow', updatedInput:{...input, answers}}`。
+  「完全放开」（`bypassPermissions`）时 SDK 会在日志里打 `[CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] canUseTool will not be invoked`，**对提问卡不成立**：
+  2026-11-21 真中转实测（`MODE=ask node scripts/real-autocompact.mjs …`），ccb（deepseek）和官方 2.1.322（claude-sonnet-5-5）在这个模式下都照样把
+  AskUserQuestion 交给 canUseTool，卡片的回答传回去、模型照着答。这条警告不用管。
 - **effort 没有运行时控制接口**：改 effort 走 `/effort <level>` 命令发进对话。
 - `web/tsconfig.json` 不能用 `baseUrl`（TS 5.9 移除），`paths` 必须是相对路径。
 

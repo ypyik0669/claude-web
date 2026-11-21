@@ -134,6 +134,22 @@ try {
     const list = Array.isArray(hist) ? hist : hist?.messages ?? hist?.items ?? [];
     const kinds = list.map((m) => (m.type === 'system' ? `system/${m.subtype}` : m.isCompactSummary ? 'summary' : m.type)).join(' ');
     console.log(`  history after it (${list.length}): ${kinds.slice(0, 400)}${hist?.error ? ' error ' + hist.error : ''}`);
+  } else if (process.env.MODE === 'ask') {
+    // MODE=ask: in 完全放开 (bypassPermissions, as this script opens it), does Claude's question still reach the person?
+    // The SDK warns that canUseTool is not asked then; the question card's answer goes back through it
+    const asked = [];
+    ws.on('message', (raw) => {
+      const m = JSON.parse(String(raw));
+      const r = m.type === 'event' && m.event?.kind === 'permission.request' ? m.event.request : null;
+      if (!r || r.sessionId !== sid) return;
+      asked.push(r.toolName);
+      if (r.toolName !== 'AskUserQuestion') return;
+      const qs = Array.isArray(r.input?.questions) ? r.input.questions : [];
+      const answers = Object.fromEntries(qs.map((q) => [q.question, q.options?.find((o) => /blue/i.test(o.label))?.label ?? q.options?.[0]?.label ?? 'blue']));
+      void req({ kind: 'permission.respond', requestId: r.requestId, response: { behavior: 'allow', updatedInput: { ...r.input, answers } } });
+    });
+    await turn('turn 1 (a question for the person)', 'Use the AskUserQuestion tool exactly once to ask me which color I prefer, with the two options "red" and "blue". After I answer, reply with exactly: PICKED <the color I chose>. Do not use any other tool.');
+    console.log(`  permission requests: ${asked.join(', ') || 'none'}`);
   } else if (process.env.MODE === 'probe') {
     // MODE=probe: one short turn — what window the engine says it runs the model with (modelUsage) against the one set
     await turn('turn 1 (probe)', 'Do not use any tool. Reply with exactly: OK');
