@@ -38,7 +38,9 @@ const meta = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude-web', '
 const agent = process.env.AGENT || 'claude';
 const providers = (meta.providers ?? []).map((p) => (p.id === providerId ? { ...p, contextWindows: { ...(p.contextWindows ?? {}), [model]: win }, compactAt: undefined, ...(agent === 'codex' ? { defaultModel: model } : {}) } : p));
 if (!providers.some((p) => p.id === providerId)) { console.error('no provider', providerId); process.exit(2); }
-fs.writeFileSync(path.join(dataDir, 'meta.json'), JSON.stringify({ version: meta.version, providers, settings: { 'network.proxy': meta.settings?.['network.proxy'] ?? 'system', 'ui.disabledModels': meta.settings?.['ui.disabledModels'] } }));
+// PRIVACY=1: the user's 隐私保护 settings too (rules; the local model's files are not copied — only names / addresses need it)
+const privacy = process.env.PRIVACY && meta.privacy ? { ...meta.privacy, skipLocal: false } : undefined;
+fs.writeFileSync(path.join(dataDir, 'meta.json'), JSON.stringify({ version: meta.version, providers, settings: { 'network.proxy': meta.settings?.['network.proxy'] ?? 'system', 'ui.disabledModels': meta.settings?.['ui.disabledModels'] }, ...(privacy ? { privacy } : {}) }));
 
 const token = randomBytes(12).toString('hex');
 const keep = new Set(['CLAUDE_WEB_TOKEN', 'CLAUDE_WEB_DIR']);
@@ -134,6 +136,21 @@ try {
     const list = Array.isArray(hist) ? hist : hist?.messages ?? hist?.items ?? [];
     const kinds = list.map((m) => (m.type === 'system' ? `system/${m.subtype}` : m.isCompactSummary ? 'summary' : m.type)).join(' ');
     console.log(`  history after it (${list.length}): ${kinds.slice(0, 400)}${hist?.error ? ' error ' + hist.error : ''}`);
+  } else if (process.env.MODE === 'passcode') {
+    // MODE=passcode (with PRIVACY=1): a 口令 the privacy rules hide, then a long message that compacts at the start of
+    // its turn, then the 口令 asked back — no {{SECRET_…}} may reach the conversation (2026-11-21: a placeholder cut by
+    // the stream got into the compaction summary, a memory file and the answer), and the sentence after the 口令 must
+    // reach the model (the rule used to hide everything up to the next space)
+    await turn('turn 1 (a 口令)', '记住这个口令：BLUE-WHALE-42。不要调用任何工具，只回复 OK1');
+    const paste = lines.slice(0, Number(process.env.PASTE || 1200)).join('\n');
+    await turn('turn 2 (one long message that crosses the line itself)', `下面是一段很长的材料，不用分析，也不要调用任何工具，读完只回复 GOT-IT\n\n${paste}`);
+    await turn('turn 3', '不要调用任何工具：我让你记住的口令是什么？只回复口令本身。');
+    const seen = events.filter((e) => e.kind === 'session.event' && e.sessionId === sid).map((e) => JSON.stringify(e.message ?? ''));
+    const leaked = seen.filter((t) => /\{\{SECRET_[a-f0-9]{8}\}\}/.test(t)).length;
+    const hist = await req({ kind: 'transcript.load', sessionId: sid }).catch(() => []);
+    const histLeaks = (Array.isArray(hist) ? hist : []).filter((m) => /\{\{SECRET_[a-f0-9]{8}\}\}/.test(JSON.stringify(m))).length;
+    const tools = events.filter((e) => e.kind === 'session.event' && e.sessionId === sid && e.message?.type === 'assistant').flatMap((e) => (e.message.message?.content ?? []).filter((b) => b.type === 'tool_use').map((b) => b.name));
+    console.log(`  placeholders in what the window got (should be 0): ${leaked}; in the reopened history: ${histLeaks}; tool calls: ${tools.join(', ') || 'none'}`);
   } else if (process.env.MODE === 'ask') {
     // MODE=ask: in 完全放开 (bypassPermissions, as this script opens it), does Claude's question still reach the person?
     // The SDK warns that canUseTool is not asked then; the question card's answer goes back through it

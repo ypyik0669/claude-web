@@ -89,8 +89,11 @@ const cnId = (v: string) => {
   return '10X98765432'[s % 11] === v[17].toUpperCase();
 };
 
+// An unquoted secret value ends where Chinese text starts (2026-11-21: 「口令：BLUE-WHALE-42。不要调用任何工具，只回复 OK1」 hid
+// everything up to the space, so the model never saw 「不要调用任何工具」): CJK ideographs, CJK / full-width punctuation
+// (。，：；、) and curly quotes stop it (the \u ranges in the two value classes below); accented Latin letters do not.
 // `.env` / shell assignment lines: `KEY=value`, `export KEY="value with spaces"`.
-const ENV_LINE = /(?:^|[\r\n])[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]{2,})[ \t]*=[ \t]*(?:"([^"\r\n]{4,})"|'([^'\r\n]{4,})'|([^\s"'`;]{4,}))/gm;
+const ENV_LINE = /(?:^|[\r\n])[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]{2,})[ \t]*=[ \t]*(?:"([^"\r\n]{4,})"|'([^'\r\n]{4,})'|([^\s"'`;\u2018-\u201F\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]{4,}))/gm;
 const ENV_SECRET_KEY = /(?:^|_)(?:API_?KEY|KEY|KEYS|TOKEN|TOKENS|SECRET|SECRETS|PASS|PASSWD|PASSWORD|PWD|CRED|CREDS|CREDENTIAL|CREDENTIALS|AUTH|PRIVATE|CERT|SALT|SIGNATURE|SIGNING|SESSION|COOKIE|WEBHOOK|DATABASE_URL|DB_URL|MONGO_URI|MYSQL_URL|POSTGRES_URL|REDIS_URL)(?:_|$)/i;
 // `user:pass@host` and `scheme://user:pass@host` (the password is the secret; user and host stay readable).
 const URL_CREDS = new RegExp(String.raw`(?<![A-Za-z0-9+.-])(?:[a-z][a-z0-9+.-]{0,15}:\/\/)?([A-Za-z0-9._%+-]{0,64}):([^\s/@]{4,128})@(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|[A-Za-z0-9][A-Za-z0-9._-]*(?:\.[A-Za-z0-9._-]+)*|\[[0-9A-Fa-f:]+\])(?::\d{1,5})?`, 'gi');
@@ -132,7 +135,7 @@ const DETECTORS: Detector[] = [
   // (ASCII lookarounds, not \b: \b never matches next to 密码 / 口令, so those keys were never found; ： is accepted too)
   {
     category: 'password',
-    re: /(?<![A-Za-z0-9_])(?:[A-Za-z0-9]+[_-])*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|密码|口令)(?![A-Za-z0-9_])["']?\s*[:=：]\s*["']?([^\s"'`,;\\<>{}]{4,})/gi,
+    re: /(?<![A-Za-z0-9_])(?:[A-Za-z0-9]+[_-])*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|密码|口令)(?![A-Za-z0-9_])["']?\s*[:=：]\s*["']?([^\s"'`,;\\<>{}\u2018-\u201F\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]{4,})/gi,
     group: 1,
     // A key / JWT value is left to its own detector (so the placeholder says API_KEY / JWT). All-CJK prose after
     // 密码： is text, not a password ("密码：请勿外传" must stay readable).

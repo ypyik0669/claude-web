@@ -312,6 +312,77 @@ describe('redact → restore round trip', () => {
     expect(evs.map((e) => e.choices[0].delta.content).join('')).toBe(`key ${ANT_KEY}!`);
     expect(evs.every((e) => Object.keys(e.choices[0].delta)[0] === 'content')).toBe(true);
   });
+
+  // 2026-11-21, deepseek on a relay: a chunk with nothing for the held slot came between the two halves of a
+  // placeholder, the first half went out as it was, and the client put 「{{SECRET_…}}」 together (it then reached a
+  // compaction summary, a memory file and the answer)
+  it('SSE (OpenAI): an empty delta, a reasoning piece or content: null between the halves — still restored, in order', () => {
+    const map = new Map<string, string>();
+    const ph = redactText(ANT_KEY, c, SECRET, map).text;
+    const ev = (delta: any, finish: string | null = null) => ({ id: 'c1', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: finish }] });
+    for (const between of [{}, { reasoning_content: 'hmm' }, { content: null, reasoning_content: 'x' }]) {
+      const stream = sse([ev({ content: `key ${ph.slice(0, 9)}` }), ev(between), ev(between), ev({ content: `${ph.slice(9)}!` }), ev({}, 'stop')]);
+      const r = new SseRestorer(map);
+      const evs = parseSse(r.feed(stream) + r.end());
+      expect(evs.map((e) => e.choices[0].delta.content ?? '').join('')).toBe(`key ${ANT_KEY}!`);
+      expect(evs.map((e) => e.choices[0].delta.reasoning_content ?? '').join('')).toBe(between.reasoning_content ? `${between.reasoning_content}${between.reasoning_content}` : '');
+      expect(evs[evs.length - 1].choices[0].finish_reason).toBe('stop');
+    }
+  });
+
+  it('SSE: a keep-alive comment or an Anthropic ping between the halves does not let the first half out', () => {
+    const map = new Map<string, string>();
+    const ph = redactText(ANT_KEY, c, SECRET, map).text;
+    const delta = (text: string) => ({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } });
+    const stream = sse([delta(`key ${ph.slice(0, 9)}`)]) + ': keep-alive\n\n' + sse([{ type: 'ping' }, delta(`${ph.slice(9)}!`), { type: 'content_block_stop', index: 0 }]);
+    const r = new SseRestorer(map);
+    const out = r.feed(stream) + r.end();
+    const evs = parseSse(out);
+    expect(evs.filter((e) => e.type === 'content_block_delta').map((e) => e.delta.text).join('')).toBe(`key ${ANT_KEY}!`);
+    expect(out).toContain(': keep-alive');
+    expect(evs[evs.length - 1].type).toBe('content_block_stop');
+  });
+
+  it('SSE (OpenAI): the answer ending (finish_reason) lets the held half out first — nothing is lost', () => {
+    const map = new Map<string, string>();
+    const ph = redactText(ANT_KEY, c, SECRET, map).text;
+    const ev = (delta: any, finish: string | null = null) => ({ choices: [{ index: 0, delta, finish_reason: finish }] });
+    const r = new SseRestorer(map);
+    const evs = parseSse(r.feed(sse([ev({ content: `cut ${ph.slice(0, 6)}` }), ev({}, 'length')])) + r.end());
+    expect(evs.map((e) => e.choices[0].delta.content ?? '').join('')).toBe(`cut ${ph.slice(0, 6)}`);
+    expect(evs[1].choices[0].finish_reason).toBe('length');
+  });
+
+  // signed thinking stays as the vendor signed it: a placeholder put back there went out with the next request of the
+  // turn as the plaintext (signed blocks are not redacted) with a signature that no longer matched
+  it('signed thinking keeps its placeholders (streamed and whole); the text around it is restored', () => {
+    const map = new Map<string, string>();
+    const ph = redactText(ANT_KEY, c, SECRET, map).text;
+    const stream = sse([
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: `the user gave ${ph}` } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: `use ${ph}` } },
+    ]);
+    const r = new SseRestorer(map);
+    const evs = parseSse(r.feed(stream) + r.end());
+    expect(evs[0].delta.thinking).toBe(`the user gave ${ph}`);
+    expect(evs[2].delta.text).toBe(`use ${ANT_KEY}`);
+    const whole = JSON.parse(restoreBody(JSON.stringify({ content: [{ type: 'thinking', thinking: `saw ${ph}`, signature: 's' }, { type: 'text', text: `use ${ph}` }] }), map));
+    expect(whole.content[0].thinking).toBe(`saw ${ph}`);
+    expect(whole.content[1].text).toBe(`use ${ANT_KEY}`);
+  });
+});
+
+describe('a secret value stops where Chinese text starts', () => {
+  it('口令 / 密码 / an .env value: only the value is hidden, the sentence after it stays readable', () => {
+    const c2 = compile(ALL_REDACT);
+    const cut = (t: string) => redactText(t, c2, SECRET, new Map()).text;
+    expect(cut('记住这个口令：BLUE-WHALE-42。不要调用任何工具，只回复 OK1')).toMatch(/^记住这个口令：\{\{SECRET_[a-f0-9]{8}\}\}。不要调用任何工具，只回复 OK1$/);
+    expect(cut('数据库密码: abc12345，然后重启')).toMatch(/^数据库密码: \{\{SECRET_[a-f0-9]{8}\}\}，然后重启$/);
+    expect(cut('DB_PASSWORD=hunter2hunter；记得改')).toMatch(/^DB_PASSWORD=\{\{SECRET_[a-f0-9]{8}\}\}；记得改$/);
+    // accented letters are part of a password
+    expect(cut('password: pässwörd99')).toMatch(/^password: \{\{SECRET_[a-f0-9]{8}\}\}$/);
+  });
 });
 
 /** The relay with a fake upstream: what reaches the upstream, and what the client gets. */

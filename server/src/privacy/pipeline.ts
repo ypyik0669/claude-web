@@ -20,6 +20,10 @@ const SKIP_KEYS = new Set([
 ]);
 /** Blocks whose content is signed / encrypted by the vendor: altering one byte breaks the next turn. */
 const SIGNED_TYPES = new Set(['thinking', 'redacted_thinking', 'reasoning']);
+/** The streamed pieces of a signed thinking block (Anthropic SSE). */
+const SIGNED_DELTAS = new Set(['thinking_delta', 'signature_delta']);
+/** How many events an OpenAI stream may put between the two halves of a placeholder before the first half goes out. */
+const MAX_SKIP = 32;
 /** Under these keys every leaf is content, whatever its key (a tool's input object has arbitrary keys). */
 const CONTENT_OBJECTS = new Set(['input', 'args', 'response']);
 /** Never touched, not even inside a tool's input. */
@@ -93,7 +97,16 @@ const jsonLeaf = (path: string[], evType: string) => {
 export function restoreValue(v: any, map: ReadonlyMap<string, string>, path: string[] = [], evType = ''): any {
   if (typeof v === 'string') return restoreText(v, map, jsonLeaf(path, evType));
   if (Array.isArray(v)) { for (let i = 0; i < v.length; i++) v[i] = restoreValue(v[i], map, [...path, String(i)], evType); return v; }
-  if (v && typeof v === 'object') { for (const k of Object.keys(v)) v[k] = restoreValue(v[k], map, [...path, k], evType); return v; }
+  if (v && typeof v === 'object') {
+    // Signed reasoning stays as the vendor signed it (2026-11-21): a placeholder put back in a thinking block made the
+    // stored block differ from its signature, and the next request of the turn sent it back — with the plaintext the
+    // outbound walker leaves alone in signed blocks, and a signature that no longer matches. The thinking shows the
+    // placeholder instead.
+    if (typeof v.type === 'string' && (SIGNED_TYPES.has(v.type) || SIGNED_DELTAS.has(v.type))) return v;
+    if (v.thought === true) return v;
+    for (const k of Object.keys(v)) v[k] = restoreValue(v[k], map, [...path, k], evType);
+    return v;
+  }
   return v;
 }
 
@@ -123,6 +136,8 @@ const slotOf = (j: any, path: string[]) => [j?.type ?? '', j?.index ?? '', j?.ou
 export class SseRestorer {
   private buf = '';
   private held: { pre: string; j: any; path: string[]; nl: string } | null = null;
+  /** chunks let out ahead of the held piece (passable) */
+  private skipped = 0;
   constructor(private map: ReadonlyMap<string, string>) {}
 
   feed(chunk: string): string {
@@ -149,7 +164,21 @@ export class SseRestorer {
     if (!this.held) return '';
     const h = this.held;
     this.held = null;
+    this.skipped = 0;
     return this.render(h.pre, h.j, h.nl);
+  }
+
+  /**
+   * An OpenAI chat chunk that carries nothing for the held piece's slot — an empty delta, a reasoning piece, `content:
+   * null` — and does not end the answer or hold half a placeholder of its own: it may go out ahead of the held piece,
+   * which waits for its own next part (2026-11-21: deepseek on a relay streamed such a chunk between the two halves of
+   * a placeholder; the first half went out as it was and the client put `{{SECRET_…}}` together).
+   */
+  private passable(j: any, ls: { path: string[]; value: string }[]): boolean {
+    if (this.skipped >= MAX_SKIP) return false;
+    // Anthropic's keep-alive
+    if (j?.type === 'ping') return true;
+    return Array.isArray(j?.choices) && j.choices.every((c: any) => c && c.finish_reason == null) && !ls.some((l) => partialTail(l.value) >= 0);
   }
 
   private render(pre: string, j: any, sep: string): string {
@@ -158,6 +187,8 @@ export class SseRestorer {
 
   private event(raw: string, sep: string): string {
     const lines = raw.split(/\r?\n/);
+    // a comment (a keep-alive: every line starts with ':') carries nothing — it never lets a held half out
+    if (this.held && lines.every((l) => l === '' || l.startsWith(':'))) return raw + sep;
     const di = lines.findIndex((l) => l.startsWith('data:'));
     // only single-line JSON data events are touched; comments, [DONE] and the like go as they came
     if (di < 0 || lines.filter((l) => l.startsWith('data:')).length !== 1) return this.flush() + raw + sep;
@@ -177,6 +208,10 @@ export class SseRestorer {
         setAt(j, same.path, String(getAt(this.held.j, this.held.path)) + same.value);
         same.value = String(getAt(j, same.path));
         this.held = null;
+        this.skipped = 0;
+      } else if (this.passable(j, ls)) {
+        this.skipped++;
+        return ls.some((l) => l.value.includes('{{')) ? this.render(pre, j, nl) : raw + sep;
       } else out += this.flush();
     }
     if (!raw.includes('{') && !this.held) return out + raw + sep;
