@@ -542,7 +542,8 @@ export class Hub {
         // a Claude conversation that went on from DeepSeek Harness: what was said there since, first
         if (!req.cursor) await this.catchUpFromSource(req.sessionId);
         const state = s.pool.stateOf(req.sessionId);
-        const msgs = withTurnStats(await s.sessions.transcript(req.sessionId), await s.ledger.rowsFor(req.sessionId), { live: state === 'running' || state === 'waiting' || state === 'starting' });
+        // the whole conversation, compactions included (history, not transcript: that one starts at the last one)
+        const msgs = withTurnStats(await s.sessions.history(req.sessionId), await s.ledger.rowsFor(req.sessionId), { live: state === 'running' || state === 'waiting' || state === 'starting' });
         if (!req.page) return msgs;
         return pageOf(msgs, req.cursor, this.remoteConns.has(ws) || this.peerConns.has(ws) ? REMOTE_PAGE_BYTES : LOCAL_PAGE_BYTES);
       }

@@ -43,6 +43,12 @@ describe('withTurnStats: the line under each answer for turns that did not run i
     expect(results[1].cw_cost_absent).toBeUndefined();
     expect(results[1].uuid).toBe('cw-turn-u2');
   });
+  it('right after the turn\'s last answer: a compaction at the start of the next turn (its line, its summary) stays after it', () => {
+    const boundary = { type: 'system', subtype: 'compact_boundary', uuid: 'b1', session_id: 's', timestamp: T(19, 59), compact_metadata: { trigger: 'auto', pre_tokens: 90_000 } };
+    const summary = { ...user('s1', T(19, 59), 'This session is being continued…'), isCompactSummary: true, isSynthetic: true };
+    const out = withTurnStats([...convo.slice(0, 4), boundary, summary, ...convo.slice(4)], []);
+    expect(out.map((m) => (m.type === 'system' ? m.subtype : m.isCompactSummary ? 'summary' : m.type))).toEqual(['user', 'assistant', 'user', 'assistant', 'result', 'compact_boundary', 'summary', 'user', 'assistant', 'result']);
+  });
   it('the turn in flight gets none: the conversation runs here, or its last answer stopped for a tool and nothing recorded it', () => {
     expect(withTurnStats(convo, [], { live: true }).filter((m) => m.type === 'result')).toHaveLength(1);
     const cut = convo.slice(0, 2);

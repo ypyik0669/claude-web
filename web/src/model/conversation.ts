@@ -651,7 +651,10 @@ function applyUser(c: Conversation, m: any) {
     list.push({ kind: 'system', id: m.uuid ?? `int-${clock()}`, ts: m.timestamp, subtype: 'interrupted', text: tr('已中断') });
     return;
   }
-  const isMeta = m.isMeta || m.isSynthetic || /^<(command-name|local-command|system-reminder|task-notification)/.test(rawText.trim());
+  // `is_meta`: the SDK's history reader (getSessionMessages) marks what the CLI wrote as meta — and the compaction
+  // summary, and lines shown only in the transcript — this way, never with `isMeta`: a reopened conversation showed
+  // them as the user's own messages (server/src/sessions/history.ts's startsTurn reads it too)
+  const isMeta = m.isMeta || m.is_meta || m.isSynthetic || /^<(command-name|local-command|system-reminder|task-notification)/.test(rawText.trim());
   const decoded = decodeAttachments(rawText, { bot: c.botThread });
   const { attachments, from } = decoded;
   const text = isMeta ? localCommandText(decoded.text) : decoded.text;

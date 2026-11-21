@@ -58,17 +58,16 @@ export function withTurnStats(msgs: Msg[], rows: LedgerEntry[], opts: { live?: b
     const from = starts[k];
     const to = k + 1 < starts.length ? starts[k + 1] : msgs.length;
     const part = msgs.slice(from, to);
-    out.push(...part);
     const last = k === starts.length - 1;
-    if (last && opts.live) continue;
+    if (last && opts.live) { out.push(...part); continue; }
     const prompt = msgs[from];
     const answers = part.filter((m) => m.type === 'assistant' && !m.parent_tool_use_id && m.message);
-    if (!answers.length) continue;
+    if (!answers.length) { out.push(...part); continue; }
     const t0 = tsOf(prompt);
     const t1 = to < msgs.length ? tsOf(msgs[to]) : Infinity;
     const mine = Number.isNaN(t0) ? [] : turns.filter((r) => r.ts >= t0 && r.ts < t1);
     const end = answers[answers.length - 1];
-    if (!mine.length && end.message.stop_reason === 'tool_use') continue;
+    if (!mine.length && end.message.stop_reason === 'tool_use') { out.push(...part); continue; }
     const result: Msg = {
       type: 'result',
       subtype: 'success',
@@ -115,7 +114,11 @@ export function withTurnStats(msgs: Msg[], rows: LedgerEntry[], opts: { live?: b
       result.cw_cost_absent = true;
       result.usage = cacheKnown ? usage : { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens };
     }
-    out.push(result);
+    // right after the turn's last answer, as it came live — not after what follows it before the next prompt: a
+    // compaction at the start of the next turn (its line and summary) or a command's output (2026-11-21: a reopened
+    // compacted conversation showed the turn's stats under the summary of the compaction after it)
+    const cut = part.lastIndexOf(end) + 1;
+    out.push(...part.slice(0, cut), result, ...part.slice(cut));
   }
   return out;
 }

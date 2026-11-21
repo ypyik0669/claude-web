@@ -283,6 +283,16 @@ describe('user messages', () => {
     expect(c.items[3]).toMatchObject({ meta: false, text: 'what does <local-command-stdout> mean?' });
   });
 
+  it("history's is_meta (the SDK reader's mark for what the CLI wrote) is meta, as isMeta is live: not the user's own message", () => {
+    const c = createConversation();
+    applyTranscript(c, [
+      { type: 'user', uuid: 'h1', parent_tool_use_id: null, message: { role: 'user', content: '用一下那个技能' } },
+      { type: 'user', uuid: 'h2', is_meta: true, parent_tool_use_id: null, message: { role: 'user', content: 'Base directory for this skill: C:\\skills\\x' } },
+    ] as any);
+    expect(c.items[0]).toMatchObject({ kind: 'user', meta: false });
+    expect(c.items[1]).toMatchObject({ kind: 'user', meta: true });
+  });
+
   it("hides the CLI's synthetic answer to its own resume nudge, keeps synthetic API errors (real transcript after a provider switch)", () => {
     const c = createConversation();
     applyTranscript(c, [
@@ -712,6 +722,48 @@ describe('a result made from the record (server sessions/history.ts)', () => {
     const results = c.items.filter((i) => i.kind === 'result') as any[];
     expect(results.map((r) => [r.ts, r.fromHistory, !!r.costAbsent, r.idleBeforeMs])).toEqual([[at(1), true, true, undefined], [at(14), true, false, 12 * 60_000]]);
     expect(groupTurns(c.items).map((t) => [t.user?.id, t.result?.id])).toEqual([['u1', 'cw-turn-u1'], ['u2', 'cw-turn-u2']]);
+  });
+});
+
+describe('a reopened compacted conversation (server sessions/stitch.ts)', () => {
+  const at = (s: number) => new Date(Date.UTC(2026, 10, 21, 1, 0, s)).toISOString();
+  const user = (uuid: string, s: number, content: unknown, extra: object = {}) => ({ type: 'user', uuid, session_id: 's', timestamp: at(s), parent_tool_use_id: null, message: { role: 'user', content }, ...extra });
+  const asst = (uuid: string, s: number, id: string, content: unknown[]) => ({ type: 'assistant', uuid, session_id: 's', timestamp: at(s), parent_tool_use_id: null, message: { id, role: 'assistant', content } });
+  // the shapes the server sends: the boundary with its subtype and compact_metadata, the summary isSynthetic
+  const boundary = (uuid: string, s: number, meta: object) => ({ type: 'system', subtype: 'compact_boundary', uuid, session_id: 's', timestamp: at(s), parent_tool_use_id: null, compact_metadata: meta });
+  const summary = (uuid: string, s: number) => user(uuid, s, 'This session is being continued from a previous conversation that ran out of context. …', { isCompactSummary: true, is_meta: true, isSynthetic: true });
+
+  it('what came before, the same compaction line as live, the summary as a meta line (not a prompt), then what followed', () => {
+    const c = createConversation();
+    applyTranscript(c, [
+      user('u1', 1, '暗号是「橘子」，记住它'),
+      asst('a1', 2, 'm1', [{ type: 'text', text: '记住了：橘子。' }]),
+      user('u2', 3, '暗号是什么？'),
+      boundary('b1', 4, { trigger: 'auto', pre_tokens: 55_321 }),
+      summary('s1', 5),
+      asst('a2', 6, 'm2', [{ type: 'text', text: '暗号是「橘子」。' }]),
+    ]);
+    expect(c.items.map((i) => [i.kind, i.id])).toEqual([['user', 'u1'], ['assistant', 'm1'], ['user', 'u2'], ['system', 'b1'], ['user', 's1'], ['assistant', 'm2']]);
+    expect(c.items[3]).toMatchObject({ subtype: 'compact', text: '上下文已自动压缩（55K tok）' });
+    expect(c.items[4]).toMatchObject({ kind: 'user', meta: true });
+    expect(groupTurns(c.items).map((t) => t.user?.id)).toEqual(['u1', 'u2']);
+  });
+
+  it('messages kept word for word come after the summary once; the older page goes in front of the boundary', () => {
+    const c = createConversation();
+    // the newest page: from the turn the compaction happened in
+    applyTranscript(c, [
+      user('u2', 3, '再跑一下测试'),
+      boundary('b1', 6, { trigger: 'manual', pre_tokens: 611_591, post_tokens: 18_681 }),
+      summary('s1', 7),
+      asst('k1', 4, 'mk', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } }]),
+      user('k2', 5, [{ type: 'tool_result', tool_use_id: 't1', content: '12 passed' }]),
+      asst('a3', 8, 'm3', [{ type: 'text', text: '都通过了。' }]),
+    ]);
+    prependTranscript(c, [user('u1', 1, '帮我检查一下构建'), asst('a1', 2, 'm1', [{ type: 'text', text: '构建通过了。' }])]);
+    expect(c.items.map((i) => i.id)).toEqual(['u1', 'm1', 'u2', 'b1', 's1', 'mk', 'm3']);
+    expect(c.items[3]).toMatchObject({ subtype: 'compact', text: '上下文已压缩 · 释放 97%' });
+    expect(c.toolIndex.get('t1')).toMatchObject({ status: 'done', result: { content: '12 passed' } });
   });
 });
 

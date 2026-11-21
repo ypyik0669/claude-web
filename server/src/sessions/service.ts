@@ -12,6 +12,7 @@ import { TranscriptTitles, type Titles } from './titles.js';
 import { BRIEFING_HEAD } from '../session/handoff.js';
 import { tr } from '../i18n/index.js';
 import { summaryFromFile, unlistedTranscripts } from './unlisted.js';
+import { compactedHistory } from './stitch.js';
 import { wslToWin } from '../wsl/paths.js';
 import { unalias } from '../models/subagent.js';
 
@@ -310,6 +311,24 @@ export class SessionService extends EventEmitter {
     }
     const dir = info?.cwd;
     return getSessionMessages(sessionId, { dir, includeSystemMessages: true });
+  }
+
+  /**
+   * What a window shows of a conversation (transcript.load): a compacted one with what came before each compaction
+   * too — `transcript` starts at the last one (sessions/stitch.ts). Only for the view: what a model is sent of a
+   * conversation (a hand-over, a briefing, the sessions tools) stays `transcript`, as the model has it.
+   */
+  async history(sessionId: string) {
+    const file = findClaudeTranscript(sessionId);
+    const wsl = !!file && transcriptRoots().some((r) => r.distro && file.toLowerCase().startsWith(r.dir.toLowerCase()));
+    if (file && !wsl) {
+      const whole = await compactedHistory(file, sessionId).catch((e) => {
+        console.warn(`[sessions] reading ${sessionId} across its compactions failed, showing it from the last one: ${e?.message ?? e}`);
+        return null;
+      });
+      if (whole) return whole;
+    }
+    return this.transcript(sessionId);
   }
 
   async subagents(sessionId: string) {
