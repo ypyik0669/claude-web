@@ -57,9 +57,11 @@ export default defineConfig({
   },
   build: { outDir: 'dist', sourcemap: false },
   // the source-scanning tests (i18n coverage, wording) read every file: seconds each, more next to a full parallel run;
-  // the store tests import the whole store in beforeAll — same budget for the hooks
+  // the store tests and the cards' tests import half the app in beforeAll (registry → every card → the store, the
+  // model menu…): 11–15 s alone, past 30 s next to the full parallel run on a busy machine (2026-11-21: ego-card and
+  // registry timed out there and passed alone; source-bytes, 0.5 s alone, took 45 s in the same run) — both get more room
   test: {
-    environment: 'node', testTimeout: 30_000, hookTimeout: 30_000,
+    environment: 'node', testTimeout: 90_000, hookTimeout: 120_000,
     // temp agent worktrees / generated artifacts must not be picked up as a second copy of the suite
     exclude: ['**/node_modules/**', '**/dist/**', '**/dist-shell/**', '**/.claude/**', '**/.superpowers/**'],
   },
