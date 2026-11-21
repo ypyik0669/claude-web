@@ -11,7 +11,7 @@ import type http from 'node:http';
 import zlib from 'node:zlib';
 import { UpstreamError, forwardHeaders, readText, sendUpstream } from '../gateway/upstream.js';
 import { tr } from '../i18n/index.js';
-import { PrivacyBlocked, PrivacyFailed, privacyErrorStatus, type PrivacyService } from './service.js';
+import { NO_RETRY, PrivacyBlocked, PrivacyFailed, privacyErrorStatus, type PrivacyService } from './service.js';
 
 export const RELAY_PREFIX = '/gateway/~v/';
 const BODY_LIMIT = 64 * 1024 * 1024;
@@ -35,10 +35,10 @@ export class PrivacyRelay {
     return `${root}/~v/${this.sig(t)}/${b64(t)}`;
   }
 
-  private fail(res: http.ServerResponse, status: number, message: string) {
+  private fail(res: http.ServerResponse, status: number, message: string, headers: Readonly<Record<string, string>> = {}) {
     if (res.headersSent) { res.destroy(); return; }
     // one shape every SDK reads a message from (Anthropic `error.message`, OpenAI `error.message`, Gemini `error.message`)
-    res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify({ type: 'error', error: { type: 'privacy_error', code: status, message } }));
+    res.writeHead(status, { 'content-type': 'application/json', ...headers }).end(JSON.stringify({ type: 'error', error: { type: 'privacy_error', code: status, message } }));
   }
 
   async serve(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
@@ -81,8 +81,9 @@ export class PrivacyRelay {
         }
       } catch (e: any) {
         if (e instanceof PrivacyBlocked) guard?.done(true);
-        // fail closed: a privacy pipeline that cannot run means the request is not sent at all — 503, never plaintext
-        return this.fail(res, privacyErrorStatus(e), this.privacy.scrub(e?.message ?? String(e)));
+        // fail closed: a privacy pipeline that cannot run means the request is not sent at all, never as plaintext —
+        // 400 a block rule or a needed local model that cannot run, 503 anything else; none worth a retry
+        return this.fail(res, privacyErrorStatus(e), this.privacy.scrub(e?.message ?? String(e)), NO_RETRY);
       }
     }
     if (redacted) {

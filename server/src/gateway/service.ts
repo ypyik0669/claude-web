@@ -39,7 +39,7 @@ import { modelCaps, nearestLevel } from '../models/catalog.js';
 import type { SplitMain, SplitSub } from './split.js';
 import { UpstreamError, applyExtraHeaders, decoded, decoder, errorHeaders, forwardHeaders, passthroughHeaders, readText, replaceTopLevelString, responseHeaders, sendUpstream, translatedHeaders, waitDrain, withTimeout, type UpstreamResponse } from './upstream.js';
 import { tr } from '../i18n/index.js';
-import { PrivacyBlocked, privacyErrorStatus, type PrivacyGuard, type PrivacyService } from '../privacy/service.js';
+import { NO_RETRY, PrivacyBlocked, privacyErrorStatus, type PrivacyGuard, type PrivacyService } from '../privacy/service.js';
 import { PrivacyRelay, RELAY_PREFIX } from '../privacy/relay.js';
 import type { PrivacyRecord } from '../privacy/types.js';
 import { Router, type RoutePlan } from '../routing/router.js';
@@ -138,7 +138,9 @@ interface ResolvedMember { m: GatewayMember; key: string; target: GatewayTarget;
 
 type Attempt =
   | { kind: 'done'; status: number; usage: IrUsage | null; firstByteMs: number; model: string }
-  | { kind: 'final'; status: number; text: string; headers: http.IncomingHttpHeaders; passthrough: boolean; model: string }
+  // `own`: headers of the gateway's own refusal (a privacy one: x-should-retry), sent as they are — `headers` are an
+  // upstream's, of which only a few go on (errorHeaders)
+  | { kind: 'final'; status: number; text: string; headers: http.IncomingHttpHeaders; passthrough: boolean; model: string; own?: Readonly<Record<string, string>> }
   | { kind: 'switch'; status: number; message: string; text?: string; headers?: http.IncomingHttpHeaders; passthrough: boolean; model: string }
   | { kind: 'broken'; status: number; message: string; firstByteMs: number; model: string } // failed after committing
   | { kind: 'aborted'; status: 499; message: string; firstByteMs?: number; model: string }; // the client went away
@@ -1126,15 +1128,18 @@ export class GatewayService extends EventEmitter {
     let up: UpstreamResponse;
     // 隐私保护 on this route too (it goes straight to the main conversation's / the account's endpoint)
     if (this.deps.privacy && body.length) {
+      let guard: PrivacyGuard | null = null;
       try {
-        const guard = this.deps.privacy.forRequest({ url: target, source: tr('子代理分流') });
+        guard = this.deps.privacy.forRequest({ url: target, source: tr('子代理分流') });
         if (guard) {
+          await guard.prepare(body); // the optional local model, as on every other route (rules only here until 2026-11-21)
           body = guard.body(body);
           guard.restore(res, false);
           guard.done();
         }
       } catch (e: any) {
-        return this.sendError(res, 'anthropic', privacyErrorStatus(e), e?.message ?? String(e));
+        guard?.done(e instanceof PrivacyBlocked); // a block counts on the privacy page, as on the other routes
+        return this.sendError(res, 'anthropic', privacyErrorStatus(e), e?.message ?? String(e), { ...NO_RETRY });
       }
     }
     try {
@@ -1359,8 +1364,8 @@ export class GatewayService extends EventEmitter {
         });
       } else this.record(ctx, p, outbound, a, tried - 1);
       if (a.kind === 'final') {
-        if (a.passthrough) res.writeHead(a.status, { ...errorHeaders(a.headers), 'content-type': String(a.headers['content-type'] ?? 'application/json') }).end(a.text);
-        else this.sendError(res, inbound, a.status, upstreamErrorMessage(a.text), errorHeaders(a.headers));
+        if (a.passthrough) res.writeHead(a.status, { ...errorHeaders(a.headers), ...a.own, 'content-type': String(a.headers['content-type'] ?? 'application/json') }).end(a.text);
+        else this.sendError(res, inbound, a.status, upstreamErrorMessage(a.text), { ...errorHeaders(a.headers), ...a.own });
       }
       return;
     }
@@ -1544,8 +1549,10 @@ export class GatewayService extends EventEmitter {
       const blocked = e instanceof PrivacyBlocked;
       const rec = guard?.done(blocked);
       if (rec) ctx.privacy = rec;
-      const status = blocked ? 403 : 503;
-      return { kind: 'final', status, text: JSON.stringify(renderInboundError(route.inbound, status, e?.message ?? String(e))), headers: {}, passthrough: true, model };
+      // 400 a block rule or a needed local model that cannot run (not a 403 the CLI reads as a login failure, not a 5xx
+      // it would retry and call temporary), 503 the pipeline failing; never worth a retry (NO_RETRY)
+      const status = privacyErrorStatus(e);
+      return { kind: 'final', status, text: JSON.stringify(renderInboundError(route.inbound, status, e?.message ?? String(e))), headers: {}, passthrough: true, model, own: NO_RETRY };
     }
     // 插件 (plugins/): request-before runs after the redaction above, so a plugin only ever sees placeholders. Nothing
     // is called (and no byte changes) when no enabled plugin declares the hook.

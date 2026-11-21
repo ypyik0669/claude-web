@@ -31,6 +31,12 @@ describe('classifyError', () => {
     [{ status: null, text: 'Error streaming (non-streaming fallback disabled): event referenced an unstarted content block' }, 'stream'],
     [{ terminalReason: 'aborted_streaming' }, 'aborted'],
     [{ terminalReason: 'api_error' }, 'server'],
+    // claude-web's own privacy protection kept it on this computer: not the key (403), not the upstream (5xx), and a
+    // retry gets the same answer (2026-11-21: a missing local model read as a temporary upstream failure)
+    [{ status: 400, text: 'API Error: 400 请求没有发出：隐私保护要用本地模型找人名，但它的文件不在这台电脑上，重试也一样。到「模型看板 › 隐私」重新下载本地模型，或者关掉「用本地模型查找」。' }, 'privacy'],
+    [{ error: 'server_error', text: "API Error: 400 The request was not sent: privacy protection needs the local model to find Person names, but its files aren't on this computer, so retrying won't help." }, 'privacy'],
+    [{ status: 403, text: 'API Error: 403 按隐私设置拦截：内容里有 手机号，请求没有发出' }, 'privacy'],
+    [{ status: 503, text: 'API Error: 503 Privacy protection failed, so the request was not sent: boom' }, 'privacy'],
     [{}, 'unknown'],
   ] as const)('%o → %s', (sig, kind) => {
     expect(classifyError(sig as any)).toBe(kind);

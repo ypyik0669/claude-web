@@ -195,6 +195,19 @@ export class PrivacyModel {
     });
   }
 
+  /**
+   * Why it cannot run on this computer right now, or null when it can (in memory already, or every file checked and a
+   * runtime to load it with): 'files' — never downloaded here, or deleted since (a copy of the data folder that left
+   * privacy-model/ out); 'runtime' — onnxruntime missing; 'downloading' — on its way. No file is read once it is loaded.
+   */
+  missing(): 'files' | 'runtime' | 'downloading' | null {
+    if (this.loaded) return null;
+    const files = this.installed();
+    if (files && this.runtime()) return null;
+    if (this.dl) return 'downloading';
+    return files ? 'runtime' : 'files';
+  }
+
   status(): PrivacyModelStatus {
     return {
       id: this.id, name: this.name, size: this.size(), runtime: this.runtime(), installed: this.installed(),
@@ -336,7 +349,9 @@ export class PrivacyModel {
       const key = crypto.createHash('sha1').update(t).digest('base64');
       let spans = this.cache.get(key);
       if (!spans) {
-        spans = await findIn(m.tok, m.logits, t);
+        // a failure while running is shown on the model's card like a load failure: a request that goes on with the
+        // rules alone (no type needs the model) leaves no other trace of it
+        try { spans = await findIn(m.tok, m.logits, t); } catch (e: any) { this.error = String(e?.message ?? e); this.changed(); throw e; }
         this.cache.set(key, spans);
         if (this.cache.size > CACHE) this.cache.delete(this.cache.keys().next().value!);
       } else { this.cache.delete(key); this.cache.set(key, spans); }

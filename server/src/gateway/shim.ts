@@ -40,7 +40,7 @@ import { SseParser } from './sse.js';
 import type { IrEvent, IrUsage } from './ir.js';
 import { CACHE_KEY_MAX, SseLines, addMissing, affinityHeaders, dropEmptyReasoning, fixChatUsage, forcesTool, insertTopLevelField, isParamRejection, mentionsCacheKey, mentionsEffort, refusesForcedTool, thinkingOff } from './cache.js';
 import { UpstreamError, decoded, errorHeaders, passthroughHeaders, readText, responseHeaders, sendUpstream, waitDrain, withTimeout, type UpstreamResponse } from './upstream.js';
-import { privacyErrorStatus, type PrivacyService } from '../privacy/service.js';
+import { NO_RETRY, PrivacyBlocked, privacyErrorStatus, type PrivacyGuard, type PrivacyService } from '../privacy/service.js';
 import { tr } from '../i18n/index.js';
 
 export const SHIM_PREFIX = '/gateway/~p/';
@@ -168,9 +168,13 @@ export class CacheShim {
     // between them, the retries) is built from the redacted body; what goes back to the client is restored. On and
     // failing → refused, never sent raw.
     if (this.deps.privacy && (isChat || isResponses) && raw.length) {
+      let guard: PrivacyGuard | null = null;
       try {
-        const guard = this.deps.privacy.forRequest({ url: p.baseUrl || DEFAULT_BASE[p.type], source: p.name });
+        guard = this.deps.privacy.forRequest({ url: p.baseUrl || DEFAULT_BASE[p.type], source: p.name });
         if (guard) {
+          // the optional local model (names / addresses) too, as on the relay and the gateway: it was rules only here
+          // until 2026-11-21, so a Codex / OpenAI-format conversation never had its names looked for by the model
+          await guard.prepare(raw);
           raw = guard.body(raw);
           if (guard.redacted) {
             try { json = JSON.parse(raw.toString('utf8')); } catch { /* not ours to fix */ }
@@ -179,7 +183,8 @@ export class CacheShim {
           guard.done();
         }
       } catch (e: any) {
-        return this.fail(res, privacyErrorStatus(e), e?.message ?? String(e));
+        guard?.done(e instanceof PrivacyBlocked); // a block counts on the privacy page, as on the other routes
+        return this.fail(res, privacyErrorStatus(e), e?.message ?? String(e), { ...NO_RETRY });
       }
     }
     // the affinity headers name the conversation the way its body does: Codex sends its own prompt_cache_key (the

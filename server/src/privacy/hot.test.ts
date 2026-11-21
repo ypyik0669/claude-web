@@ -112,7 +112,7 @@ describe('the relay applies a change to a running conversation', () => {
 
 describe('the local model in the pipeline', () => {
   const stub = (find: (texts: string[]) => Promise<any[][]>) => ({
-    find, listen() {}, installed: () => true, runtime: () => true,
+    find, listen() {}, installed: () => true, runtime: () => true, missing: () => null,
     status: () => ({ id: 'astrlink-guard', name: 'AstrLink Guard', size: 1, runtime: true, installed: true }),
   });
   const on: Partial<PrivacySettings> = { enabled: true, skipLocal: false, actions: { ...DEFAULT_PRIVACY.actions, name: 'redact', address: 'redact' } };
@@ -138,11 +138,14 @@ describe('the local model in the pipeline', () => {
     expect(seenTexts).not.toContain('m');
   });
 
-  it('a model that fails while on refuses the request', async () => {
+  it('a model that fails while on refuses the request (names / addresses need it)', async () => {
     const p = mk({ ...on }, stub(async () => { throw new Error('no runtime'); }));
     await p.set({ model: { enabled: true, minScore: 0.8 } });
     const g = p.forRequest({ source: 'relay', cloud: true })!;
-    await expect(g.prepare(Buffer.from('{"messages":[{"role":"user","content":"hi there"}]}'))).rejects.toBeInstanceOf(PrivacyFailed);
+    const e = await g.prepare(Buffer.from('{"messages":[{"role":"user","content":"hi there"}]}')).catch((x) => x);
+    expect(e).toBeInstanceOf(PrivacyFailed);
+    expect(e.status).toBe(400);
+    expect(e.message).toContain('no runtime');
   });
 
   it('privacy off or the model off: prepare does nothing', async () => {

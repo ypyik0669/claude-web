@@ -78,6 +78,14 @@ describe('English texts that other code matches on', () => {
     expect(of('原文：')).toBe('Original: ');
     expect(of('{replace} (分叉)')).toBe('{replace} (fork)');
   });
+
+  it('a privacy refusal (model/health.ts PRIVACY_REFUSAL: not a login, not an upstream failure)', () => {
+    expect(of('隐私保护处理失败，请求没有发出：{cause}')).toMatch(/privacy protection failed/i);
+    expect(of('按隐私设置拦截：内容里有 {cats}，请求没有发出')).toMatch(/blocked by your privacy settings/i);
+    const model = startsWith('请求没有发出：隐私保护要用本地模型');
+    expect(model.length).toBe(2);
+    for (const v of model) expect(v).toMatch(/privacy protection needs the local model/i);
+  });
 });
 
 /**

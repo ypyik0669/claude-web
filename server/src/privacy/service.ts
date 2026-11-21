@@ -1,7 +1,7 @@
 // The privacy pipeline's owner (spec 2026-10-27 §7.6): settings in meta.json (`privacy`), the per-process placeholder
 // HMAC key, and the hit counters the privacy center shows. Request paths ask `forRequest()` for a guard.
 import type { MetaStore } from '../meta/store.js';
-import { tr } from '../i18n/index.js';
+import { tr, trAs } from '../i18n/index.js';
 import { compile, customDetectors, PROCESS_SECRET, redactText, scrubForLog, TAG, type Compiled } from './detect.js';
 import { redactBody, redactValue, restoreResponse } from './pipeline.js';
 import path from 'node:path';
@@ -10,13 +10,17 @@ import { PrivacyModel } from './model/index.js';
 import { maskOutput, outputCompiled } from './output.js';
 import { RecordStore } from './records.js';
 import type { PrivacyCoverage } from './types.js';
-import { DEFAULT_PRIVACY, PRIVACY_CATEGORIES, type PrivacyCategory, type PrivacyHit, type PrivacyPreview, type PrivacyRecord, type PrivacyRequest, type PrivacySettings, type PrivacyStats, type PrivacyStatus } from './types.js';
+import { DEFAULT_PRIVACY, modelNeededFor, PRIVACY_CATEGORIES, type PrivacyCategory, type PrivacyHit, type PrivacyPreview, type PrivacyRecord, type PrivacyRequest, type PrivacySettings, type PrivacyStats, type PrivacyStatus } from './types.js';
 import type http from 'node:http';
 
 /** The request was refused by a `block` rule: nothing was sent. */
 export class PrivacyBlocked extends Error {
-  /** 403: the content is the caller's problem; nothing left the machine. */
-  readonly status = 403;
+  /**
+   * 400: the content is the caller's problem; nothing left the machine. Not 403 (until 2026-11-21): the official CLI
+   * and ccb read every 401 / 403 as a login failure (「Please run /login」 / 「Invalid API key」), so a block rule looked
+   * like a broken key; a 400 they show as it is (「API Error: 400 按隐私设置拦截…」) and never retry.
+   */
+  readonly status = 400;
   constructor(readonly categories: PrivacyCategory[]) {
     super(tr('按隐私设置拦截：内容里有 {cats}，请求没有发出', { cats: categories.map(categoryLabel).join('、') }));
   }
@@ -24,12 +28,45 @@ export class PrivacyBlocked extends Error {
 /** The pipeline itself failed while it is on: the request is refused (fail closed), never sent raw. */
 export class PrivacyFailed extends Error {
   /** 503: the protection is unavailable, so the request is not sent (never fall back to plaintext). */
-  readonly status = 503;
-  constructor(cause: string) { super(tr('隐私保护处理失败，请求没有发出：{cause}', { cause })); }
+  readonly status: number = 503;
+  constructor(cause: string, message = tr('隐私保护处理失败，请求没有发出：{cause}', { cause })) { super(message); }
 }
 
-/** The status a refused request gets: 403 for a block rule, 503 for the pipeline failing (fail closed). */
-export const privacyErrorStatus = (e: unknown): number => (e instanceof PrivacyBlocked ? 403 : 503);
+/**
+ * The local model is needed — 用本地模型查找 is on, and so is a type only it finds (types.ts NEEDS_MODEL) — but it
+ * cannot run on this computer: its files or its runtime are not here (never downloaded on this machine, deleted, or a
+ * copy of the data folder that left privacy-model/ out), it is still downloading, or it fails to run. Sending anyway
+ * would let out the names / addresses the user asked to protect, so the request is refused, and the message says
+ * where to fix it (download it again on the privacy page, or turn the model off). No download is started from here:
+ * it is 100+ MB the user did not ask for at this moment, and the page has the button.
+ *
+ * 400, not PrivacyFailed's 503: nothing is down and the same request gets the same answer until the user acts. The
+ * official CLI retries every 5xx and words it as "a server-side issue, usually temporary — try again in a moment";
+ * a plain 400 it shows as it is ("API Error: 400 …") and never retries — the Anthropic and OpenAI SDKs retry only
+ * 408 / 409 / 429 / 5xx too. 401 / 403 the CLI reads as a login problem. Every privacy refusal also carries
+ * `x-should-retry: false` (NO_RETRY), which the CLI and both SDKs also go by (it stops even a 5xx being retried).
+ */
+export class PrivacyModelUnavailable extends PrivacyFailed {
+  override readonly status: number = 400;
+  constructor(readonly categories: PrivacyCategory[], why: 'files' | 'runtime' | 'downloading' | { error: string }) {
+    const cats = categories.map(categoryLabel).join(trAs('、', ' and '));
+    super(typeof why === 'object' ? why.error : why, why === 'downloading'
+      ? tr('请求没有发出：隐私保护要用本地模型找{cats}，模型还在下载，下载完再发。', { cats })
+      : tr('请求没有发出：隐私保护要用本地模型找{cats}，但{why}，重试也一样。到「模型看板 › 隐私」重新下载本地模型，或者关掉「用本地模型查找」。', {
+        cats,
+        why: why === 'files' ? tr('它的文件不在这台电脑上') : why === 'runtime' ? tr('它的运行库不在这台电脑上') : tr('它跑不了（{error}）', { error: why.error }),
+      }));
+  }
+}
+
+/**
+ * The status a refused request gets: 400 for a block rule and for a needed local model that cannot run, 503 for the
+ * pipeline failing (fail closed).
+ */
+export const privacyErrorStatus = (e: unknown): number => (e instanceof PrivacyBlocked || e instanceof PrivacyFailed ? e.status : 503);
+
+/** Headers on every privacy refusal: the same request would be refused again, so a client should not retry it. */
+export const NO_RETRY: Readonly<Record<string, string>> = { 'x-should-retry': 'false' };
 
 export function categoryLabel(c: PrivacyCategory): string {
   switch (c) {
@@ -80,10 +117,20 @@ export class PrivacyGuard {
   constructor(private svc: PrivacyService, private c: Compiled, readonly source: string) {}
   /**
    * With the local model on: run it over every text this body would send (async; call before body()). Paths that do
-   * not call it get the rules only. The model failing while it is on refuses the request (PrivacyFailed).
+   * not call it get the rules only.
+   *
+   * When the model cannot run (not on this computer, still downloading, failing), what happens depends on the types
+   * that are on. One it is needed for (types.ts NEEDS_MODEL: names, addresses) → the request is refused
+   * (PrivacyModelUnavailable: 400, says how to fix it), never sent with those unprotected. Only types with rules of
+   * their own → the rules alone, which is all those types promise on the page; the privacy page shows that the model
+   * is missing or failing. Before 2026-11-21 any of this refused every request with a 503 the CLI retried and called
+   * temporary, whatever the types.
    */
   async prepare(b: Buffer): Promise<void> {
     if (!b.length || !this.svc.modelOn()) return;
+    const needed = modelNeededFor(this.svc.settings());
+    const missing = this.svc.model.missing();
+    if (missing && !needed.length) return;
     const texts = new Set<string>();
     const all = Object.fromEntries(PRIVACY_CATEGORIES.map((k) => [k, 'redact'])) as PrivacySettings['actions'];
     const collect: Compiled = { detectors: [], actions: all, allow: new Set(), bad: [], finders: [{ category: 'name', find: (t) => { if (t.trim().length >= 2) texts.add(t); return []; } }] };
@@ -92,10 +139,15 @@ export class PrivacyGuard {
     try { json = JSON.parse(raw); } catch { json = undefined; }
     if (json === undefined) texts.add(raw);
     else redactValue(json, collect, this.svc.secret(), new Map(), []);
+    // no text for it to look at (only pictures, ids, signatures): nothing it could protect, nothing to refuse for
     if (!texts.size) return;
+    if (missing) throw new PrivacyModelUnavailable(needed, missing);
     const list = [...texts];
     let found: { start: number; end: number; category: PrivacyCategory }[][];
-    try { found = await this.svc.model.find(list, this.svc.settings().model.minScore); } catch (e: any) { throw new PrivacyFailed(e?.message ?? String(e)); }
+    try { found = await this.svc.model.find(list, this.svc.settings().model.minScore); } catch (e: any) {
+      if (needed.length) throw new PrivacyModelUnavailable(needed, { error: String(e?.message ?? e) });
+      return; // the rules alone; the error is on the model's card (PrivacyModel keeps it)
+    }
     const spans = (this.modelSpans ??= new Map());
     list.forEach((t, i) => { if (found[i]?.length) spans.set(t, found[i]); });
     this.c = { ...this.c, finders: [...(this.c.finders ?? []), { category: 'name', find: (t) => spans.get(t) ?? [] }] };

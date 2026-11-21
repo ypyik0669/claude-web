@@ -3,6 +3,26 @@
 // `name`: Chinese names by rule (privacy/zhname.ts) and any name the local model finds; `address`: the local model only
 export type PrivacyCategory = 'api_key' | 'private_key' | 'jwt' | 'password' | 'email' | 'phone' | 'id_card' | 'bank_card' | 'name' | 'address' | 'custom';
 export const PRIVACY_CATEGORIES: PrivacyCategory[] = ['api_key', 'private_key', 'jwt', 'password', 'email', 'phone', 'id_card', 'bank_card', 'name', 'address', 'custom'];
+
+/**
+ * The types the local model is NEEDED for: nothing else finds an address, and the rule only knows Chinese names (the
+ * page promises English names too once the model is on). The model also finds emails, phone numbers, card numbers
+ * and passwords, but those types have rules of their own — what the page describes for them — and the rules keep
+ * working without it, so a missing model never stops a request that only those types look at (2026-11-21: a copied
+ * data folder without privacy-model/ refused every request although only rule types were on).
+ */
+export const NEEDS_MODEL: PrivacyCategory[] = ['name', 'address'];
+
+/**
+ * The types these settings count on the local model to protect: none unless 隐私保护 and 用本地模型查找 are both on,
+ * and only those set to redact or block — a `warn` type goes out as it is anyway, so nothing is lost without the model
+ * but the count.
+ */
+export function modelNeededFor(s: Pick<PrivacySettings, 'enabled' | 'actions' | 'model'>): PrivacyCategory[] {
+  if (!s.enabled || !s.model?.enabled) return [];
+  return NEEDS_MODEL.filter((c) => s.actions[c] === 'redact' || s.actions[c] === 'block');
+}
+
 /** off: not looked for; redact: placeholder out, original back; warn: sent as is, counted; block: the request is not sent */
 export type PrivacyAction = 'off' | 'redact' | 'warn' | 'block';
 

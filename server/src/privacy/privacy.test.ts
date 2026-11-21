@@ -346,7 +346,7 @@ describe('relay: fail closed', () => {
     const base = relay.base(upstream)!;
     const post = async (content: string) => {
       const r = await fetch(`${base}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content }] }) });
-      return { status: r.status, text: await r.text() };
+      return { status: r.status, text: await r.text(), headers: r.headers };
     };
     return { privacy, seen, post, root };
   };
@@ -403,10 +403,11 @@ describe('relay: fail closed', () => {
     expect(r.text).not.toContain(ANT_KEY);
   });
 
-  it('a block rule refuses with 403, counts it, and nothing is sent', async () => {
+  it('a block rule refuses with 400 (a 403 reads as a login failure in the CLI), counts it, and nothing is sent', async () => {
     const { privacy, seen, post } = await setup({ actions: { ...ALL_REDACT.actions, phone: 'block' } });
     const r = await post('call 13812345678');
-    expect(r.status).toBe(403);
+    expect(r.status).toBe(400);
+    expect(r.headers.get('x-should-retry')).toBe('false');
     expect(seen).toEqual([]);
     expect(privacy.status().stats.blocked).toBe(1);
   });

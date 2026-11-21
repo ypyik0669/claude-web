@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { PrivacyAction, PrivacyCategory, PrivacyPreview, PrivacySettings, PrivacyStatus } from '@shared';
+import { modelNeededFor, type PrivacyAction, type PrivacyCategory, type PrivacyPreview, type PrivacySettings, type PrivacyStatus } from '@shared';
 import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { Select } from '@/ui/Select';
 import { dlg } from '@/ui/dialog';
 import { imeComposing } from '@/ui/ime';
 import { Icon } from '@/ui/icons';
-import { dateLocale, tr } from '@/i18n';
+import { dateLocale, tr, trAs } from '@/i18n';
 import { actionName, CATEGORIES, categoryName } from '@/features/privacy/PrivacyCenter';
 
 const ACTIONS: PrivacyAction[] = ['off', 'redact', 'warn', 'block'];
@@ -157,6 +157,11 @@ export function PrivacyPage() {
 
   const recent = st.stats.recent.slice(0, 50);
   const dl = model?.downloading;
+  // 用本地模型查找 is on but the model cannot run (its files or runtime are not on this computer — deleted, or a copied
+  // data folder without privacy-model/): requests that need it for names / addresses are refused, the rest go on with
+  // the rules alone (server: PrivacyGuard.prepare)
+  const modelDown = s.enabled && s.model.enabled && !!model && (!model.installed || !model.runtime);
+  const needs = modelNeededFor(s);
 
   return (
     <div className="hub-body" data-privacy-page>
@@ -249,6 +254,14 @@ export function PrivacyPage() {
                   {tr('这台电脑的系统没有可下载的运行库，本地模型用不了。')}
                 </div>
               )}
+              {modelDown && (
+                <div className="hub-row hub-sml" role="alert" data-privacy-model-missing style={{ color: needs.length ? 'var(--err)' : 'var(--warn)', marginBottom: 8 }}>
+                  <Icon name="alert" size={13} />
+                  {needs.length
+                    ? tr('「用本地模型查找」开着，但模型现在用不了：要找{cats}的请求不会发出，直到重新下载好，或者关掉它。', { cats: needs.map(categoryName).join(trAs('、', ' and ')) })
+                    : tr('「用本地模型查找」开着，但模型现在用不了：请求照常发出，只按规则找。重新下载，或者关掉它。')}
+                </div>
+              )}
               {model && !dl && (!model.installed || (!model.runtime && model.runtimeSize !== undefined)) && (() => {
                 const needRuntime = !model.runtime && model.runtimeSize !== undefined;
                 const bytes = (model.installed ? 0 : model.size) + (needRuntime ? model.runtimeSize ?? 0 : 0);
@@ -273,29 +286,30 @@ export function PrivacyPage() {
                   </div>
                 </div>
               )}
+              {/* shown while it is on even with its files gone: turning it off is the other way out of the notice above */}
+              {(model?.installed || s.model.enabled) && (
+                <Toggle
+                  title={tr('用本地模型查找')}
+                  desc={tr('找到的按上面对应类型的处理方式办。人名、地址要靠它找：这两类设成脱敏或拦截而它跑不了时，请求不发出；其它类型这时只按规则找。')}
+                  on={s.model.enabled}
+                  disabled={!s.model.enabled && !(model?.installed && model.runtime)}
+                  onChange={(v) => void save({ model: { ...s.model, enabled: v } })}
+                />
+              )}
               {model?.installed && (
-                <>
-                  <Toggle
-                    title={tr('用本地模型查找')}
-                    desc={tr('找到的按上面对应类型的处理方式办；模型出错时请求不发出')}
-                    on={s.model.enabled}
-                    disabled={!model.runtime}
-                    onChange={(v) => void save({ model: { ...s.model, enabled: v } })}
-                  />
-                  <div className="hub-setrow">
-                    <div className="tx">
-                      <b>{tr('把握多大才算')}</b>
-                      <span>{tr('越高越少误遮，也越容易漏')}</span>
-                    </div>
-                    <Select
-                      className="field"
-                      value={String(s.model.minScore)}
-                      aria-label={tr('把握多大才算')}
-                      onValueChange={(v) => void save({ model: { ...s.model, minScore: Number(v) } })}
-                      options={['0.6', '0.7', '0.8', '0.9'].map((v) => ({ value: v, label: `${Math.round(Number(v) * 100)}%` }))}
-                    />
+                <div className="hub-setrow">
+                  <div className="tx">
+                    <b>{tr('把握多大才算')}</b>
+                    <span>{tr('越高越少误遮，也越容易漏')}</span>
                   </div>
-                </>
+                  <Select
+                    className="field"
+                    value={String(s.model.minScore)}
+                    aria-label={tr('把握多大才算')}
+                    onValueChange={(v) => void save({ model: { ...s.model, minScore: Number(v) } })}
+                    options={['0.6', '0.7', '0.8', '0.9'].map((v) => ({ value: v, label: `${Math.round(Number(v) * 100)}%` }))}
+                  />
+                </div>
               )}
               {model && !dl && (model.installed || model.runtimeOwn) && (
                 <button className="btn sm ghost" onClick={() => void removeModel()}>{model.runtimeOwn ? tr('删除模型和运行库') : tr('删除模型')}</button>

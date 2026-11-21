@@ -1,7 +1,15 @@
 import { tr } from '@/i18n';
 // Pure helpers that turn SDK error / timing signals into UI-facing health state. No DOM, no store.
 
-export type ErrorKind = 'throttled' | 'quota' | 'balance' | 'network' | 'stream' | 'credential' | 'context' | 'output_cap' | 'server' | 'refusal' | 'aborted' | 'history' | 'unknown';
+export type ErrorKind = 'throttled' | 'quota' | 'balance' | 'network' | 'stream' | 'credential' | 'context' | 'output_cap' | 'server' | 'refusal' | 'aborted' | 'history' | 'privacy' | 'unknown';
+
+/**
+ * claude-web's own privacy protection kept the request on this computer (server/src/privacy/service.ts: a block rule,
+ * a local model that is needed and cannot run, the pipeline failing). Not the upstream and not the key — a block (403
+ * before 2026-11-21) read as 「凭证失效」 and the 503s as 「上游故障，稍后重试」 — and a retry gets the same answer. Matched on its wording in
+ * both languages; i18n/coverage.test.ts keeps the English saying these words.
+ */
+const PRIVACY_REFUSAL = /隐私保护处理失败|按隐私设置拦截|隐私保护要用本地模型|privacy protection failed|blocked by your privacy settings|privacy protection needs the local model/;
 
 export interface ErrorSignal {
   /** SDKAssistantMessageError / api_retry.error */
@@ -23,6 +31,7 @@ export function classifyError(s: ErrorSignal): ErrorKind {
   const tr = (s.terminalReason ?? '').toLowerCase();
   const text = (s.text ?? '').toLowerCase();
   const st = s.status ?? undefined;
+  if (PRIVACY_REFUSAL.test(text)) return 'privacy';
   // the history the engine sent holds a block the API refuses (an empty text from a picture sent alone before
   // 2026-10-17; another vendor's blank or unsigned thinking, the conversation switched to Claude): the server takes it
   // out of the transcript and starts the process over (session-runner dropEmptyBlocks) — a retry goes through
@@ -60,6 +69,7 @@ export const ERROR_LABEL: Record<ErrorKind, string> = {
   refusal: tr('模型拒答'),
   aborted: tr('已中断'),
   history: tr('对话记录有误'),
+  privacy: tr('被隐私保护拦下'),
   unknown: tr('未知错误'),
 };
 
@@ -76,6 +86,7 @@ export const ERROR_HINT: Record<ErrorKind, string> = {
   refusal: tr('模型拒绝了这个请求；换个说法或换模型。'),
   aborted: tr('这一轮被中断了，可以直接继续发消息。'),
   history: tr('这个对话的记录里有接口不收的内容（只发一张图片时留下的空文字，或别家模型的思考），已经自动去掉了：点重试或再发一次就行。'),
+  privacy: tr('请求在这台电脑上就停下了，没有发给模型；不是上游故障，重试也一样。照错误里说的办：到「模型看板 › 隐私」改那一类的设置，或者重新下载本地模型。'),
   unknown: tr('看结果行里的原始错误文本。'),
 };
 

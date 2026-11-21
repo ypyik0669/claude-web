@@ -92,8 +92,10 @@ describe('the local PII model', () => {
     const base = await serve({ '/rev1/int8/tokenizer.json': tj, '/rev1/int8/model_int8.onnx': onnx });
     const root = mkdir();
     expect(new PrivacyModel(null).status()).toMatchObject({ installed: false });
+    expect(new PrivacyModel(null).missing()).toBe('files');
     const bare = new PrivacyModel(root, { files, base: `${base}/`, rev: 'rev1', runtimeAvailable: () => false });
     expect(bare.status()).toMatchObject({ installed: false, runtime: false });
+    expect(bare.missing()).toBe('files');
     await expect(bare.find(['x'], 0.8)).rejects.toThrow();
 
     const m = new PrivacyModel(root, { files, base: `${base}/`, rev: 'rev1', logits: async () => fakeLogits });
@@ -103,13 +105,22 @@ describe('the local PII model', () => {
     expect(pushes).toBeGreaterThan(0);
     expect(m.status()).toMatchObject({ installed: true, runtime: true });
     expect(m.status().error).toBeUndefined();
+    expect(m.missing()).toBeNull();
+    // the files there but no runtime to run them with
+    expect(new PrivacyModel(root, { files, rev: 'rev1', runtimeAvailable: () => false }).missing()).toBe('runtime');
+    // a failure while running shows on the card (a request that went on with the rules alone leaves no other trace)
+    const broken = new PrivacyModel(root, { files, rev: 'rev1', logits: async () => async () => { throw new Error('session crashed'); } });
+    await expect(broken.find(['ask Rina'], 0.8)).rejects.toThrow('session crashed');
+    expect(broken.status().error).toBe('session crashed');
     const [got] = await m.find(['ask Rina Kowalczyk about it'], 0.8);
     expect(got).toEqual([{ start: 4, end: 18, category: 'name' }]);
-    // a file changed on disk after the check is no longer installed
+    // a file changed on disk after the check is no longer installed (one already in memory still runs)
     fs.appendFileSync(path.join(m.dir()!, 'tokenizer.json'), ' ');
     expect(m.installed()).toBe(false);
+    expect(m.missing()).toBeNull();
     await m.remove();
     expect(fs.existsSync(m.dir()!)).toBe(false);
+    expect(m.missing()).toBe('files');
   });
 
   it('a download that fails says why and installs nothing', async () => {
