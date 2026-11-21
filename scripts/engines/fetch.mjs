@@ -8,11 +8,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { unpackEntry } from '../lib/unpack.mjs';
 
-const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'server/src/engines/manifests/bundled.json'), 'utf8'));
 const argv = process.argv.slice(2);
@@ -25,20 +23,6 @@ const current = `${process.platform}-${process.arch}`;
 const wanted = argv.includes('--all') ? null : arg('--platform', current);
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-async function unpack(archive, file, dest) {
-  const opts = { windowsHide: true, timeout: 120_000 };
-  if (archive === 'zip') {
-    if (process.platform === 'win32') {
-      const q = (s) => `'${s.replace(/'/g, "''")}'`;
-      await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${q(file)} -DestinationPath ${q(dest)} -Force`], opts);
-      return;
-    }
-    await exec('unzip', ['-o', file, '-d', dest], opts);
-    return;
-  }
-  const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-  await exec(tar, ['-xzf', file, '-C', dest], opts);
-}
 
 const jobs = [];
 for (const [id, entry] of Object.entries(manifest)) {
@@ -82,13 +66,7 @@ for (const { id, version, platform, asset } of jobs) {
         fs.renameSync(dl, packed);
         const extracted = path.join(tmp, 'x');
         fs.mkdirSync(extracted, { recursive: true });
-        await unpack(asset.archive, packed, extracted);
-        found = path.join(extracted, asset.entry);
-        if (!fs.existsSync(found)) {
-          for (const d of fs.readdirSync(extracted, { withFileTypes: true })) {
-            if (d.isDirectory() && fs.existsSync(path.join(extracted, d.name, asset.entry))) { found = path.join(extracted, d.name, asset.entry); break; }
-          }
-        }
+        found = await unpackEntry(asset.archive, packed, extracted, asset.entry, (l) => console.log(`${l.slice(0, 5)}${id} ${platform}: ${l.slice(5)}`));
       }
       if (!found || !fs.existsSync(found)) throw new Error(`no ${asset.entry} in the package`);
       fs.mkdirSync(destDir, { recursive: true });
