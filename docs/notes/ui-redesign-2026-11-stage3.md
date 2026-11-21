@@ -131,3 +131,13 @@
 - 手机行菜单去掉了「在新标签打开 / 在右侧打开」（方案没提，手机上点了看不到结果）。
 - 旁聊不缩进（它不产生对话）。
 - 机器 › 只在别的电脑有对话时出现（阶段 C 就是这样）。
+
+## 侧栏 ＋ 和别处开的新对话用哪个模型（2026-11-21，安装包复测）
+
+- 以前侧栏的 ＋ / 「在这里新建对话」（项目、文件夹、worktree）、Git 视图的 worktree、看板、任务 chip 都是 `openSession({ cwd })` 什么也不带，
+  服务端就用 Claude 账号：只接了中转、没设默认供应商时，新对话说「这个对话没有能用的模型来源」，模型 chip 也显示账号的模型。
+- 现在都走 `features/composer/new-conversation.ts`：`newConversationPick()` 和首页一样挑（`welcome-provider.ts` 的 `startPick`：上次用的
+  agent / 供应商 / 模型 → 默认供应商 → 能用的第一个），账号没登录时先弹「先接一个模型」（`withUsableModel`，原因 `'new'`），关掉就不开。
+  首页的发送也问的是同一个 `withUsableModel`。任务 chip 优先用它所在对话的 agent / 供应商 / 模型（`resumeView`），那个对话没在这个窗口跑才用首页的挑法；
+  别的电脑上的对话照旧交给那台电脑。`new-conversation.test.ts` 扫源码，裸的 `openSession({ cwd })` 会让测试失败。
+- 注意「上次用的」存在 localStorage（`cw.lastProvider` 等，作曲框原来就这样）：桌面版每次启动 origin 都变，重启后从默认供应商起。

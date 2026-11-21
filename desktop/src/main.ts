@@ -23,6 +23,7 @@ import { CrashGuard, allowNavigation, externalAllowed, sameOrigin, windowOpenAct
 import { FileGuard, guardSession } from './file-guard';
 import { fromOurWindow, openablePath, type IpcAsker } from './ipc-guard';
 import { pastedFiles } from './clipboard-files';
+import { LAST_PICK_FILE, dialogStart, readLastPick, saveLastPick } from './dialog-start';
 import { CAFE_SCRIPT_URL, OPENING_SCHEME, fancyOpeningHtml, logoTarget, openingHold, openingHtml, openingLength, setOpeningNote } from './opening';
 import { cafeScriptPath, chooseOpening, dataDir, groundOf, localDay, openingSettings, packFileUrl, packResponse, pickOpening, readMetaSettings, readWebEntry } from './opening-pack';
 
@@ -922,9 +923,18 @@ ipcMain.handle('desktop:pickFile', async (e, o?: unknown) => {
   return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.handle('desktop:pickDir', async (e, o?: unknown) => {
+  if (!ours(e)) return null;
   const w = BrowserWindow.fromWebContents(e.sender) ?? focusedWin();
-  const r = await dialog.showOpenDialog(w!, { properties: ['openDirectory', 'createDirectory'], title: tr('选择工作目录'), ...dialogOpts(o) });
-  return r.canceled ? null : r.filePaths[0];
+  // where it opens (dialog-start.ts): the page's start — checked, a gone one → the nearest folder above it — else the
+  // system's own place, unless the last pick here is gone (Windows would first say 「Location is not available」)
+  const lastFile = path.join(app.getPath('userData'), LAST_PICK_FILE);
+  const start = o && typeof o === 'object' ? (o as { start?: unknown }).start : undefined;
+  const at = await dialogStart({ start, last: await readLastPick(lastFile), home: app.getPath('home') });
+  const r = await dialog.showOpenDialog(w!, { properties: ['openDirectory', 'createDirectory'], title: tr('选择工作目录'), ...dialogOpts(o), ...(at ? { defaultPath: at } : {}) });
+  const picked = r.canceled ? undefined : r.filePaths[0];
+  if (!picked) return null;
+  void saveLastPick(lastFile, picked);
+  return picked;
 });
 // 开场动画: only the opening page itself (the main window's data: page) says these
 const fromOpening = (e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) => {

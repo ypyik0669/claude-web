@@ -1,6 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
-import { extraDirsChange, normFolders, ownDirs, projectFolders, sameDir, workDirs } from './workspace-folders.js';
+import { extraDirsChange, normFolders, ownDirs, projectFolders, projectPath, sameDir, workDirs } from './workspace-folders.js';
+
+// workspaces.add (2026-11-21): `addWorkspace('')` added the server's own working directory as a project
+describe('projectPath', () => {
+  it('a full path is taken as given', () => {
+    expect(projectPath('C:\\code\\app', 'win32')).toBe('C:\\code\\app');
+    expect(projectPath('C:/code/app', 'win32')).toBe('C:/code/app');
+    expect(projectPath('\\\\nas\\share\\app', 'win32')).toBe('\\\\nas\\share\\app');
+    expect(projectPath('/home/me/app', 'linux')).toBe('/home/me/app');
+  });
+  it('empty, blank or not a string: refused', () => {
+    for (const p of ['', '   ', '\t', undefined, null, 42, {}]) expect(() => projectPath(p, 'win32'), String(p)).toThrow(/不能为空/);
+  });
+  it('relative ones — and on Windows ones without a drive or share — are refused, naming what was given', () => {
+    // ` \\host\share`: the hub's refusePeerUnc saw this exact string, so it is not trimmed into a share
+    for (const p of ['scratchpad', '.', '..\\x', 'C:proj', '\\foo', '/foo', ' C:\\x', ' \\\\host\\share']) expect(() => projectPath(p, 'win32'), p).toThrow(/完整路径/);
+    for (const p of ['scratchpad', './x', 'C:\\x', '~/x', ' /home/me']) expect(() => projectPath(p, 'linux'), p).toThrow(/完整路径/);
+    expect(() => projectPath('scratchpad', 'win32')).toThrow(/scratchpad/);
+  });
+});
 
 const id = (p: string) => p;
 describe('normFolders', () => {

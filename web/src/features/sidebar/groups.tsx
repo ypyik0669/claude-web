@@ -14,16 +14,20 @@ import { tr } from '@/i18n';
 import { openProjectDialog } from './project-dialog-open';
 import { useLongPress } from '@/ui/long-press';
 import { haptic } from '@/ui/haptics';
+import { openNewConversation } from '@/features/composer/new-conversation';
 
-/** A project's ··· / right-click menu (a project = a workspace folder; the data keeps calling it a workspace). */
+/**
+ * A project's ··· / right-click menu (a project = a workspace folder; the data keeps calling it a workspace). Its new
+ * conversations (and a folder's) start on what the start page would start them on (openNewConversation).
+ */
 export function ProjectMenu({ w, onClose }: { w: Workspace; onClose: () => void }) {
   const st = useStore();
   const act = (fn: () => unknown) => () => { onClose(); closeDrawer(); void fn(); };
   const id = (x: ProjectMenuId) => x;
   return (
     <Menu onClose={onClose} label={tr('项目 {name}', { name: w.name })}>
-      <button data-id={id('new-here')} onClick={act(() => st.openSession({ cwd: w.path }).catch((e) => st.toast(e.message)))}><Icon name="plus" size={14} /> {tr('在这里新建对话')}</button>
-      <button data-id={id('worktree')} onClick={act(async () => { const n = await dlg.prompt(tr('{worktree}的名称', { worktree: TERMS.worktree }), 'feature', { message: tr('在这个项目的一份独立副本里开一个新对话，改动不影响当前的工作目录。') }); if (n) await st.openSession({ cwd: w.path, worktree: n }).catch((e) => st.toast(e.message)); })}><Icon name="branch" size={14} /> {tr('在{worktree}里新建对话', { worktree: TERMS.worktree })}</button>
+      <button data-id={id('new-here')} onClick={act(() => openNewConversation({ cwd: w.path }).catch((e) => st.toast(e.message)))}><Icon name="plus" size={14} /> {tr('在这里新建对话')}</button>
+      <button data-id={id('worktree')} onClick={act(async () => { const n = await dlg.prompt(tr('{worktree}的名称', { worktree: TERMS.worktree }), 'feature', { message: tr('在这个项目的一份独立副本里开一个新对话，改动不影响当前的工作目录。') }); if (n) await openNewConversation({ cwd: w.path, worktree: n }).catch((e) => st.toast(e.message)); })}><Icon name="branch" size={14} /> {tr('在{worktree}里新建对话', { worktree: TERMS.worktree })}</button>
       <button data-id={id('terminal')} onClick={act(() => st.openTile({ id: `t${Date.now()}`, kind: 'term', cwd: w.path }, 'tab'))}><Icon name="terminal" size={14} /> {tr('在这里开终端')}</button>
       <div className="menu-sep" />
       {(() => {
@@ -57,8 +61,8 @@ export function FolderMenu({ cwd, name, onClose }: { cwd: string; name: string; 
   const id = (x: ProjectMenuId) => x;
   return (
     <Menu onClose={onClose} label={tr('文件夹 {name}', { name })}>
-      <button data-id={id('new-here')} onClick={act(() => st.openSession({ cwd }).catch((e) => st.toast(e.message)))}><Icon name="plus" size={14} /> {tr('在这里新建对话')}</button>
-      <button data-id={id('worktree')} onClick={act(async () => { const n = await dlg.prompt(tr('{worktree}的名称', { worktree: TERMS.worktree }), 'feature', { message: tr('在这个项目的一份独立副本里开一个新对话，改动不影响当前的工作目录。') }); if (n) await st.openSession({ cwd, worktree: n }).catch((e) => st.toast(e.message)); })}><Icon name="branch" size={14} /> {tr('在{worktree}里新建对话', { worktree: TERMS.worktree })}</button>
+      <button data-id={id('new-here')} onClick={act(() => openNewConversation({ cwd }).catch((e) => st.toast(e.message)))}><Icon name="plus" size={14} /> {tr('在这里新建对话')}</button>
+      <button data-id={id('worktree')} onClick={act(async () => { const n = await dlg.prompt(tr('{worktree}的名称', { worktree: TERMS.worktree }), 'feature', { message: tr('在这个项目的一份独立副本里开一个新对话，改动不影响当前的工作目录。') }); if (n) await openNewConversation({ cwd, worktree: n }).catch((e) => st.toast(e.message)); })}><Icon name="branch" size={14} /> {tr('在{worktree}里新建对话', { worktree: TERMS.worktree })}</button>
       <button data-id={id('terminal')} onClick={act(() => st.openTile({ id: `t${Date.now()}`, kind: 'term', cwd }, 'tab'))}><Icon name="terminal" size={14} /> {tr('在这里开终端')}</button>
       <div className="menu-sep" />
       <button data-id={id('make-project')} onClick={act(() => st.addWorkspace(cwd).catch((e) => st.toast(e.message)))}><Icon name="pin" size={14} /> {tr('设为项目')}</button>

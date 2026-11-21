@@ -10,6 +10,7 @@ import { Icon, type IconName } from '@/ui/icons';
 import { tr, dateLocale } from '@/i18n';
 import { Select } from '@/ui/Select';
 import { SwitchChip } from '@/ui/Switch';
+import { newConversationPick, openNewConversation } from '@/features/composer/new-conversation';
 
 type Mode = 'issues' | 'pulls';
 const ago = (iso: string) => { const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 3600 ? tr('{Math} 分钟前', { Math: Math.max(1, Math.floor(s / 60)) }) : s < 86400 ? tr('{s} 小时前', { s: Math.floor(s / 3600) }) : tr('{s} 天前', { s: Math.floor(s / 86400) }); };
@@ -84,13 +85,17 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
   const act = async (fn: () => Promise<unknown>, ok?: string) => { setBusy(true); try { await fn(); if (ok) toast(ok, true); load(); if (sel !== null) setDetail(await ws.request<VcsDetail>({ kind: 'vcs.item', cwd, repo: r, number: sel, isPr: mode === 'pulls' })); } catch (e: any) { toast(e.message); } finally { setBusy(false); } };
   const handOff = async (d: VcsDetail, kind: 'fix' | 'review') => {
     const text = kind === 'fix' ? tr("请处理 {url}/issues/{number}：\n\n# {title}\n\n{body}\n\n完成后总结改了什么、怎么验证的。", { url: repo?.url, number: d.number, title: d.title, body: d.body || tr('(无描述)') }) : tr("请审查 PR #{number}「{title}」（分支 {head} → {base}）。\n\n{body}\n\n重点：正确性、边界条件、测试覆盖、是否符合仓库约定。给出可直接发到 PR 的评审意见。", { number: d.number, title: d.title, head: d.head, base: d.base, body: d.body || '' });
-    try { if (sid) await send(sid, text); else { const id = await openSession({ cwd }); await send(id, text); } } catch (e: any) { toast(e.message); }
+    // no conversation here: a new one, on what the start page would start it on (null = no model, nothing opened)
+    try { if (sid) await send(sid, text); else { const id = await openNewConversation({ cwd }, 'send'); if (id) await send(id, text); } } catch (e: any) { toast(e.message); }
   };
   const checkoutAndSession = async (d: VcsDetail) => {
     const wt = await dlg.confirm(tr('检出 PR #{number} 到独立副本（worktree）？', { number: d.number }), { message: tr('选「当前目录」则直接在当前目录切换分支。'), okLabel: tr('独立副本'), cancelLabel: tr('当前目录') });
+    // what the conversation starts on, before anything is checked out: a model may have to be connected first
+    const pick = await newConversationPick('send');
+    if (!pick) return;
     await act(async () => {
       const res = await ws.request<{ branch: string; path: string }>({ kind: 'vcs.checkout', cwd, repo: r, number: d.number, worktree: wt });
-      const id = await openSession({ cwd: res.path });
+      const id = await openSession({ cwd: res.path, ...pick });
       await send(id, tr('这是 PR #{number}「{title}」的检出（分支 {branch}）。先读一遍改动（git diff {base}...HEAD），然后告诉我它做了什么、有没有问题。', { number: d.number, title: d.title, branch: res.branch, base: d.base }));
     }, tr('已检出并开了一个对话'));
   };

@@ -52,6 +52,12 @@ export function useGatewayStatus(): GatewayView {
 
 export const useGatewayGroups = (): GatewayGroup[] => useGatewayStatus().groups;
 
+/** The same view outside React (a click handler): what has arrived so far — `enabled` stays undefined until it has. */
+export function gatewayNow(): GatewayView {
+  if (!groupsLoaded) void loadGroups();
+  return gateway;
+}
+
 export interface RefreshRun { running: boolean; ids: string[]; done: number; total: number; results: ModelRefreshResult[]; at?: number }
 let run: RefreshRun = { running: false, ids: [], done: 0, total: 0, results: [] };
 

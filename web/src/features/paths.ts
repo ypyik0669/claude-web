@@ -46,6 +46,19 @@ export function projectRoots(cwd: string, workspaces: readonly { path: string; f
 }
 
 /**
+ * The folder `p` is in, in `p`'s own separators; a root (`C:\`, `/`, `\\host\share`) is its own parent, '' gives ''.
+ * As a folder dialog's start (ui/pick-folder.ts) it lists `p` among the folders beside it: a sibling of `p` is one
+ * click away, `p` itself and its subfolders one more.
+ */
+export function parentDir(p: string): string {
+  const s = p.trim();
+  const root = /^(?:[A-Za-z]:[\\/]?|[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/]?|[\\/])/.exec(s)?.[0] ?? '';
+  const rest = s.slice(root.length).replace(/[\\/]+$/, '');
+  const cut = Math.max(rest.lastIndexOf('/'), rest.lastIndexOf('\\'));
+  return cut < 0 ? root : root + rest.slice(0, cut).replace(/[\\/]+$/, '');
+}
+
+/**
  * Where an uploaded folder attachment lives on disk. The server stores `<root>/<rel>` (rel with its
  * separators normalised to the platform's), so the folder is `dest` minus the rel suffix plus the
  * folder's own top-level name. Falls back to the last `/<top>/` segment if the suffix does not match.

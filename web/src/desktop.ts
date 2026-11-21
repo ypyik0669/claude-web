@@ -2,8 +2,10 @@
 export interface DesktopBridge {
   version: string;
   platform: string;
-  /** `title`: the dialog's own (older shells ignore it and say 「选择工作目录」) */
-  pickDir(o?: { title?: string }): Promise<string | null>;
+  /** `title`: the dialog's own (older shells ignore it and say 「选择工作目录」). `start`: the folder it opens in — the
+   *  shell takes only a local folder of this computer; a gone one opens at the nearest folder above it
+   *  (desktop/src/dialog-start.ts). Older shells ignore it: the folder Windows remembered. */
+  pickDir(o?: { title?: string; start?: string }): Promise<string | null>;
   /** 录屏 (stage E3): screens / windows for our own picker (not this app's windows), the pick for the next getDisplayMedia, a file */
   captureSources?(): Promise<{ id: string; name: string; kind: 'screen' | 'window'; thumb: string }[]>;
   chooseCapture?(p: { kind: 'source'; id: string } | { kind: 'guest'; webContentsId: number }): Promise<boolean>;

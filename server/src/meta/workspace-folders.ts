@@ -1,11 +1,26 @@
 // A project's extra folders (stage C2): stored on the workspace as `folders` (never the main `path`), read with
 // `folders ?? []` — old meta.json files need no migration. Pure.
 import path from 'node:path';
+import { tr } from '../i18n/index.js';
 
 const key = (p: string, caseless: boolean) => {
   const s = p.replace(/\\/g, '/').replace(/\/+$/, '');
   return caseless ? s.toLowerCase() : s;
 };
+
+/**
+ * A project's main folder as `workspaces.add` takes it: a full path (returned as given), or an error saying what is
+ * wrong. An empty or relative one is refused before `path.resolve` would turn it into the server's own working
+ * directory — a script's `addWorkspace('')` added the server's folder as a project (2026-11-21). On Windows a full
+ * path has a drive letter (`C:\…`) or is a share (`\\host\share`): `\foo` / `/foo` would hang off whatever drive the
+ * server runs on. Not trimmed: the hub's refusePeerUnc looked at this very string (` \\host` must not become a share).
+ */
+export function projectPath(p: unknown, platform: NodeJS.Platform = process.platform): string {
+  if (typeof p !== 'string' || !p.trim()) throw new Error(tr('项目文件夹的路径不能为空'));
+  const full = platform === 'win32' ? /^[A-Za-z]:[\\/]/.test(p) || /^[\\/]{2}[^\\/]/.test(p) : path.posix.isAbsolute(p);
+  if (!full) throw new Error(tr('项目文件夹要用完整路径，不是：{p}', { p: p.slice(0, 300) }));
+  return p;
+}
 
 export const sameDir = (a: string, b: string, caseless = process.platform === 'win32') => !!a && !!b && key(a, caseless) === key(b, caseless);
 

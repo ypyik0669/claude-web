@@ -14,9 +14,14 @@ const serverFolders: FolderApi = {
  * Pick a folder on the machine the server runs on. The desktop app: the system's dialog. A browser: the server's
  * native dialog when it can show one to this browser, otherwise (issue #12 — Linux without zenity / kdialog or a
  * display, a browser on another computer) the page's own folder browser. Null when cancelled.
+ *
+ * `start`: the folder the desktop dialog and the page's folder browser open in (the server's native dialog takes
+ * none). Without one the desktop dialog opens where Windows remembered, which can be a folder that is gone — Windows
+ * then first says 「Location is not available」 (2026-11-21); the shell only steps in when it knows the last pick is
+ * gone (desktop/src/dialog-start.ts) — so pass one whenever the caller knows a sensible place.
  */
 export async function pickFolder(o: { title?: string; start?: string } = {}): Promise<string | null> {
-  if (desktop) return desktop.pickDir(o.title ? { title: o.title } : undefined);
+  if (desktop) return desktop.pickDir({ ...(o.title ? { title: o.title } : {}), ...(o.start ? { start: o.start } : {}) });
   let r: PickDirResult;
   try {
     r = await ws.request<PickDirResult>({ kind: 'fs.pickDir', fallback: true });

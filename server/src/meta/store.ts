@@ -8,7 +8,8 @@ import type { DeviceRecord } from '../remote/service.js';
 import type { PeerRecord } from '../federation/types.js';
 import type { PrivacySettings } from '../privacy/types.js';
 import { randomBytes } from 'node:crypto';
-import { normFolders } from './workspace-folders.js';
+import { normFolders, projectPath } from './workspace-folders.js';
+import { tr } from '../i18n/index.js';
 export type { Schedule } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number; /** extra folders (stage C2), never the main path; absent in old files */ folders?: string[]; /** stage F (protocol.ts has the same fields) */ instructions?: string; sessionsScope?: 'project'; permissionMode?: PermissionMode; claudeAiUuid?: string }
@@ -129,7 +130,8 @@ export class MetaStore extends EventEmitter {
     return [...this.data.workspaces].sort((a, b) => a.order - b.order).map((w) => ({ ...w, folders: normFolders(w.path, w.folders, { resolve: (p) => p }) }));
   }
   async addWorkspace(p: string) {
-    const norm = path.resolve(p);
+    // an empty / relative path would resolve to (somewhere under) the server's working directory: refused (projectPath)
+    const norm = path.resolve(projectPath(p));
     const existing = this.data.workspaces.find((w) => w.path.toLowerCase() === norm.toLowerCase());
     if (existing) return existing;
     // a new project goes on top (user report 2026-10-14: it landed at the bottom, under everything older)
@@ -144,8 +146,10 @@ export class MetaStore extends EventEmitter {
     await this.queueSave();
   }
   async renameWorkspace(id: string, name: string) {
+    // a blank (or not a string) would leave the project without a name in the sidebar
+    if (typeof name !== 'string' || !name.trim()) throw new Error(tr('项目名字不能为空'));
     const w = this.data.workspaces.find((x) => x.id === id);
-    if (w) { w.name = name; await this.queueSave(); }
+    if (w) { w.name = name.trim(); await this.queueSave(); }
   }
   /** 编辑项目 (stage C2): the name and the extra folders (normalised: never the main folder, no duplicates) */
   async updateWorkspace(id: string, patch: { name?: string; folders?: string[]; instructions?: string | null; sessionsScope?: 'project' | null; permissionMode?: PermissionMode | null; claudeAiUuid?: string }) {

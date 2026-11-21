@@ -8,10 +8,11 @@ import { tr } from '@/i18n';
 
 /**
  * Why the 「接一个模型」 dialog is open: `start` (the start page's notice), `send` (a new conversation about to go
- * out on a Claude account that is not logged in — the message goes out once a model is connected), `session` (a
+ * out on a Claude account that is not logged in — the message goes out once a model is connected), `new` (the same
+ * for a new conversation opened with nothing to send yet: the sidebar's ＋, a worktree, the Git view), `session` (a
  * conversation on that account failed with 「Not logged in」), `settings` (快速添加 in settings → 供应商).
  */
-export type ConnectReason = 'start' | 'send' | 'session' | 'settings';
+export type ConnectReason = 'start' | 'send' | 'new' | 'session' | 'settings';
 interface Req { id: number; reason: ConnectReason; makeDefault: boolean; resolve: (p: Provider | null) => void }
 export const useConnect = create<{ req: Req | null }>(() => ({ req: null }));
 let seq = 0;
@@ -41,6 +42,7 @@ export function loginInTerminal() {
 const COPY: Record<ConnectReason, { title: string; text: string }> = {
   start: { title: tr('接一个模型'), text: tr('有 API Key 就能用：中转站、DeepSeek、Kimi、智谱、通义千问…… 选来源、粘贴 Key，测试通过就好了。') },
   send: { title: tr('先接一个模型'), text: tr('Claude 账号还没登录。接一个模型（中转站、DeepSeek、Kimi 等的 API Key）就能开始，接好后这条消息会直接发出去。') },
+  new: { title: tr('先接一个模型'), text: tr('Claude 账号还没登录。接一个模型（中转站、DeepSeek、Kimi 等的 API Key）就能开始，接好后新对话就用它。') },
   session: { title: tr('换一个模型继续'), text: tr('这个对话用的是 Claude 账号，但它还没登录。接一个模型，这个对话就换过去并重试刚才那条消息。') },
   settings: { title: tr('快速添加供应商'), text: tr('选来源、粘贴 Key：模型列表和接口格式自动读取，测试通过后保存。更多选项在「添加」里。') },
 };

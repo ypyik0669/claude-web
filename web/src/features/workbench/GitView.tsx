@@ -9,6 +9,7 @@ import { useDropdown } from '@/ui/menus';
 import { imeComposing } from '@/ui/ime';
 import { tr } from '@/i18n';
 import { SwitchChip } from '@/ui/Switch';
+import { openNewConversation } from '@/features/composer/new-conversation';
 
 const STATUS_LABEL: Record<GitFileStatus['status'], string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'U', conflict: '!', typechange: 'T' };
 
@@ -251,7 +252,7 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
                 <div>{w.branch ?? tr('(分离 {head})', { head: w.head })} {w.locked && <span className="badge">locked</span>}</div>
                 <div className="sub">{w.path}</div>
               </div>
-              <button className="btn sm ghost" onClick={() => useStore.getState().openSession({ cwd: w.path })}><Icon name="plus" size={12} /> {tr('对话')}</button>
+              <button className="btn sm ghost" onClick={() => void openNewConversation({ cwd: w.path }).catch((e) => toast(e.message))}><Icon name="plus" size={12} /> {tr('对话')}</button>
               <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path: w.path, app: 'code' })}>VS Code</button>
               {!w.main && <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(tr('删除独立副本 {path}？', { path: w.path }), { message: tr('分支保留，目录会被删除。'), danger: true })) void run('wt', { kind: 'git.worktreeRemove', cwd, dir: w.path, force: true }); }} aria-label={tr('删除独立副本')} title="git worktree remove"><Icon name="trash" size={12} /></button>}
             </div>

@@ -90,6 +90,16 @@ describe('ClaudeAiImport', () => {
     expect(t.workspaces).toEqual([]);
   });
 
+  it('a relative folder is refused before anything is imported (it put the projects under the server’s working directory)', async () => {
+    const t = setup();
+    for (const f of ['.', 'mine']) await expect(t.svc.run(t.upload(), f), f).rejects.toThrow(/完整路径/);
+    expect(t.workspaces).toEqual([]);
+    expect(t.joined).toEqual([]);
+    expect(fs.existsSync(path.join(root, 'claude-ai', 'conversations'))).toBe(false);
+    // blank is no folder, as before
+    expect(await t.svc.run(t.upload(), '  ')).toMatchObject({ projectsCreated: 0 });
+  });
+
   it('a conversation whose id cannot be a file name is skipped and counted as skipped, not as added', async () => {
     const t = setup();
     fs.mkdirSync(t.svc.uploadsDir(), { recursive: true });

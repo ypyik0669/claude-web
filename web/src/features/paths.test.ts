@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { attachmentFolderPath, isWithin, joinPath, projectRoots } from './paths';
+import { attachmentFolderPath, isWithin, joinPath, parentDir, projectRoots } from './paths';
+
+describe('parentDir (where a folder dialog opens to list a folder with the ones beside it)', () => {
+  it('Windows paths, either slash, a trailing one ignored', () => {
+    expect(parentDir('C:\\Users\\me\\code\\proj')).toBe('C:\\Users\\me\\code');
+    expect(parentDir('C:\\Users\\me\\code\\proj\\')).toBe('C:\\Users\\me\\code');
+    expect(parentDir('C:/work/shop')).toBe('C:/work');
+    expect(parentDir('C:\\code\\\\proj')).toBe('C:\\code');
+  });
+  it('POSIX paths', () => {
+    expect(parentDir('/Users/me/proj')).toBe('/Users/me');
+    expect(parentDir('/home/')).toBe('/');
+  });
+  it('a root is its own parent; a share root stays whole', () => {
+    expect(parentDir('C:\\code')).toBe('C:\\');
+    expect(parentDir('C:\\')).toBe('C:\\');
+    expect(parentDir('/')).toBe('/');
+    expect(parentDir('\\\\nas\\share\\proj')).toBe('\\\\nas\\share\\');
+    expect(parentDir('\\\\nas\\share')).toBe('\\\\nas\\share');
+  });
+  it('nothing → nothing', () => {
+    expect(parentDir('')).toBe('');
+    expect(parentDir('   ')).toBe('');
+  });
+});
 
 describe('joinPath', () => {
   it('keeps POSIX separators on macOS / Linux paths', () => {

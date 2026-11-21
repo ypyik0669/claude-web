@@ -9,6 +9,7 @@ import type { AgentKind, ClaudeAiImportResult, ClaudeAiScan } from '../protocol.
 import { readZipFile, ZipTooLarge } from './zip.js';
 import { parseExport, planImport, safeName, SAFE_ID, type ClaudeAiExport } from './claude-ai.js';
 import { conversationsDir, type StoredConversation } from '../library/claudeai-source.js';
+import { projectPath } from '../meta/workspace-folders.js';
 import { tr } from '../i18n/index.js';
 
 export const CLAUDEAI_UPLOAD_MAX = 1024 * 1024 * 1024;
@@ -100,7 +101,8 @@ export class ClaudeAiImport {
     const plan = planImport(x.conversations, this.existing());
     let projectsCreated = 0, projectsUpdated = 0, filesWritten = 0, filesKept = 0, instructionsShortened = 0;
     const projectDir = new Map<string, string>();
-    const base = folder?.trim() ? path.resolve(folder.trim()) : '';
+    // a full path only: a relative one would put the projects under the server's own working directory (projectPath)
+    const base = typeof folder === 'string' && folder.trim() ? path.resolve(projectPath(folder.trim())) : '';
     if (base) {
       if (!fs.existsSync(base) || !fs.statSync(base).isDirectory()) throw new Error(tr('找不到这个文件夹：{f}', { f: base }));
       for (const pr of x.projects) {

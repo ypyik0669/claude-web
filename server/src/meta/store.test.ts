@@ -74,6 +74,30 @@ describe('MetaStore', () => {
     expect((await fs.readdir(path.dirname(file))).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
+  it('addWorkspace: an empty, blank or relative path is refused, nothing saved (it used to become the server’s own working directory)', async () => {
+    const file = await tmpFile();
+    const m = new MetaStore(file);
+    await m.load();
+    for (const p of ['', '   ', undefined, null]) await expect(m.addWorkspace(p as unknown as string), String(p)).rejects.toThrow(/不能为空/);
+    for (const p of ['scratchpad', './x', '..', 'C:proj']) await expect(m.addWorkspace(p), p).rejects.toThrow(/完整路径/);
+    expect(m.workspaces()).toEqual([]);
+    await expect(fs.access(file)).rejects.toBeTruthy();
+    const dir = path.join(path.dirname(file), 'proj');
+    expect((await m.addWorkspace(dir)).path).toBe(path.resolve(dir));
+  });
+
+  it('renameWorkspace: a blank or non-string name is refused; a name is trimmed', async () => {
+    const file = await tmpFile();
+    const m = new MetaStore(file);
+    await m.load();
+    const w = await m.addWorkspace(path.join(path.dirname(file), 'proj'));
+    await expect(m.renameWorkspace(w.id, '  ')).rejects.toThrow(/不能为空/);
+    await expect(m.renameWorkspace(w.id, 42 as unknown as string)).rejects.toThrow(/不能为空/);
+    expect(m.workspaces()[0].name).toBe('proj');
+    await m.renameWorkspace(w.id, '  新名字 ');
+    expect(m.workspaces()[0].name).toBe('新名字');
+  });
+
   it('workspaces: old data has no folders → [] on read; updateWorkspace adds and removes them', async () => {
     const file = await tmpFile();
     const main = path.join(path.dirname(file), 'proj');

@@ -12,8 +12,9 @@ window.addEventListener('DOMContentLoaded', () => document.documentElement.class
 contextBridge.exposeInMainWorld('desktop', {
   version: process.env.CLAUDE_WEB_VERSION ?? '',
   platform: process.platform,
-  // a title / file types for the dialog are optional (the shell keeps only short plain strings)
-  pickDir: (o?: { title?: string }) => ipcRenderer.invoke('desktop:pickDir', o),
+  // a title / file types for the dialog are optional (the shell keeps only short plain strings); `start`: the folder
+  // the folder dialog opens in (the shell takes only a local folder that is there: dialog-start.ts)
+  pickDir: (o?: { title?: string; start?: string }) => ipcRenderer.invoke('desktop:pickDir', o),
   // 录屏 (stage E3): our own source picker, then the chosen source for the next getDisplayMedia
   captureSources: () => ipcRenderer.invoke('desktop:capture:sources'),
   chooseCapture: (pick: unknown) => ipcRenderer.invoke('desktop:capture:choose', pick),

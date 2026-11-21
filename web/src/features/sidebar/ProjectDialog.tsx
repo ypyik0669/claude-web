@@ -22,6 +22,7 @@ import { useProjectDialog, type ProjectTab } from './project-dialog-open';
 import { Select } from '@/ui/Select';
 import { SwitchLine } from '@/ui/Switch';
 import { pickFolder } from '@/ui/pick-folder';
+import { parentDir } from '@/features/paths';
 // opening it lives in project-dialog-open.ts (this module is loaded on first open — review X1)
 export { openProjectDialog, type ProjectTab } from './project-dialog-open';
 const close = () => useProjectDialog.setState({ id: null });
@@ -131,7 +132,8 @@ function ProjectDialog({ w }: { w: Workspace }) {
 
   const add = async () => {
     const failed = (e: unknown) => { toast(e instanceof Error ? e.message : String(e)); return null; };
-    const p = await pickFolder({ start: w.path }).catch(failed);
+    // opens beside the project's folder: it and its subfolders are in the project already, an extra folder is elsewhere
+    const p = await pickFolder({ start: parentDir(w.path) || undefined }).catch(failed);
     if (!p) return;
     const win = isWinPath(w.path);
     if ([w.path, ...folders].some((f) => samePath(f, p, win))) { toast(tr('这个文件夹已经在项目里了')); return; }

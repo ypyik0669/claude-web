@@ -40,6 +40,7 @@ import { AppMenu } from './AppMenu';
 import type { CustomId, GroupHeadId, ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
 import { tr, trAs } from '@/i18n';
 import { pickFolder } from '@/ui/pick-folder';
+import { openNewConversation } from '@/features/composer/new-conversation';
 
 /** Ids of conversations that must stay in view past a group's cut: running / waiting ones (a stable string, not the `open` map). */
 const busyIds = (s: ReturnType<typeof useStore.getState>) =>
@@ -303,7 +304,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     const p = await pickFolder().catch((e) => { toast((e as Error).message); return null; });
     if (p) await addWorkspace(p).catch((e) => toast(e.message));
   };
-  const newHere = (cwd: string) => { void useStore.getState().openSession({ cwd }).catch((e) => toast(e.message)); closeDrawer(); };
+  // on the provider / model the start page would start it on (not the server's account default)
+  const newHere = (cwd: string) => { void openNewConversation({ cwd }).catch((e) => toast(e.message)); closeDrawer(); };
   const groupProps = (k: string, items: SessionSummary[]) => ({
     k, items, ctx, keep: keepFam, kidsOf, first,
     collapsed: k === '__pinned' ? !!collapsed[k] : folded(k, items),

@@ -28,7 +28,7 @@ import { ComputerPill } from '@/features/computer/ComputerPill';
 import { BackgroundPill } from '@/features/background/BackgroundPill';
 import { PermissionDock, runDockPrimary, setAskNote } from '@/features/chat/PermissionCards';
 import { denyResponse, dockAction, dockDecide, dockKind, dockPlaceholder, isSlashCommand, primaryKey, splitPending, type DockSeen, type DockWhy } from '@/features/chat/permission-dock';
-import { attachmentFolderPath, joinPath, projectRoots } from '@/features/paths';
+import { attachmentFolderPath, joinPath, parentDir, projectRoots } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
 import { haptic } from '@/ui/haptics';
@@ -49,7 +49,8 @@ import { claudeEffortView, modelChipText } from '@/features/models/intelligence'
 import { useAccountDefault } from '@/features/models/account-default';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { needsModel, welcomeProvider } from './welcome-provider';
-import { connectModel, useConnect } from '@/features/providers/ConnectModel';
+import { usableProviderIds, withUsableModel } from './new-conversation';
+import { useConnect } from '@/features/providers/ConnectModel';
 import { openAddSource, useAddSource } from '@/features/gateway/add-source';
 import { dlg, useDialogStore } from '@/ui/dialog';
 import { DOCK_BLOCKED, DOCK_CARRIED, DOCK_ENTER_IGNORED, DOCK_REQUEUED, DOCK_SEND, EFFORT_LABEL, TERMS, ULTRACODE } from '@/ui/terms';
@@ -273,8 +274,9 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     const a = kind !== 'claude' ? agents.find((x) => x.kind === kind) : undefined;
     return a?.reportedModels?.length ? agentModels(a) : undefined;
   };
-  // providers a Claude conversation could use right now (the model menu's own check)
-  const usableIds = useMemo(() => providers.filter((p) => usableProfile(providers, p.id, { agent: 'claude', engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled })).map((p) => p.id), [providers, engine, gatewayView.groups, gatewayView.enabled]);
+  // providers a Claude conversation could use right now (the model menu's own check; new conversations opened
+  // elsewhere — the sidebar's ＋ — choose with the same list, new-conversation.ts)
+  const usableIds = useMemo(() => usableProviderIds(providers, { agent: 'claude', engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled }), [providers, engine, gatewayView.groups, gatewayView.enabled]);
   const usableKey = usableIds.join(',');
   // nothing picked yet: follow welcomeProvider — the settings, the login check and the list arrive after the first
   // render, and a provider connected on first run (or 设为默认 in settings) has to be in the chip without a reload;
@@ -712,14 +714,15 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       let model = wModel || undefined;
       let effort = wEffortOk;
       // the Claude account is logged out: this would only come back as 「Not logged in」 — connect a model (or pick
-      // one already added) and the message goes out on it; closing the dialog keeps the text
-      if (needsModel({ provider: providerId, foreignAgent: foreign, loggedIn: useStore.getState().auth?.loggedIn })) {
-        const p = await connectModel({ reason: 'send' });
-        if (!p) return;
+      // one already added) and the message goes out on it; closing the dialog keeps the text (the same ask as every
+      // other way into a new conversation, new-conversation.ts)
+      const ready = await withUsableModel({ providerId, model, agent: foreign ? wAgent : undefined }, 'send');
+      if (!ready) return;
+      if (ready.providerId !== providerId) {
         providerPicked.current = true;
-        setWProvider(p.id);
+        setWProvider(ready.providerId);
         setWModel('');
-        providerId = p.id;
+        providerId = ready.providerId;
         model = undefined;
         effort = undefined;
       }
@@ -984,8 +987,11 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     }
     setStarting(false);
   };
+  // the project chip's 打开文件夹…: the recent projects are in the menu already, so the dialog is for another one — it
+  // opens in the folder the current project is in, listing it with its siblings (projects usually sit side by side;
+  // VS Code's Open Folder does the same): a sibling is one click, the current project's subfolders one double-click
   const pickDir = async () => {
-    const p = await pickFolder({ start: cwd || undefined }).catch((e) => { toast((e as Error).message); return null; });
+    const p = await pickFolder({ start: parentDir(cwd) || undefined }).catch((e) => { toast((e as Error).message); return null; });
     if (p) setCwd(p);
   };
 
@@ -1138,7 +1144,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const addDir = async () => {
     if (dirsWhy) { toast(dirsWhy); return; }
     const base = welcome ? cwd.trim() : active?.cwd ?? '';
-    const p = await pickFolder({ title: welcome ? tr('给新对话加一个工作目录') : tr('给这个对话加一个工作目录'), start: base || undefined }).catch((e) => { toast(String((e as Error)?.message ?? e)); return null; });
+    // opens beside the conversation's folder: it and its subfolders are worked in already, the folder to add is elsewhere
+    const p = await pickFolder({ title: welcome ? tr('给新对话加一个工作目录') : tr('给这个对话加一个工作目录'), start: parentDir(base) || undefined }).catch((e) => { toast(String((e as Error)?.message ?? e)); return null; });
     if (!p) return;
     // the conversation's own folder and its project's are worked in already
     const taken = base ? projectRoots(base, useStore.getState().workspaces) : [];
