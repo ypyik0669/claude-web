@@ -4,6 +4,12 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.16] — 2026-11-21
+
+### Fixed
+
+- **No stray errors left behind when the phone's connection drops.** If the connection inside the phone page closed while the conversation list or the folder list was still loading, that request failed with "connection closed" and nothing handled it, so two errors were left behind. Nothing stopped working (the lists load again on the next connection), but those failures are handled now.
+
 ## [0.5.15] — 2026-11-21
 
 This release trims the interface: fewer entry points and fewer layers, nothing taken away. The icon bar is gone and the sidebar starts with five places, Background and Bots join Automation, Settings opens as a dialog, the start page is just the input box, and the right panel shows one thing at a time. The first time you open it, a "Where things moved" card on the start page says where everything went, and Ctrl K still finds every page by its old name.
