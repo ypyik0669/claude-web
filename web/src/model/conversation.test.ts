@@ -268,6 +268,21 @@ describe('user messages', () => {
     expect((c.items[0] as UserItem).meta).toBe(true);
   });
 
+  it("shows a local command's output without the CLI's wrapper; an empty one not at all (model switch on ccb)", () => {
+    const c = createConversation();
+    applyMessage(c, { type: 'user', uuid: 'l1', session_id: 's', parent_tool_use_id: null, message: { role: 'user', content: '<local-command-stdout>Set model to glm-5.3-flash</local-command-stdout>' } });
+    applyMessage(c, { type: 'user', uuid: 'l2', session_id: 's', parent_tool_use_id: null, message: { role: 'user', content: '<local-command-stdout></local-command-stdout>' } });
+    applyMessage(c, { type: 'user', uuid: 'l3', session_id: 's', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'text', text: '<local-command-stderr>Error: unknown model</local-command-stderr>' }] } });
+    const [a, b, d] = c.items as UserItem[];
+    expect(a).toMatchObject({ meta: true, text: 'Set model to glm-5.3-flash' });
+    expect(a.hidden).toBeUndefined();
+    expect(b).toMatchObject({ meta: true, hidden: true });
+    expect(d).toMatchObject({ meta: true, text: 'Error: unknown model' });
+    // a prompt that only mentions the tag is the user's own words, left alone
+    applyMessage(c, { type: 'user', uuid: 'l4', session_id: 's', parent_tool_use_id: null, message: { role: 'user', content: 'what does <local-command-stdout> mean?' } });
+    expect(c.items[3]).toMatchObject({ meta: false, text: 'what does <local-command-stdout> mean?' });
+  });
+
   it("hides the CLI's synthetic answer to its own resume nudge, keeps synthetic API errors (real transcript after a provider switch)", () => {
     const c = createConversation();
     applyTranscript(c, [

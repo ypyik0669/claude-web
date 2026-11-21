@@ -548,6 +548,16 @@ const BOT_EVENTS_RE = /^<cw-bot-events>([\s\S]*?)<\/cw-bot-events>\n*/;
 const BOT_HIDDEN_RE = /^<(cw-bot-kickoff|cw-bot-continue)>[\s\S]*<\/\1>$/;
 
 /**
+ * What a local command printed, without the CLI's wrapper: switching the model mid-conversation leaves
+ * `<local-command-stdout>Set model to glm-5.3-flash</local-command-stdout>` in the transcript, and the meta line showed
+ * the tags as they are (2026-11-21, found testing the packaged build). Anything else comes back unchanged.
+ */
+export function localCommandText(text: string): string {
+  const m = /^\s*<local-command-(stdout|stderr)>([\s\S]*?)<\/local-command-\1>\s*$/.exec(text);
+  return m ? m[2].trim() : text;
+}
+
+/**
  * `bot`: the text is from a 值班 Bot's own conversation — only there are the server's <cw-bot-…> blocks taken out (the
  * server strips them from anything else it is sent, server bots/tags.ts; anywhere else they are shown as they are).
  */
@@ -642,7 +652,10 @@ function applyUser(c: Conversation, m: any) {
     return;
   }
   const isMeta = m.isMeta || m.isSynthetic || /^<(command-name|local-command|system-reminder|task-notification)/.test(rawText.trim());
-  const { text, attachments, from, hidden } = decodeAttachments(rawText, { bot: c.botThread });
+  const decoded = decodeAttachments(rawText, { bot: c.botThread });
+  const { attachments, from } = decoded;
+  const text = isMeta ? localCommandText(decoded.text) : decoded.text;
+  const hidden = decoded.hidden || (isMeta && !text.trim() && !images.length && !attachments.length) || undefined;
   containerFor(c, parent).push({ kind: 'user', id: m.uuid ?? String(Math.random()), ts: m.timestamp, text, images, attachments: attachments.length ? attachments : undefined, ...(from ? { from } : {}), meta: isMeta, ...(hidden ? { hidden } : {}), raw: m });
   if (!parent && !isMeta) c.turnStartedAt = clock();
 }
