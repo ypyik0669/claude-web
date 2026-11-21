@@ -60,3 +60,13 @@
   （桥接、Grok、托管程序下次还用它）是坏的就作废重选。本机网关端口、局域网端口、手机远程端口在设置里填坏端口会被拒绝。
 - **测试里的 freePort 小函数**（40 来个测试文件各写了一个 `listen(0)`）没改：只在放宽了端口范围的机器上偶发，CI 上碰不到；
   再遇到「bad port」单跑那个文件就行。新写的测试想省事可以直接用 `net/safe-port.ts` 的 `freePort`。
+
+## 没人等的列表刷新要接住失败（2026-11-21，0.5.15 发布后补跑 shell-smoke 查出来的）
+
+- **现象**：shell-smoke 32 项功能全过，但手机壳里的界面 console 有两条 `Uncaught (in promise) Error: connection closed`。
+  `ws/client.ts` 在连接断开时把已经发出、还没回复的请求全部以「connection closed」拒绝；store 在每次连上时
+  `void get().refreshSessions()` / `void get().loadMeta()`，没有 `.catch`。手机壳的隧道开了又关（换中转、重开、换电脑），
+  正好赶上 `sessions.list` / `workspaces.list` 还没回来。办法：临时把请求的 kind 拼进错误再跑一遍 shell-smoke，就知道是哪个请求。
+- **改了什么**：这类「发出去不等」的调用（store 里 4 处 refreshSessions、4 处 loadMeta、一处 loadHistory，云端 / 交接对话框里 3 处）
+  都补了 `.catch(() => {})`——下次连上会再加载，丢一次没关系。`store/fire-and-forget.test.ts` 扫源码，
+  `void …refreshSessions()` / `void …loadMeta()` 后面没跟 `.catch(` 就挂。

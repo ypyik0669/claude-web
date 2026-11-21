@@ -137,8 +137,8 @@ function ClaudeAiImportDialog() {
     try {
       const r = await ws.request<ClaudeAiImportResult>({ kind: 'claudeai.import', path: zip, ...(folder ? { folder } : {}) });
       setDone(r);
-      void useStore.getState().loadMeta();
-      void useStore.getState().refreshSessions();
+      void useStore.getState().loadMeta().catch(() => {});
+      void useStore.getState().refreshSessions().catch(() => {});
     } catch (e: any) { toast(e.message); }
     setBusy(false);
   };

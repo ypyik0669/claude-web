@@ -65,7 +65,7 @@ function HandoffDialog({ s }: { s: Target }) {
     try {
       const info = await ws.request<HandoffInfo & { skipped?: string[] }>({ kind: 'handoff.start', sessionId: s.sessionId, peerId: peer, ...(prompt.trim() ? { prompt: prompt.trim() } : {}), ...(withNew ? { includeUntracked: true } : {}) });
       toast(tr('已交给「{name}」，分支 {branch}', { name: info.peerName, branch: info.branch }), true);
-      void useStore.getState().loadMeta();
+      void useStore.getState().loadMeta().catch(() => {});
       closeAll();
     } catch (e: any) {
       toast(e.message);
@@ -123,7 +123,7 @@ function FetchBackDialog({ sessionId }: { sessionId: string }) {
   const [r, setR] = useState<{ branch: string; stat: string; diff: string; files: number; saved: boolean; saveError?: string } | null>(null);
   const [err, setErr] = useState('');
   useEffect(() => {
-    ws.request<{ branch: string; stat: string; diff: string; files: number; saved: boolean; saveError?: string }>({ kind: 'handoff.fetchBack', sessionId }).then((x) => { setR(x); void useStore.getState().loadMeta(); }, (e) => setErr(e.message));
+    ws.request<{ branch: string; stat: string; diff: string; files: number; saved: boolean; saveError?: string }>({ kind: 'handoff.fetchBack', sessionId }).then((x) => { setR(x); void useStore.getState().loadMeta().catch(() => {}); }, (e) => setErr(e.message));
   }, [sessionId]);
   return (
     <Shell id="fetch-back-dialog" label={tr('取回')}>

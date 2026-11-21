@@ -563,7 +563,7 @@ export const useStore = create<State>((set, get) => ({
     const by = new Map(get().workspaces.map((w) => [w.id, w]));
     const next = ids.map((id, i) => by.get(id) && { ...by.get(id)!, order: i }).filter((w): w is Workspace => !!w);
     if (next.length === by.size) set({ workspaces: next });
-    await ws.request({ kind: 'workspaces.reorder', ids }).catch((e) => { get().toast(e.message); void get().loadMeta(); });
+    await ws.request({ kind: 'workspaces.reorder', ids }).catch((e) => { get().toast(e.message); void get().loadMeta().catch(() => {}); });
   },
   setShowArchived(v) {
     set({ showArchived: v });
@@ -576,7 +576,7 @@ export const useStore = create<State>((set, get) => ({
       set({ workspaces: get().workspaces.map((x) => (x.id === id ? w : x)) });
     } catch (e: any) {
       get().toast(e.message);
-      void get().loadMeta();
+      void get().loadMeta().catch(() => {});
       throw e;
     }
   },
@@ -644,8 +644,8 @@ export const useStore = create<State>((set, get) => ({
     ws.onStatus = (c) => {
       set({ connected: c });
       if (c) {
-        void get().refreshSessions();
-        void get().loadMeta();
+        void get().refreshSessions().catch(() => {});
+        void get().loadMeta().catch(() => {});
         void get().loadEngine().catch(() => {});
         void get().loadProviders().catch(() => {});
         void get().loadAgents().catch(() => {});
@@ -717,7 +717,7 @@ export const useStore = create<State>((set, get) => ({
           }));
           break;
         case 'sessions.changed':
-          void get().refreshSessions();
+          void get().refreshSessions().catch(() => {});
           // another machine's meta.changed never reaches this window, its sessions.changed does: a chip that already
           // asked what a conversation will resume in asks again (a mode recorded over there shows here)
           for (const id of Object.keys(get().resumeModes)) void get().loadResumeMode(id);
@@ -754,7 +754,7 @@ export const useStore = create<State>((set, get) => ({
           if (e.notify && desktop && !document.hasFocus()) desktop.notify('Claude Web', e.text, e.sessionId);
           break;
         case 'meta.changed':
-          void get().loadMeta();
+          void get().loadMeta().catch(() => {});
           void get().loadProviders().catch(() => {});
           break;
         case 'customCss.changed':
@@ -831,7 +831,7 @@ export const useStore = create<State>((set, get) => ({
       if (target && target !== 'none') get().dispatchLayout({ t: 'session.assign', paneId: target.paneId, tileId: target.tileId, sessionId: r.sessionId });
       else if (target !== 'none') get().openInPane(r.sessionId, p.fork || p.resumeAt ? 'tab' : 'replace');
     });
-    if (!p.sessionId) void get().refreshSessions();
+    if (!p.sessionId) void get().refreshSessions().catch(() => {});
     if (reload) {
       if (moved) {
         get().dispatchLayout({ t: 'session.rekey', from: p.sessionId!, to: r.sessionId });
@@ -845,8 +845,8 @@ export const useStore = create<State>((set, get) => ({
     // load transcript in the background for resumed / forked sessions with empty conv — placed where the open placed it:
     // 'none' stays out of the workbench (a bot's conversation lives in the Bot page; placing it here switched the
     // window to the chat section and hid the Bot page, 2026-11-01)
-    if (p.sessionId && !existing) void get().loadHistory(r.sessionId, target === 'none' ? { focus: false } : undefined);
-    if (p.fork || p.resumeAt) void get().refreshSessions();
+    if (p.sessionId && !existing) void get().loadHistory(r.sessionId, target === 'none' ? { focus: false } : undefined).catch(() => {});
+    if (p.fork || p.resumeAt) void get().refreshSessions().catch(() => {});
     void get().loadFeedback(r.sessionId);
     return r.sessionId;
   },
