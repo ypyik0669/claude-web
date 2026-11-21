@@ -187,3 +187,12 @@
 - 测试时 `launch notepad` 接管了用户开着的记事本（Win11 记事本是单实例 + 标签），`set_value` 把当前标签「mobbin脚本.js」整个换掉；UIA 的 SetValue 不进撤销记录，Ctrl+Z 撤不回。
 - 现在：`DesktopService` 在 snapshot / find 时记下每个 ref 的值；`set_value` / `clear` 打到已有文字的 ref 上默认拒绝，要 `overwrite: true`（说明里写只在用户要求替换时传）。`launch` 前先 list-apps，应用已经在跑时结果里提醒「这是用户自己的窗口，先 ctrl+n 新建再写」。服务器说明里加了同样的规矩；授权卡的 ACCESS_NOTE 写明「已经打开的窗口和文件它也能改」。
 - 以后真机测 `desktop` 工具：只用自己新开、确认是空的窗口，或者只读（snapshot / find / screenshot）。
+
+## browser-smoke 跟上改版（2026-11-21）
+
+- 右侧面板 2026-11 改成一次一个 + 下拉之后，默认样子没有标签行了：在前面的是 `.dock .dock-pick[data-panel="…"]`，
+  面板本身是 `.dock-panel[data-panel="…"]`（不在前面的 `hidden`、`visibility: hidden` 但保留尺寸）。
+- 10-27 起（510891d2）没允许的网站连打开都拒绝（browser_open / browser_tabs new 直接说「用户没有允许打开 …」，不开标签页），
+  两条站点检查改成按这个查。
+- 搜索的几条（「结果页没有回应」）在 CPU 被占满时（那次是 Defender 全盘扫描）会超时：冷启动的隐藏页读结果超过 2.5 秒。
+  负载正常时 99 项全过；再遇到先看 CPU。

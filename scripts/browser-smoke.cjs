@@ -346,8 +346,8 @@ function driver() {
       // ---- the user's own browsing
       phase = 'user';
       await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'browser' })`);
-      const panel = await waitFor(`!!document.querySelector('.dock .tab.active[data-panel="browser"]') && !!document.querySelector('.dock-panel[data-panel="browser"] .bw .bw-newtab .bw-search input')`, 8000);
-      check('浏览器 is a tab of the right panel; a new tab shows its own page with the search box', panel);
+      const panel = await waitFor(`!!document.querySelector('.dock .dock-pick[data-panel="browser"]') && !!document.querySelector('.dock-panel[data-panel="browser"]:not([hidden]) .bw .bw-newtab .bw-search input')`, 8000);
+      check('浏览器 is the panel the right panel picker shows; a new tab shows its own page with the search box', panel);
       check('one tab only: no tab row', await js(`!document.querySelector('.bw .bw-tabs') && window.__cwBrowser.state.getState().tabs.length === 1`));
       await js(`(() => { const i = document.querySelector('.bw .bw-addr input'); i.focus(); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ${JSON.stringify(SITE.replace('http://', ''))}); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
       await wc.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
@@ -428,18 +428,18 @@ function driver() {
       // ---- with another tab of the right panel in front, and with the right panel put away
       phase = 'hidden';
       await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'files' })`);
-      await waitFor(`!!document.querySelector('.dock .tab.active[data-panel="files"]')`, 5000);
+      await waitFor(`!!document.querySelector('.dock .dock-pick[data-panel="files"]')`, 5000);
       const kept = await js(`(() => { const p = document.querySelector('.dock-panel[data-panel="browser"]'); const w = p.querySelector('webview'); return { hidden: p.hidden, vis: getComputedStyle(p).visibility, w: w.offsetWidth, h: w.offsetHeight }; })()`);
       check('behind 审阅 the browser\'s pages keep their size, unseen', kept.hidden && kept.vis === 'hidden' && kept.w > 0 && kept.h > 0, JSON.stringify(kept));
       const quiet = await op(S, 'click', { ref: refOf((await op(S, 'find', { query: 'line 1 ' })).a, /./) ?? 'none' });
-      const stillReview = await js(`!!document.querySelector('.dock .tab.active[data-panel="files"]')`);
+      const stillReview = await js(`!!document.querySelector('.dock .dock-pick[data-panel="files"]')`);
       check('…an operation there works and does not take the right panel away from what the user is looking at', stillReview && (quiet.ok || /不在页面上了/.test(quiet.error)), JSON.stringify({ stillReview, ok: quiet.ok, e: quiet.error }));
       const readBehind = await op(S, 'read', { offset: 0, maxChars: 200 });
       check('…reading too', readBehind.ok && readBehind.a.page.title === 'Smoke Long' && stillReview, readBehind.ok ? '' : readBehind.error);
       await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
       await waitFor(`document.querySelector('.rpanel').offsetWidth === 0`, 4000);
       const reopened = await op(S, 'read', { offset: 0, maxChars: 200 });
-      const front = await waitFor(`!!document.querySelector('.dock .tab.active[data-panel="browser"]') && document.querySelector('.rpanel').offsetWidth > 0`, 4000);
+      const front = await waitFor(`!!document.querySelector('.dock .dock-pick[data-panel="browser"]') && document.querySelector('.rpanel').offsetWidth > 0`, 4000);
       check('with the right panel put away, an operation brings the browser back (a page with no size cannot be worked in)', reopened.ok && front, reopened.ok ? '' : reopened.error);
 
       // ---- web search: a result page loaded in a page of its own, off screen, and read there
@@ -676,12 +676,12 @@ function driver() {
         const names = (tl.result?.tools ?? []).map((t) => t.name);
         check('t7: the MCP server lists browser_hover / browser_drag / browser_select / browser_eval', ['browser_hover', 'browser_drag', 'browser_select', 'browser_eval'].every((n) => names.includes(n)), names.join(','));
         const local = E.SMOKE_SITE.replace('127.0.0.1', 'localhost');
+        // 允许的网站 decides opens too (510891d2, 2026-10-27): a site nobody allowed is not even opened — refused in
+        // words, no tab, so nothing can be clicked there
         const op1 = await mcp.call('browser_open', { url: `${local}/t7` });
-        const pageText = text(op1);
-        const m = /\[(\w+)\][^\n]*Hover me/.exec(pageText);
-        const gated = await mcp.call('browser_click', { ref: m ? m[1] : '1' });
+        const gated = await mcp.call('browser_click', { ref: '1' });
         const logNow = await js(`(() => { const s = window.__cwBrowser.state.getState(); const t = s.tabs.find((x) => x.agent === 'smoke-gate'); return t ? document.querySelector('.bw-view[data-tab="' + t.id + '"] webview').executeJavaScript('document.getElementById("log").textContent') : 'no tab'; })()`);
-        check('t7: over MCP, a click on a site nobody allowed (localhost) is refused and nothing happens on the page', !op1.isError && gated.isError && /localhost/.test(text(gated)) && !/hover/.test(String(logNow)), `${text(gated).slice(0, 200)} log=${logNow}`);
+        check('t7: over MCP, a site nobody allowed (localhost) is not opened — refused in words, no tab, nothing to click', op1.isError && /localhost/.test(text(op1)) && gated.isError && logNow === 'no tab', `${text(op1).slice(0, 160)} | ${text(gated).slice(0, 120)} log=${logNow}`);
         const ev5 = await mcp.call('browser_eval', { script: '1+1' });
         check('t7: over MCP, a script is refused too when nobody can be asked', ev5.isError, text(ev5).slice(0, 200));
         mcp.stop();
@@ -713,7 +713,10 @@ function driver() {
         const t2 = await tabsMcp.call('browser_tabs', { action: 'new', url: `${local}/t7` });
         await sleep(1500);
         const afterSwitch = await tabsMcp.call('browser_click', { ref: t1Ref });
-        check('fix wave S1: after browser_tabs new (another host) the next click is judged for that tab — refused', !allowedClick.isError && !t2.isError && afterSwitch.isError && /localhost/.test(text(afterSwitch)), `allowed=${text(allowedClick).slice(0, 120)} tabs=${text(t2).slice(0, 120)} after=${text(afterSwitch).slice(0, 200)}`);
+        const tabsMine = await js(`window.__cwBrowser.state.getState().tabs.filter((x) => x.agent === 'smoke-tabs').map((x) => x.url)`);
+        // 允许的网站 decides opens too (510891d2): the new tab on a site nobody allowed is refused itself, no tab opens,
+        // and the next click is still on the allowed page (judged for it, and it goes through)
+        check('fix wave S1: browser_tabs new on a site nobody allowed is refused, no tab opens; the next click stays on the allowed page', !allowedClick.isError && t2.isError && /localhost/.test(text(t2)) && tabsMine.length === 1 && !/localhost/.test(tabsMine[0]) && !afterSwitch.isError, `allowed=${text(allowedClick).slice(0, 80)} tabs=${text(t2).slice(0, 120)} mine=${JSON.stringify(tabsMine)} after=${text(afterSwitch).slice(0, 200)}`);
         hopMcp.stop();
         tabsMcp.stop();
 
