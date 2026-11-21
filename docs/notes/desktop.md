@@ -29,3 +29,11 @@ npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-
 - 速度：动画本身 1.45 s 没改。服务比动画先好时（热启动）等到开场页 dom-ready 后 1.6 s（`openingHold`）再换真页面；冷启动本来就更久，不多等。实测（开发版、临时目录）：冷启动开场 1.3 s 出现、14.9 s 进应用；热启动 1.1 s / 3.7 s。`--hidden` 启动不等。
 - 截图办法：离屏窗口的 `capturePage()` 不回、挪到屏幕外报 UnknownVizError——用 `offscreen: true` + `paint` 事件拿最后一帧，并给脚本单独的 userData。（开场现在用 `scripts/opening-shots.mjs` 走 CDP 截真窗口，见「人设版开场与背景」。）
 - 2026-11-19 起默认每天第一次打开放人设版开场（Claude Web 娘的片子 → 点亮 logo → 飞到左上角），其它时候还是这个老开场，署名统一成「by Super NB」；`opening.ts` 里两种都有，怎么选、怎么握手见「人设版开场与背景」。
+
+## 安装包真机验证的办法（2026-11-21）
+
+- **别在主目录构建**（用户在主目录的 `web/dist` 上跑开发版）：`git worktree add -b <分支> ../claude-web-verify main`，`npm install`，再 `npm run build:desktop`。`cp -r vendor ./vendor` 在已有 `vendor/` 时会拷成 `vendor/vendor`——引擎照样会重新下载（GitHub 慢），sidecars 只有 `.gitkeep` 时安装包里就没有 `resources/sidecars`（CI 会拉，本机包没有不影响测）。
+- **起安装版**：把 `dist-desktop/win-unpacked` 拷到仓库外（不然模块查找会走进仓库的 node_modules），环境里设 `CLAUDE_WEB_DIR`、`USERPROFILE`、`HOME`、`CODEX_HOME` 都指向临时目录，`CLAUDE_WEB_TOKEN` 固定一个，命令行 `--user-data-dir=<临时> --remote-debugging-port=9339`；端口在 `<userData>/server.log` 的 `listening on`。`scripts/smoke-packaged.mjs` 也一样要带这些变量（它自己不设 `CLAUDE_WEB_DIR`，不设就写进真的 `~/.claude-web`）。
+- **用 CDP 驱动窗口**：`http://127.0.0.1:9339/json` 找 page，`Page.captureScreenshot` 截图、`Runtime.evaluate` 跑 `window.__store`、`Input.dispatchMouseEvent` 点（坐标是 CSS 像素，这台机器 DPR 1.25；点之前 `scrollIntoView`，否则点在视口外什么都不发生）。等一轮结束看 `open[id].state === 'idle'`（`info.state` 是进程状态，一直是 running；`pending` 是数组，别当布尔用）。Git Bash 会把 `/compact` 这种参数改写成 `C:/Program Files/Git/compact`，传斜杠命令要 `MSYS_NO_PATHCONV=1`。
+- **用户数据副本**：只拷配置类的文件（meta.json、library.db、memory.db、ledger、session-titles、agents/ 等），副本里关掉 `remote.enabled`、upstreamAccounts——两份同时连手机牵线 / 上游账号会互相顶。隐私保护开着时要连 `privacy-model/` 一起拷，不然经网关的请求全是 503「隐私保护处理失败，请求没有发出：本地模型还没下载」。
+- **文件夹对话框**：桌面版用 Electron 的 `showOpenDialog`（IFileOpenDialog），PowerShell 那个（PR #16）只给浏览器版用。UI Automation 在这两种对话框里都拿不到可用的 pattern：Electron 的用 Win32 消息——`WM_SETTEXT` 给 `Edit` 控件 1152（Folder 框）、`BM_CLICK` 按钮 1；PowerShell 的树控件在 UIA 里连条目都看不到，测中文路径时在脚本里加一句 `$d.SelectedPath = …` 再点按钮 1。对话框是挂在主窗口下的 owned 窗口，按根元素的直接子窗口找不到，用 `EnumWindows` 按类名 `#32770` 找。Windows 会按 exe 名记住上次的位置，那个文件夹不在了就先弹「Location is not available」。
