@@ -118,7 +118,30 @@ try {
   // message instead, which is kept as it is — PASTE lines of it (default 700, ~30K tokens)
   // MODE=midturn: a little pasted data, then one turn that writes it out three times — each Write's content is the
   // answer's own output, which stays in the context, so the threshold is crossed in the middle of a running turn
-  if (process.env.MODE === 'midturn') {
+  // MODE=newprompt (engine cw.8): a code word, then ONE long pasted message that itself crosses the line at the start of
+  // its turn — the engine compacts the history and must keep that message word for word after the summary: the reply is
+  // GOT-IT (cw.7 summarized the message with the compaction request and answered with another summary), the code word
+  // survives the summary, and the engine does not send the kept message to the SDK stream a second time
+  if (process.env.MODE === 'newprompt') {
+    await turn('turn 1 (a code word)', 'Remember this code word: BLUE-WHALE-42. Do not use any tool; reply with exactly: OK1');
+    const paste = lines.slice(0, Number(process.env.PASTE || 1200)).join('\n');
+    const pasteFrom = events.length;
+    await turn('turn 2 (one long message that crosses the line itself)', `Here is a long block of data. Do not analyse it and do not use any tool; just reply with exactly: GOT-IT\n\n${paste}`);
+    const echoed = events.slice(pasteFrom).filter((e) => e.kind === 'session.event' && e.sessionId === sid && e.message?.type === 'user' && !e.message.cw_echo && !e.message.parent_tool_use_id && JSON.stringify(e.message.message?.content ?? '').includes('0001 '));
+    console.log(`  the long message sent back by the engine (should be 0): ${echoed.length}`);
+    await turn('turn 3', 'Without using any tool: what is the code word I asked you to remember? Reply with just the code word.');
+    const hist = await req({ kind: 'transcript.load', sessionId: sid }).catch((e) => ({ error: e.message }));
+    const list = Array.isArray(hist) ? hist : hist?.messages ?? hist?.items ?? [];
+    const kinds = list.map((m) => (m.type === 'system' ? `system/${m.subtype}` : m.isCompactSummary ? 'summary' : m.type)).join(' ');
+    console.log(`  history after it (${list.length}): ${kinds.slice(0, 400)}${hist?.error ? ' error ' + hist.error : ''}`);
+  } else if (process.env.MODE === 'probe') {
+    // MODE=probe: one short turn — what window the engine says it runs the model with (modelUsage) against the one set
+    await turn('turn 1 (probe)', 'Do not use any tool. Reply with exactly: OK');
+    // the engine's own context card: the window it runs with (capped by CLAUDE_CODE_AUTO_COMPACT_WINDOW) and its buffer row
+    const cu = await req({ kind: 'session.contextUsage', sessionId: sid, detail: 'full' }).catch((e) => ({ error: e.message }));
+    const rows = (cu?.categories ?? []).map((c) => `${c.name}=${c.tokens}`).join(' ');
+    console.log(`  engine card: maxTokens=${cu?.maxTokens} rawMaxTokens=${cu?.rawMaxTokens} total=${cu?.totalTokens} ${rows}${cu?.error ? ' error ' + cu.error : ''}`.slice(0, 600));
+  } else if (process.env.MODE === 'midturn') {
     const paste = lines.slice(0, Number(process.env.PASTE || 150)).join('\n');
     await turn('turn 1 (a short paste)', `Here is some data. Do not use any tool; just reply with exactly: OK1\n\n${paste}`);
     await turn('turn 2 (three Writes in one turn)', 'Use the Write tool three times, one after another, with no text in between: copy1.txt, then copy2.txt, then copy3.txt, each containing every line of the data I sent, exactly as sent. After the third Write, reply with exactly: DONE');

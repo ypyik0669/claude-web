@@ -44,6 +44,9 @@ describe('context windows (provider settings → each engine)', () => {
     expect(officialWindow(1_000_000, 'claude-opus-5-5')).toEqual({ suffix: true });
     expect(officialWindow(400_000, 'claude-opus-5-5')).toEqual({ suffix: true, compactWindow: 400_000 });
     expect(officialWindow(200_000, 'claude-haiku-4-5')).toEqual({ suffix: false });
+    // a plain Claude id may run at 1M on 2.1.3xx (claude-sonnet-5-5 reported 1000000): a 200K window set → capped there
+    expect(officialWindow(200_000, 'claude-sonnet-5-5')).toEqual({ suffix: false, compactWindow: 200_000 });
+    expect(officialWindow(150_000, 'claude-opus-5-5')).toEqual({ suffix: false, compactWindow: 150_000 });
     expect(officialWindow(128_000, 'deepseek-chat')).toEqual({ suffix: false, compactWindow: 128_000 });
     expect(officialWindow(1_000_000, 'claude-opus-5-5[1m]')).toEqual({ suffix: false });
     expect(officialWindow(undefined, 'claude-opus-5-5')).toEqual({ suffix: false });

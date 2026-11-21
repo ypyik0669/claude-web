@@ -1618,6 +1618,65 @@ describe('SessionRunner: the account’s 200K / 1M picks and the 自动压缩 po
     });
   });
 
+  // 2026-11-21, real relay (super-nb): the official binary ran a plain claude-sonnet-5-5 at 1M although the provider's
+  // window was set to 200K — nothing capped it (the runner thought a plain id meant 200K there), a settings.json 700K
+  // meant for the account was the only cap, and after the first turn the ring went by the reported 1M
+  it("a relay's 200K Claude on the official binary: capped at 200K over a larger settings.json point, never over a smaller one; the reported 1M does not widen the window", async () => {
+    const p = { id: 'snb', name: 'relay', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', runtime: 'claude', models: ['claude-sonnet-5-5'], contextWindows: { 'claude-sonnet-5-5': 200_000 } } as any;
+    await withHome({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '700000' }, async (dir) => {
+      eng.kind = 'claude';
+      const r = new SessionRunner({ sessionId: 'ow-1', cwd: dir, model: 'claude-sonnet-5-5' } as any, p);
+      await tick();
+      expect(queries[0].options.model).toBe('claude-sonnet-5-5');
+      expect(queries[0].options.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+      expect((await flagEnv(queries[0].options.settings))?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+      expect(r.info.compactWindow).toBe(200_000);
+      expect(r.info.contextWindow).toBe(200_000);
+      queries[0].push({ type: 'system', subtype: 'init', session_id: 'ow-1', model: 'claude-sonnet-5-5', tools: [], mcp_servers: [], permissionMode: 'default' });
+      queries[0].push({ type: 'result', subtype: 'success', session_id: 'ow-1', uuid: 'r1', is_error: false, result: 'ok', total_cost_usd: 0, usage: {}, modelUsage: { 'claude-sonnet-5-5': { inputTokens: 9, outputTokens: 1, contextWindow: 1_000_000 } } });
+      await tick();
+      expect(r.info.contextWindow).toBe(200_000);
+      await r.close();
+    });
+    await withHome({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '150000' }, async (dir) => {
+      eng.kind = 'claude';
+      const r = new SessionRunner({ sessionId: 'ow-2', cwd: dir, model: 'claude-sonnet-5-5' } as any, p);
+      await tick();
+      // the user's own 150K is already earlier: nothing of ours, settings.json holds
+      expect(queries[0].options.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      expect((await flagEnv(queries[0].options.settings))?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      expect(r.info.compactWindow).toBe(150_000);
+      await r.close();
+    });
+  });
+
+  it("the account's 200K pick on the official binary: the plain id it goes out as may run at 1M, so it is capped at 200K — over settings.json, on the own login too", async () => {
+    await withHome({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '700000' }, async (dir) => {
+      eng.kind = 'claude';
+      const r = new SessionRunner({ sessionId: 'ow-3', cwd: dir, model: 'claude-sonnet-5-5' } as any, undefined, { account: { windows: { sonnet: 200_000 } } });
+      await tick();
+      expect(queries[0].options.model).toBe('claude-sonnet-5-5');
+      expect(queries[0].options.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+      expect((await flagEnv(queries[0].options.settings))?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+      expect(r.info.compactWindow).toBe(200_000);
+      await r.close();
+    });
+    // the 1M pick (the default) goes out with [1m]: no cap of ours; haiku is 200K anyway
+    await withHome(null, async (dir) => {
+      eng.kind = 'claude';
+      const r = new SessionRunner({ sessionId: 'ow-4', cwd: dir, model: 'claude-sonnet-5-5' } as any, undefined, { account: { windows: { sonnet: 1_000_000 } } });
+      await tick();
+      expect(queries[0].options.model).toBe('claude-sonnet-5-5[1m]');
+      expect(queries[0].options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      await r.close();
+      queries.length = 0;
+      const h = new SessionRunner({ sessionId: 'ow-5', cwd: dir, model: 'claude-haiku-4-5' } as any, undefined, { account: { windows: {} } });
+      await tick();
+      expect(queries[0].options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      await h.close();
+    });
+  });
+
   it('a claude-account profile reads its own family picks: Sonnet at 200K has no [1m]; Opus (not picked) does', async () => {
     await withHome(null, async (dir) => {
       const p = acct({ contextWindows: { sonnet: 200_000 } });

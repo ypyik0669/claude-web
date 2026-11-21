@@ -633,16 +633,26 @@ export class SessionRunner extends EventEmitter {
       const windows = engine.kind === 'ccb' ? contextWindowsEnv(this.provider, [...(this.provider.models ?? []), ...Object.values(this.provider.modelMap ?? {}), this.provider.defaultModel, providerModelId(this.provider, this.model), ...(sameSub ? [providerModelId(this.provider, sameSub)] : [])]) : undefined;
       if (windows && !('CLAUDE_WEB_CONTEXT_WINDOWS' in fenv)) fenv.CLAUDE_WEB_CONTEXT_WINDOWS = windows;
     }
-    // where to compact: the official binary's earlier point for a window smaller than it assumes (a provider's), and a
-    // 自动压缩 point the user set for the provider / the account (A7) — the smaller one. The user's own value is theirs
-    // to decide, over 本机环境变量 / the session's env; the binary's computed one, as before, gives way to those
+    // where to compact: the official binary's earlier point for a window smaller than it may run the model with (a
+    // provider's window, the account's 200K pick), and a 自动压缩 point the user set for the provider / the account (A7)
+    // — the smaller one. The user's own point is theirs to decide, over 本机环境变量 / the session's env / settings.json
     const compact = this.compactPoint(engine.kind, this.model);
     const userCompact = this.userCompact(this.model) !== undefined;
-    if (compact && (userCompact || !('CLAUDE_CODE_AUTO_COMPACT_WINDOW' in fenv))) fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(compact);
+    const asSet = this.provider ? providerModelId(this.provider, this.model) : this.model;
+    /** the variable is ours (put back over the settings files below: the flag tier) */
+    let oursCompact = false;
+    if (compact && userCompact) { fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(compact); oursCompact = true; }
+    else if (compact) {
+      // the binary's own earlier point: never later than a cap set elsewhere (本机环境变量, the session's env, the
+      // settings files, /autocompact) — both only lower the window, so the smaller one holds; when that one is already
+      // smaller, nothing of ours. It used to give way to any of those whole: a settings.json 700K meant for the account
+      // (2026-11-21, the user's own) left a 200K relay compacting at 700K.
+      const elsewhere = compactCap(fenv, this.cwd, false, asSet);
+      if (!elsewhere || compact < elsewhere) { fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(compact); oursCompact = true; }
+    }
     // the point the official CLI's /autocompact keeps in settings.json (autoCompactWindow, 2.1.3xx): the official binary
     // reads it itself; claude-web-engine does not, and is handed it as the variable — which the CLI ranks above it, so
     // only while none is set anywhere (2026-11-19 user reports: set there, it held on the official binary only)
-    const asSet = this.provider ? providerModelId(this.provider, this.model) : this.model;
     if (engine.kind === 'ccb' && !('CLAUDE_CODE_AUTO_COMPACT_WINDOW' in fenv) && !compactVarSet(this.cwd)) {
       const set = autoCompactSetting(asSet, this.cwd);
       if (set) fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(set);
@@ -650,7 +660,7 @@ export class SessionRunner extends EventEmitter {
     // the cap the engine will put on the window (both engines take it): the composer's ring and the folded context card
     // divide by min(window, this) as the card's body (the engine's count) does (2026-10-24 review I3: 58 % against 82 %)
     // — a point the user set on the own login goes over settings.json through --settings too (`ownOverride` below)
-    const cap = compactCap(fenv, this.cwd, !!(this.provider || this.account) || userCompact, asSet);
+    const cap = compactCap(fenv, this.cwd, !!(this.provider || this.account) || oursCompact, asSet);
     const before = `${this.info.compactWindow}/${this.info.contextWindow}`;
     // the official binary will not go under 100K whatever the variable says (engine-providers: 50K set → 100K): the
     // ring and the card say where it really compacts (final review M6); ccb takes the value as it is
@@ -754,7 +764,7 @@ export class SessionRunner extends EventEmitter {
     // The account: only what we set goes over the same keys there — the subagents' model, and the split route's base
     // URL over the user's own relay (both engines lay the settings files' env over the one they start with), and the
     // 自动压缩 point the user set for the account over a CLAUDE_CODE_AUTO_COMPACT_WINDOW in their settings.json (A7)
-    const ours: Record<string, string> = { ...(sub ? { CLAUDE_CODE_SUBAGENT_MODEL: sub, CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' } : {}), ...((splitAlias || privacyOwn) && fenv.ANTHROPIC_BASE_URL ? { ANTHROPIC_BASE_URL: fenv.ANTHROPIC_BASE_URL } : {}), ...(userCompact && fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW } : {}) };
+    const ours: Record<string, string> = { ...(sub ? { CLAUDE_CODE_SUBAGENT_MODEL: sub, CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' } : {}), ...((splitAlias || privacyOwn) && fenv.ANTHROPIC_BASE_URL ? { ANTHROPIC_BASE_URL: fenv.ANTHROPIC_BASE_URL } : {}), ...(oursCompact && fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW } : {}) };
     const override = this.provider || this.account ? settingsOverride(fenv, this.cwd) : ownOverride(ours, this.cwd);
     if (override) {
       try {
@@ -1429,11 +1439,19 @@ export class SessionRunner extends EventEmitter {
     return userAnthropicEnv().relay ? undefined : prefs.windows;
   }
 
-  /** The official binary's `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for `model` on this provider (none: it assumes right). */
+  /**
+   * The official binary's `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for `model` (none: it runs the model with that window
+   * anyway): a provider's window under what the binary may assume; on the account (or another Claude login of the
+   * user's), a 200K pick — it goes out as the plain id, which 2.1.3xx runs at 1M for the newer models (officialWindow).
+   */
   private officialCompactWindow(model: string | undefined): number | undefined {
-    if (!this.provider) return undefined;
-    const id = providerModelId(this.provider, model);
-    return id ? officialWindow(contextWindowFor(this.provider, id), id).compactWindow : undefined;
+    if (this.provider) {
+      const id = providerModelId(this.provider, model);
+      return id ? officialWindow(contextWindowFor(this.provider, id), id).compactWindow : undefined;
+    }
+    const w = this.accountWindows();
+    const win = w && model ? accountWindowOf(model, w) : undefined;
+    return win && model ? officialWindow(win, model.replace(/[1m]$/i, '')).compactWindow : undefined;
   }
 
   /**
@@ -1462,11 +1480,17 @@ export class SessionRunner extends EventEmitter {
    */
   private windowOf(model: string | undefined, prefs = this.accountPrefs): number | undefined {
     // the engine's own word for the current setup (not for prefs about to take effect: setAccountPrefs asks with those)
-    if (model && prefs === this.accountPrefs && this.engineWindow?.model === model) return this.engineWindow.window;
+    const reported = model && prefs === this.accountPrefs && this.engineWindow?.model === model ? this.engineWindow.window : undefined;
     if (this.provider) {
       const id = providerModelId(this.provider, model);
-      return id ? contextWindowFor(this.provider, id) ?? ENGINE_DEFAULT_WINDOW : undefined;
+      const set = id ? contextWindowFor(this.provider, id) : undefined;
+      // a provider's model: what the engine runs it with, but no more than the provider takes — the official binary
+      // reports what it assumes (2.1.3xx: 1M for a plain claude-sonnet-5-5 whatever the relay's window, capped by
+      // CLAUDE_CODE_AUTO_COMPACT_WINDOW; the ring showed 1M after the first turn), claude-web-engine is told the table
+      if (reported) return set ? Math.min(reported, set) : reported;
+      return id ? set ?? ENGINE_DEFAULT_WINDOW : undefined;
     }
+    if (reported) return reported;
     const w = this.accountWindows(prefs);
     if (w) return accountWindowOf(model, w);
     if (!model || model === 'default') return undefined;

@@ -72,8 +72,14 @@ export const isClaudeModel = (model: string) => CLAUDE.test(model) || /haiku/i.t
  */
 export function officialWindow(window: number | undefined, model: string): { suffix: boolean; compactWindow?: number } {
   if (!window) return { suffix: false };
-  const suffix = isClaudeModel(model) && window > ENGINE_DEFAULT_WINDOW && !/\[1m\]$/i.test(model);
-  const assumed = suffix || /\[1m\]$/i.test(model) ? ONE_M : ENGINE_DEFAULT_WINDOW;
+  const claude = isClaudeModel(model);
+  const suffix = claude && window > ENGINE_DEFAULT_WINDOW && !/\[1m\]$/i.test(model);
+  // What the binary may run the model with: 1M with `[1m]` — and for a plain Claude id too: 2.1.3xx runs the newer ones
+  // at 1M without the suffix (2026-11-21, real relay: claude-sonnet-5-5 with a 200K window set went out plain, the
+  // binary reported contextWindow 1000000, nothing capped it, and it would only have compacted near 1M — the relay
+  // refusing everything past 200K first). Haiku and other makers' models: 200K. The cap only ever lowers the window, so
+  // it changes nothing where the binary already runs the model at 200K or less.
+  const assumed = suffix || /\[1m\]$/i.test(model) || (claude && !/haiku/i.test(model)) ? ONE_M : ENGINE_DEFAULT_WINDOW;
   return { suffix, ...(window < assumed ? { compactWindow: window } : {}) };
 }
 

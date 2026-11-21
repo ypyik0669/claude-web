@@ -85,7 +85,16 @@
   （ccb 的余量按有效窗口（窗口 − 20k）分档：≥ 800k 50k、≥ 400k 30k、其它 13k，另加 20k 摘要预留）。实测（经 SDK 起引擎调 `getContextUsage()`）：
   1M + 上限 700k → 窗口 700k、阈值 650k、buffer **50k（7.1%）**（上限来自 settings.json 的 env 时也一样）；1M 无上限 → 1M / 930k / 70k；200K（haiku）→ 200k / 167k / 33k；cw.6 同条件 1M / 667k / 333k。
   **官方二进制同样的上限显示 33k（4.7%）**（`claude-opus-5-5[1m]` + 700000 → 700k / 667k，和用户截图一致）：官方按固定 13k 留、在 667k 压缩，ccb 在 650k 压缩——两边各自说的都是自己引擎真会在哪里压缩，所以数字不同是对的；没有上限时官方不显示 buffer 行。
-  另：每一行带 SDK 的 `kind`（`used` / `free` / `buffer` / `deferred`；cw.6 没有，前端 `kindOf` 按名字兜底）。没做完的：`controlSchemas.ts` 的 `ContextCategorySchema` 还没有 `kind`，`analyzeContext.ts` 里「33k buffer」的旧注释没改——下次改引擎时顺手。
+  另：每一行带 SDK 的 `kind`（`used` / `free` / `buffer` / `deferred`；cw.6 没有，前端 `kindOf` 按名字兜底）。没做完的：`controlSchemas.ts` 的 `ContextCategorySchema` 还没有 `kind`，`analyzeContext.ts` 里「33k buffer」的旧注释没改——下次改引擎时顺手（cw.8 改了）。
+- **cw.8**（2026-11-21 预发布 Release `engine-v2.8.4-cw.8`，fork 提交 e62728f1 已推（220f40f6..e62728f1）；不登录下载的 sha512 和 lock 一致，`releases/latest` 仍是 v0.5.14）：
+  **回合开头的自动压缩不再把用户刚发的那条一起总结掉**（安装包真机复测找到的：deepseek 上一条 ~50K 的长消息正好触发压缩，回复成了又一份总结，那条消息丢了；
+  官方 2.1.3xx 会把最近的消息原样留在摘要后面，没这个问题）。ccb 的 `autoCompactIfNeeded` / `tryReactiveCompact` 改走 `compactKeepingNewPrompt`：
+  只总结之前的历史，新的一轮（最后一条 assistant 之后的 user / attachment，不含 tool_result）作为 `preservedSegment` 接在摘要后面，摘要末尾改说「用户最新的消息就跟在后面，回答它」；
+  回合中间（末尾是工具结果）的压缩、手动 `/compact` 照旧。保留的那几条会被 query 循环再 yield 一次，QueryEngine 按 boundary 的 head…tail 认出来，只放回历史、不再发 SDK 流
+  （不然对话里会在摘要下面再画一遍用户的消息）。细节和测试在 fork 的 `CLAUDE-WEB.md`。
+  **验证**：`MODE=newprompt node scripts/real-autocompact.mjs <供应商 id> <模型> 60000`（真中转、花一点 token）：boundary 带 `preserved_segment`、回复 GOT-IT、压缩前的口令答得出、
+  「the long message sent back by the engine」是 0、`transcript.load` 是 boundary → 摘要 → 那条消息 → 回答；`MODE=midturn` 看回合中间的压缩（没有 `preserved_segment`）。
+  fork 全量 `bun test` 的 4 条失败都和它无关（3 条满负荷超时、单独能过；UDS「oversized frames」在 cw.7 上也挂）。
 
 ## 跟着 Anthropic 实时变的东西（2026-11-10，用户报告：Fable 5.2 报「Claude Code 2.1.280 does not support this model」）
 
