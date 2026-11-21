@@ -19,8 +19,10 @@ export default defineConfig({
   test: {
     // the suites assert the Chinese texts (the interface's key language); a machine in English must not change them
     env: { CLAUDE_WEB_SYSTEM_LANG: 'zh-CN' },
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    // 2026-11-21: on a busy machine the source scans (packaging, grants) took 35–40 s next to the full run and the
+    // 1400-path git test past its own 120 s — a different one each run, all passing alone
+    testTimeout: 90_000,
+    hookTimeout: 90_000,
     projects: [
       {
         extends: true,
