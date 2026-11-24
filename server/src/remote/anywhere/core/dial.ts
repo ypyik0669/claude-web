@@ -7,7 +7,7 @@
 // the nonce of the other side's opening message, so an envelope replayed from an older session never matches: the
 // replay guard lives only as long as one channel, and a new dial opens a new one.
 //   phone → PC   hello    {s, pn}
-//   PC → phone   ack      {s, pn, cn, pc: the PC's name}
+//   PC → phone   ack      {s, pn, cn, pc: the PC's name, r?: 1 when this PC answers repeated steps (see below)}
 //   phone → PC   offer    {s, cn, sdp}
 //   PC → phone   answer   {s, pn, sdp}
 //   both         cand     {s, cn (from the phone) | pn (from the PC), c: {candidate, sdpMid, sdpMLineIndex}}
@@ -20,6 +20,17 @@
 //   bye          reserved, not sent in v1; ignored on arrival
 // The brokers do not keep order across each other: a cand can come before its offer or answer (it is held until the
 // remote description is set), or never come (ICE just does not try that path).
+//
+// Nothing here is delivered for sure (QoS 0, public brokers, a phone on mobile data whose broker connections come up
+// one by one): every step is sent again until the other side's next step is seen (2026-11-24, a phone on China
+// Mobile whose ack was lost while a working broker connection sat idle for the whole 15 s). Each resend is sealed
+// anew (the replay guard drops a repeated envelope) and goes to every broker that is up by then.
+//   hello    again every resendMs until the ack; the PC answers a hello it already knows with the same ack. A PC from
+//            before this does not, so every helloAgainMs the phone also says a fresh hello (new s / pn, the same g):
+//            the first ack of any of them wins. g names the dial, so the PC drops the hellos that lost quietly.
+//   offer    again every resendMs until the answer; the PC answers a repeated offer with the same answer and its
+//            candidates so far. Both sides send their candidates once more a little later.
+//   relay    again every RELAY_CONFIRM_MS until the PC's relay (or a frame on the relay link), a few times.
 import type { SignalMsg } from './envelope.js';
 import { MAX_HELD_CANDIDATES, errText, newNonce, readNonce, report as reportAs } from './handshake.js';
 import { b64u, relayKey, type Room } from './keys.js';
@@ -50,6 +61,19 @@ export const ICE_TIMEOUT_MS = 20_000;
 export const RELAY_AGAIN_ICE_MS = 4_000;
 /** The relay link's resend interval (its retransmitMs default): past it, waiting for the PC's confirm gains nothing. */
 export const RELAY_CONFIRM_MS = 1_500;
+/**
+ * How many times the relay request goes out. A PC that answers repeats (ack.r) confirms each one (asked every
+ * resendMs), so none of them confirmed means it is not there: the dial fails. An older PC confirms once only, and that one may be what was lost:
+ * after RELAY_ASKS_OLD the link is handed over without it.
+ */
+export const RELAY_ASKS = 12;
+export const RELAY_ASKS_OLD = 2;
+/** A step that got no reply is sent again this often. */
+export const SIGNAL_RESEND_MS = 1_000;
+/** No ack for this long: a fresh hello (a PC from before resends answers each session's hello only once). */
+export const HELLO_AGAIN_MS = 4_000;
+/** Repeats of one step the PC answers per session (a flood past it is ignored). */
+export const MAX_STEP_REPEATS = 40;
 const MAX_PC_NAME = 256;
 
 export type DialState = 'finding' | 'connecting' | 'relay';
@@ -80,6 +104,10 @@ export interface DialOptions {
   helloTimeoutMs?: number;
   /** ICE not connected this long after the ack: the slow relay (20 000 ms). */
   iceTimeoutMs?: number;
+  /** A step with no reply is sent again this often (1 000 ms). */
+  resendMs?: number;
+  /** No ack this long after a hello: a fresh one as well (4 000 ms). */
+  helloAgainMs?: number;
   onstate?: (s: DialState) => void;
 }
 
@@ -120,6 +148,8 @@ interface Ack {
   cn: Uint8Array;
   cnText: string;
   pc: string;
+  /** The PC answers repeated steps (hello, offer, relay). */
+  resends: boolean;
 }
 
 /**
@@ -138,7 +168,7 @@ class HandedRelay implements Link {
   private endedWhy: string | undefined;
   private waiting: (() => void) | undefined;
 
-  constructor(private readonly inner: Link, waiting: () => void) {
+  constructor(private readonly inner: Link, waiting: () => void, private heard: (() => void) | undefined = undefined) {
     this.waiting = waiting;
     inner.onframe = (f) => this.frame(f);
     inner.onclose = (why) => this.end(why);
@@ -192,6 +222,10 @@ class HandedRelay implements Link {
 
   private frame(f: Uint8Array): void {
     if (!this.live) return;
+    // the PC's side is up, whatever became of its confirm
+    const heard = this.heard;
+    this.heard = undefined;
+    heard?.();
     if (this.handler) return this.deliver(f);
     this.held.push(f);
     this.heldBytes += f.length;
@@ -240,13 +274,28 @@ export function dial(opts: DialOptions): Promise<DialResult> {
   return new Dialer(opts).run();
 }
 
+interface Hello {
+  s: string;
+  pn: Uint8Array;
+  pnText: string;
+}
+
 class Dialer {
-  private readonly s = b64u(newNonce());
-  private readonly pn = newNonce();
-  private readonly pnText = b64u(this.pn);
+  /** The session the PC acked: '' until then (nothing but an ack is listened to before it). */
+  private s = '';
+  private pn: Uint8Array = new Uint8Array(0);
+  private pnText = '';
+  /** Names this dial across its hellos, so the PC can tell the ones that lost from attempts that failed. */
+  private readonly g = b64u(newNonce());
+  /** Every hello said so far, by session id: the first ack for any of them wins. */
+  private readonly hellos = new Map<string, Hello>();
+  private hellosSent = 0;
   private readonly ch: SignalChannel;
   private readonly helloMs: number;
   private readonly iceMs: number;
+  private readonly resendMs: number;
+  private readonly helloAgainMs: number;
+  private readonly timers = new Set<ReturnType<typeof setInterval>>();
   private gotAck = false;
   private onAck: ((a: Ack) => void) | undefined;
   private onRelayOk: (() => void) | undefined;
@@ -262,6 +311,8 @@ class Dialer {
   constructor(private readonly o: DialOptions) {
     this.helloMs = timeout(o.helloTimeoutMs, HELLO_TIMEOUT_MS, 'helloTimeoutMs');
     this.iceMs = timeout(o.iceTimeoutMs, ICE_TIMEOUT_MS, 'iceTimeoutMs');
+    this.resendMs = timeout(o.resendMs, SIGNAL_RESEND_MS, 'resendMs');
+    this.helloAgainMs = timeout(o.helloAgainMs, HELLO_AGAIN_MS, 'helloAgainMs');
     this.ch = new SignalChannel(o.brokers, o.room, 'phone');
   }
 
@@ -270,6 +321,7 @@ class Dialer {
       return await this.go();
     } finally {
       // signaling is only for setting up: the link (if any) lives on its own
+      for (const t of [...this.timers]) this.stopEvery(t);
       this.ch.close();
       this.giveUp?.('the dial ended');
       this.p2p?.close();
@@ -282,6 +334,46 @@ class Dialer {
     } catch (e) {
       report('state handler', e);
     }
+  }
+
+  /** `fn` every `ms` until stopEvery() or the dial ends; a throw is logged, never escapes into the timer. */
+  private every(ms: number, fn: () => void): ReturnType<typeof setInterval> {
+    const t = setInterval(() => {
+      try {
+        fn();
+      } catch (e) {
+        report('resend', e);
+      }
+    }, ms);
+    this.timers.add(t);
+    return t;
+  }
+
+  private stopEvery(t: ReturnType<typeof setInterval> | undefined): void {
+    if (t === undefined) return;
+    clearInterval(t);
+    this.timers.delete(t);
+  }
+
+  private newHello(): Hello {
+    const pn = newNonce();
+    const h: Hello = { s: b64u(newNonce()), pn, pnText: b64u(pn) };
+    this.hellos.set(h.s, h);
+    return h;
+  }
+
+  private sayHello(h: Hello): Promise<void> {
+    this.hellosSent++;
+    return this.ch.send({ t: 'hello', s: h.s, pn: h.pnText, g: this.g });
+  }
+
+  /** What the pool looked like when the PC stayed silent: which brokers the hellos could go through. */
+  private silentWhy(): string {
+    const st = this.o.brokers.status();
+    const up = st.filter((b) => b.ok).map((b) => b.name);
+    const down = st.filter((b) => !b.ok).map((b) => b.name);
+    const pool = `brokers up: ${up.join(', ') || 'none'}${down.length ? `; down: ${down.join(', ')}` : ''}`;
+    return `no answer from the PC within ${this.helloMs} ms (${this.hellosSent} hellos; ${pool})`;
   }
 
   private async go(): Promise<DialResult> {
@@ -297,14 +389,26 @@ class Dialer {
     const acked = new Promise<Ack>((resolve) => {
       this.onAck = resolve;
     });
+    let hello = this.newHello();
+    let saidAt = Date.now();
     try {
-      await this.ch.send({ t: 'hello', s: this.s, pn: this.pnText });
+      await this.sayHello(hello);
     } catch (e) {
       throw new DialError('no-broker', `the hello was not sent: ${why(e)}`);
     }
+    // the same hello again (a PC that knows it acks again), and now and then a fresh one (an older PC acks each
+    // session once only); a resend that no broker takes is just one that was lost
+    const again = this.every(this.resendMs, () => {
+      if (Date.now() - saidAt >= this.helloAgainMs) {
+        hello = this.newHello();
+        saidAt = Date.now();
+      }
+      this.sayHello(hello).catch(() => {});
+    });
     const ack = await within(acked, this.helloMs);
+    this.stopEvery(again);
     this.onAck = undefined;
-    if (!ack) throw new DialError('pc-silent', `no answer from the PC within ${this.helloMs} ms`);
+    if (!ack) throw new DialError('pc-silent', this.silentWhy());
     if (!o.forceRelay) {
       this.state('connecting');
       const link = await this.direct(ack);
@@ -315,13 +419,20 @@ class Dialer {
 
   /** Our session's messages only, bound to our hello: the room's channel also carries other dials' (and old copies). */
   private onSignal(m: SignalMsg): void {
-    if (m.s !== this.s || m.pn !== this.pnText) return;
     if (m.t === 'ack') {
+      const h = this.hellos.get(m.s);
       const cn = readNonce(m.cn);
-      if (this.gotAck || !this.onAck || !cn || typeof m.pc !== 'string') return;
+      if (!h || m.pn !== h.pnText || this.gotAck || !this.onAck || !cn || typeof m.pc !== 'string') return;
       this.gotAck = true;
-      this.onAck({ cn, cnText: m.cn as string, pc: m.pc.slice(0, MAX_PC_NAME) });
-    } else if (m.t === 'answer') {
+      // this hello's session is the dial's from here on; the others are left to the PC to forget (same g)
+      this.s = h.s;
+      this.pn = h.pn;
+      this.pnText = h.pnText;
+      this.onAck({ cn, cnText: m.cn as string, pc: m.pc.slice(0, MAX_PC_NAME), resends: m.r === 1 });
+      return;
+    }
+    if (!this.gotAck || m.s !== this.s || m.pn !== this.pnText) return;
+    if (m.t === 'answer') {
       this.onAnswer(m.sdp);
     } else if (m.t === 'cand') {
       this.onCandidate(m.c);
@@ -365,10 +476,16 @@ class Dialer {
     return new Promise((resolve) => {
       let done = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let again: ReturnType<typeof setInterval> | undefined;
+      let sdp = '';
+      let offers = 0;
+      let candsAgain = false;
+      const mine: RtcCandidate[] = [];
       const finish = (link: P2pLink | null, reason = '') => {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        this.stopEvery(again);
         this.giveUp = undefined;
         if (!link) this.directWhy = reason;
         // given up: the channel and the connection are closed (and their handlers off) before the relay is asked for
@@ -388,9 +505,23 @@ class Dialer {
       this.pc = pc;
       pc.onicecandidate = (ev: { candidate?: unknown } | undefined) => {
         const c = iceCandidate(ev?.candidate);
-        // fire and forget: one that does not get through is a path ICE does not try
-        if (c) this.ch.send({ t: 'cand', s: this.s, cn: ack.cnText, c }).catch(() => {});
+        if (!c) return;
+        if (mine.length < MAX_HELD_CANDIDATES) mine.push(c);
+        // fire and forget: one that does not get through goes out once more below, or is a path ICE does not try
+        this.ch.send({ t: 'cand', s: this.s, cn: ack.cnText, c }).catch(() => {});
       };
+      // no answer yet: the offer again (the PC answers a repeat with the same answer). Once it is here, our
+      // candidates once more, a tick later: any of them may have been lost, and one lost path can be the only one
+      again = this.every(this.resendMs, () => {
+        if (done || !sdp) return;
+        if (!this.answered) {
+          if (++offers <= MAX_STEP_REPEATS) this.ch.send({ t: 'offer', s: this.s, cn: ack.cnText, sdp }).catch(() => {});
+          return;
+        }
+        if (candsAgain) return;
+        candsAgain = true;
+        for (const c of mine) this.ch.send({ t: 'cand', s: this.s, cn: ack.cnText, c }).catch(() => {});
+      });
       let link: P2pLink;
       try {
         link = new P2pLink(pc, pc.createDataChannel(P2P_CHANNEL, { ordered: true }));
@@ -416,7 +547,8 @@ class Dialer {
         await pc.setLocalDescription(offer);
         if (done) return;
         if (typeof offer.sdp !== 'string' || !offer.sdp) throw new Error('the offer has no SDP');
-        await this.ch.send({ t: 'offer', s: this.s, cn: ack.cnText, sdp: offer.sdp });
+        sdp = offer.sdp;
+        await this.ch.send({ t: 'offer', s: this.s, cn: ack.cnText, sdp });
       })().catch((e) => finish(null, `the offer: ${why(e)}`));
     });
   }
@@ -443,7 +575,7 @@ class Dialer {
       wake = resolve;
     });
     // synchronously after the open, as the Link contract asks: from here dial holds its frames and hears its end
-    const handed = new HandedRelay(link, () => wake());
+    const handed = new HandedRelay(link, () => wake(), () => wake());
     this.onRelayOk = () => wake();
     try {
       await this.ch.send({ t: 'relay', s: this.s, cn: ack.cnText });
@@ -451,10 +583,23 @@ class Dialer {
       handed.close();
       throw new DialError('unreachable', `the PC could not be asked for the slow relay: ${why(e)}`);
     }
-    // The confirm is a fast path, not a gate: until the PC has subscribed its side, what the phone sends is lost to
-    // the broker and only comes through on the resend, so waiting one resend interval for it saves that much. Past
-    // that the link goes to the caller anyway (a PC that never takes it up shows as the link's own end, later).
-    await within(woken, RELAY_CONFIRM_MS);
+    // The PC's confirm (or a first frame from it) says its side is subscribed. Without one the request itself may be
+    // what was lost, and then the PC never opens its side: it is asked again. A PC that answers repeats confirms each
+    // time, so silence all the way means it is gone, and a dead link is not handed out. An older PC confirms once
+    // only, and that one may be what was lost: the link goes to the caller after a couple of asks anyway (a PC that
+    // never takes it up shows as the link's own end, later).
+    const asks = ack.resends ? RELAY_ASKS : RELAY_ASKS_OLD;
+    let confirmed = false;
+    for (let asked = 1; ; asked++) {
+      confirmed = (await within(woken.then(() => true), ack.resends ? this.resendMs : RELAY_CONFIRM_MS)) === true;
+      if (confirmed || asked >= asks || handed.ended() !== undefined) break;
+      this.ch.send({ t: 'relay', s: this.s, cn: ack.cnText }).catch(() => {});
+    }
+    if (!confirmed && ack.resends && handed.ended() === undefined) {
+      handed.close();
+      this.onRelayOk = undefined;
+      throw new DialError('unreachable', `the PC did not take the slow relay up (asked ${asks} times)`);
+    }
     this.onRelayOk = undefined;
     const ended = handed.ended();
     if (ended !== undefined) {

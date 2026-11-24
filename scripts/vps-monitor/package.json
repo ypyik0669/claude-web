@@ -1,0 +1,6 @@
+{
+  "name": "vps-monitor",
+  "private": true,
+  "type": "module",
+  "main": "parse.test.mjs"
+}

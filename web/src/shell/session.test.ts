@@ -202,6 +202,21 @@ describe('Session: dial, the app files, the app', () => {
     expect(last(t.views)).toEqual({ k: 'failed', why: { text: '连不上牵线服务器：这个网络可能拦了，换个网络试试。', raw: 'no signaling broker could be reached' } });
   });
 
+  it('the first dial hears nothing from the PC: once more on fresh broker connections, then it says why', async () => {
+    const silent = () => new DialError('pc-silent', 'no answer from the PC within 15000 ms (15 hellos; brokers up: cw)');
+    const pc = new FakePc('p2p-v6', pcFiles('0.1.5'));
+    const ok = session([silent(), pc]);
+    await ok.s.start();
+    expect(last(ok.views).k).toBe('open');
+    expect(ok.calls.map((c) => c.fresh)).toEqual([false, true]);
+    // twice silent: no third dial
+    const off = session([silent(), silent(), new FakePc('p2p-v6', pcFiles('0.1.5'))]);
+    await off.s.start();
+    expect(last(off.views).k).toBe('failed');
+    expect((last(off.views) as { why: { raw: string } }).why.raw).toMatch(/15 hellos; brokers up: cw/);
+    expect(off.calls.length).toBe(2);
+  });
+
   it('without RTCPeerConnection the failure says so in 原文 (C4: only when the slow-relay dial failed)', async () => {
     const t = session([new DialError('unreachable', 'the slow relay could not be opened: x')], { rtcMissing: true });
     await t.s.start();

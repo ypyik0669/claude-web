@@ -3,6 +3,7 @@
 // slow relay. The protocol is described in dial.ts. The brokers are public: anything that arrives is untrusted and
 // nothing throws out of a callback; hellos are answered at most maxHellosPerMin a minute per room, and sessions that
 // have not become a link are bounded per room and expire. Shared code (no node:*), though only the PC runs it.
+import { MAX_STEP_REPEATS, SIGNAL_RESEND_MS } from './dial.js';
 import type { SignalMsg } from './envelope.js';
 import { MAX_HELD_CANDIDATES, errText, isSessionId, newNonce, readNonce, report as reportAs } from './handshake.js';
 import { b64u, relayKey, type Room } from './keys.js';
@@ -86,6 +87,17 @@ interface Session {
   remoteSet: boolean;
   held: RtcCandidate[];
   link?: TrackedLink;
+  /** The dial this hello belongs to (a phone says several until one is acked): the others go quietly once one links. */
+  g?: string;
+  /** Repeated steps answered so far (hello, offer, relay), at most MAX_STEP_REPEATS. */
+  repeats: number;
+  /** The answer as it was sent, for a repeated offer. */
+  answer?: string;
+  /** Our candidates so far: sent once more after the answer, and with every repeated answer. */
+  mine: RtcCandidate[];
+  candTimer?: ReturnType<typeof setTimeout>;
+  /** The relay link is subscribed and the confirm went out: a repeated request gets the confirm again. */
+  relayUp?: boolean;
 }
 
 interface RoomState {
@@ -307,7 +319,14 @@ export class Acceptor {
 
   private onHello(r: RoomState, m: SignalMsg): void {
     const pn = readNonce(m.pn);
-    if (!isSessionId(m.s) || !pn || r.sessions.has(m.s)) return;
+    if (!isSessionId(m.s) || !pn) return;
+    const known = r.sessions.get(m.s);
+    if (known) {
+      // the same hello again: our ack was lost (or is still on its way), so the same ack once more. Only while the
+      // session waits for the phone's next step, and not for another phone's nonce under the same id
+      if (known.state === 'acked' && known.pnText === m.pn && this.repeat(known)) this.ack(r, known);
+      return;
+    }
     const now = performance.now();
     while (r.answered.length > 0 && now - r.answered[0] >= RATE_WINDOW_MS) r.answered.shift();
     if (r.answered.length >= this.maxHellos) return;
@@ -324,11 +343,28 @@ export class Acceptor {
       timer: undefined,
       remoteSet: false,
       held: [],
+      repeats: 0,
+      mine: [],
+      ...(typeof m.g === 'string' && m.g.length > 0 && m.g.length <= 64 ? { g: m.g } : {}),
     };
     ses.timer = setTimeout(() => this.drop(r, ses, ACCEPT_FAILURE.halfOpen), this.halfOpenMs);
     r.sessions.set(ses.s, ses);
-    // fire and forget: a lost ack is the phone's pc-silent, and it dials again
-    r.ch.send({ t: 'ack', s: ses.s, pn: ses.pnText, cn: ses.cnText, pc: this.o.pcName }).catch(() => {});
+    this.ack(r, ses);
+  }
+
+  /** Fire and forget: a lost ack is answered again when the phone repeats its hello. */
+  private ack(r: RoomState, ses: Session): void {
+    // r: this PC answers repeated steps, so the phone may count on a confirm for each relay request
+    r.ch.send({ t: 'ack', s: ses.s, pn: ses.pnText, cn: ses.cnText, pc: this.o.pcName, r: 1 }).catch(() => {});
+  }
+
+  /** One more repeated step of this session may be answered (a flood of repeats is not). */
+  private repeat(ses: Session): boolean {
+    return ++ses.repeats <= MAX_STEP_REPEATS;
+  }
+
+  private sendCandidates(r: RoomState, ses: Session): void {
+    for (const c of ses.mine) r.ch.send({ t: 'cand', s: ses.s, pn: ses.pnText, c }).catch(() => {});
   }
 
   /** Makes room for one more half-open session. */
@@ -345,7 +381,15 @@ export class Acceptor {
 
   private onOffer(r: RoomState, m: SignalMsg): void {
     const ses = this.bound(r, m);
-    if (!ses || ses.state !== 'acked' || typeof m.sdp !== 'string' || !m.sdp) return;
+    if (!ses || typeof m.sdp !== 'string' || !m.sdp) return;
+    if (ses.state === 'ice' && ses.answer !== undefined && ses.pc) {
+      // the offer again: the phone has not seen our answer. The same answer, and the candidates it may have missed too
+      if (!this.repeat(ses)) return;
+      r.ch.send({ t: 'answer', s: ses.s, pn: ses.pnText, sdp: ses.answer }).catch(() => {});
+      this.sendCandidates(r, ses);
+      return;
+    }
+    if (ses.state !== 'acked') return;
     ses.state = 'ice';
     let pc: RtcPeerConnectionLike;
     try {
@@ -358,7 +402,9 @@ export class Acceptor {
     pc.onicecandidate = (ev: { candidate?: unknown } | undefined) => {
       try {
         const c = iceCandidate(ev?.candidate);
-        if (c && !this.o.dropCandidates) r.ch.send({ t: 'cand', s: ses.s, pn: ses.pnText, c }).catch(() => {});
+        if (!c || this.o.dropCandidates || ses.pc !== pc) return;
+        if (ses.mine.length < MAX_HELD_CANDIDATES) ses.mine.push(c);
+        r.ch.send({ t: 'cand', s: ses.s, pn: ses.pnText, c }).catch(() => {});
       } catch (e) {
         report('candidate', e);
       }
@@ -382,7 +428,13 @@ export class Acceptor {
       await pc.setLocalDescription(answer);
       if (ses.pc !== pc) return;
       if (typeof answer.sdp !== 'string' || !answer.sdp) throw new Error('the answer has no SDP');
-      await r.ch.send({ t: 'answer', s: ses.s, pn: ses.pnText, sdp: this.o.dropCandidates ? withoutCandidates(answer.sdp) : answer.sdp });
+      ses.answer = this.o.dropCandidates ? withoutCandidates(answer.sdp) : answer.sdp;
+      // our candidates once more a little later: any of them may have been lost, and one lost path can be the only one
+      ses.candTimer = setTimeout(() => {
+        ses.candTimer = undefined;
+        if (!r.gone && ses.pc === pc && ses.state === 'ice') this.sendCandidates(r, ses);
+      }, SIGNAL_RESEND_MS);
+      await r.ch.send({ t: 'answer', s: ses.s, pn: ses.pnText, sdp: ses.answer });
     })().catch((e) => {
       if (ses.pc === pc) this.noDirect(r, ses, 'answering the offer', e);
     });
@@ -435,7 +487,13 @@ export class Acceptor {
 
   private onRelay(r: RoomState, m: SignalMsg): void {
     const ses = this.bound(r, m);
-    if (!ses || ses.state === 'relay' || ses.state === 'gone') return;
+    if (!ses || ses.state === 'gone') return;
+    if (ses.relayUp) {
+      // the request again: the phone has not seen our confirm, and gives the link up if it never does
+      if (this.repeat(ses)) r.ch.send({ t: 'relay', s: ses.s, pn: ses.pnText }).catch(() => {});
+      return;
+    }
+    if (ses.state === 'relay') return;
     if (ses.state === 'link') {
       // One race family lands here: our end of the channel opened (and went to onLink), but the phone gave up on the
       // direct link for this same session before it was its: its ICE timer fired first, or its channel opened and
@@ -463,6 +521,7 @@ export class Acceptor {
       // subscribed: the phone may send now. Fire and forget: it is a fast path, the phone goes ahead after one
       // resend interval without it
       r.ch.send({ t: 'relay', s: ses.s, pn: ses.pnText }).catch(() => {});
+      ses.relayUp = true;
       this.handOut(r, ses, link);
     } catch (e) {
       report('relay link', e);
@@ -473,6 +532,8 @@ export class Acceptor {
   private handOut(r: RoomState, ses: Session, inner: Link): void {
     clearTimeout(ses.timer);
     ses.timer = undefined;
+    clearTimeout(ses.candTimer);
+    ses.candTimer = undefined;
     ses.state = 'link';
     const t: TrackedLink = new TrackedLink(inner, () => {
       r.links.delete(t);
@@ -487,6 +548,12 @@ export class Acceptor {
     });
     ses.link = t;
     r.links.add(t);
+    // the other hellos of the same dial lost to this one: forgotten without a word (they are not failed attempts)
+    if (ses.g !== undefined) {
+      for (const other of [...r.sessions.values()]) {
+        if (other !== ses && other.g === ses.g && other.state !== 'link') this.drop(r, other);
+      }
+    }
     try {
       this.o.onLink(t, r.id);
     } catch (e) {
@@ -500,6 +567,10 @@ export class Acceptor {
     ses.p2p = undefined;
     ses.pc = undefined;
     ses.held = [];
+    ses.mine = [];
+    ses.answer = undefined;
+    clearTimeout(ses.candTimer);
+    ses.candTimer = undefined;
     ses.remoteSet = false;
     if (p2p) p2p.close();
     else if (pc) closeRtc(pc);

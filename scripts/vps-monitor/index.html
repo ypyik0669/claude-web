@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VPS 监控</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0d1014; --panel: #14181e; --line: #232a33; --line2: #1b2028;
+  --fg: #cfd6de; --dim: #7d8894; --faint: #56606b;
+  --ok: #4cc38a; --warn: #e2b23c; --bad: #f0605d; --info: #5aa9f0; --pub: #b392f0; --out: #56c2c9;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 12px/1.45 "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif; display: flex; flex-direction: column; }
+.num, td.n, .mono, code { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+button, input { font: inherit; color: inherit; }
+button { background: #1c222b; border: 1px solid var(--line); border-radius: 3px; padding: 1px 8px; cursor: pointer; }
+button:hover { border-color: #3a4552; }
+button.on { background: #1f3350; border-color: #36598c; color: #cfe3ff; }
+input[type=text] { background: #0f1318; border: 1px solid var(--line); border-radius: 3px; padding: 1px 6px; min-width: 0; }
+input[type=text]:focus, button:focus-visible { outline: 1px solid var(--info); outline-offset: 0; }
+
+/* 顶部概况 */
+#top { display: flex; flex-wrap: wrap; gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); flex: none; }
+.stat { background: var(--panel); padding: 5px 12px 6px; min-width: 96px; flex: 1 1 auto; }
+.stat .k { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.stat .v { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 15px; white-space: nowrap; }
+.stat .s { color: var(--dim); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); margin-right: 5px; vertical-align: 1px; }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+.c-ok { color: var(--ok); } .c-bad { color: var(--bad); } .c-warn { color: var(--warn); } .c-dim { color: var(--dim); }
+
+/* 主体 */
+#main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 1px; background: var(--line); }
+.col { display: flex; flex-direction: column; min-height: 0; gap: 1px; background: var(--line); }
+.panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; flex: 1 1 0; }
+.panel > h2 { margin: 0; padding: 4px 10px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; flex: none; flex-wrap: wrap; }
+.panel > h2 .cnt { color: var(--dim); font-weight: 400; font-family: var(--mono); }
+.panel > h2 .sp { flex: 1; }
+.scroll { overflow: auto; flex: 1; min-height: 0; }
+table { border-collapse: collapse; width: 100%; }
+th { position: sticky; top: 0; background: var(--panel); color: var(--dim); font-weight: 400; text-align: left; padding: 2px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 11px; z-index: 1; }
+td { padding: 1px 8px; border-bottom: 1px solid var(--line2); white-space: nowrap; vertical-align: top; }
+td.n, th.n { text-align: right; }
+tr:hover > td { background: #181d24; }
+.empty { color: var(--faint); padding: 14px 10px; }
+.lbl { color: var(--warn); margin-left: 6px; font-family: inherit; }
+.cid, .ip, .room { font-family: var(--mono); cursor: pointer; }
+.cid:hover, .ip:hover, .room:hover { text-decoration: underline; }
+.room { color: var(--info); }
+.unk { color: var(--faint); }
+.tag { display: inline-block; font-family: var(--mono); font-size: 11px; padding: 0 5px; border-radius: 2px; border: 1px solid currentColor; line-height: 15px; }
+.h-clean { color: var(--ok); } .h-closed { color: var(--warn); } .h-timeout { color: var(--bad); }
+.h-error { color: var(--bad); } .h-takeover, .h-broker, .h-unsub { color: var(--dim); }
+.short { color: var(--bad); font-weight: 600; }
+
+/* 房间 */
+.rm { border-bottom: 1px solid var(--line2); }
+.rm > .hd { display: flex; gap: 10px; align-items: baseline; padding: 2px 10px; cursor: pointer; }
+.rm > .hd:hover { background: #181d24; }
+.rm .caret { color: var(--faint); width: 8px; font-family: var(--mono); }
+.rm .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+.rm .who .m { color: var(--fg); margin-right: 10px; }
+.lostn { color: #fff; background: var(--bad); border-radius: 2px; padding: 0 5px; font-family: var(--mono); font-weight: 600; }
+.tl { padding: 2px 10px 6px 28px; background: #10141a; border-top: 1px solid var(--line2); }
+.tl .r { display: flex; gap: 8px; padding: 0 4px; font-family: var(--mono); white-space: nowrap; }
+.tl .r .t { color: var(--dim); }
+.tl .r.pub { color: var(--fg); }
+.tl .r.lost { background: rgba(240, 96, 93, .16); box-shadow: inset 3px 0 0 var(--bad); }
+.tl .r.join { color: var(--ok); } .tl .r.leave { color: var(--dim); } .tl .r.stray { color: var(--out); }
+.tl .to { color: var(--out); } .tl .self { color: var(--faint); }
+.tl .warn { color: var(--bad); font-weight: 600; font-family: inherit; }
+
+/* 事件流 */
+#feed { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ev { display: flex; gap: 8px; padding: 0 10px; white-space: nowrap; border-bottom: 1px solid transparent; }
+.ev:hover { background: #181d24; }
+.ev .t { color: var(--dim); flex: none; }
+.ev .kd { flex: none; width: 4.2em; }
+.ev .room, .ev .cid, .ev .ip { flex: none; }
+.ev .d { overflow: hidden; text-overflow: ellipsis; }
+.k-connect .kd { color: var(--ok); } .k-sub .kd, .k-unsub .kd { color: var(--info); }
+.k-pub_in .kd { color: var(--pub); } .k-pub_out .kd { color: var(--out); }
+.k-ping { color: var(--faint); } .k-ping .kd { color: var(--faint); }
+.k-broker, .k-other, .k-anon { color: var(--dim); }
+.k-disconnect.h-clean .kd { color: var(--ok); } .k-disconnect.h-closed .kd { color: var(--warn); }
+.k-disconnect.h-timeout .kd, .k-disconnect.h-error .kd { color: var(--bad); }
+.k-disconnect { color: var(--fg); }
+.ev.alone { background: rgba(240, 96, 93, .13); }
+.filters { display: flex; gap: 6px; padding: 4px 10px; border-bottom: 1px solid var(--line); flex: none; align-items: center; flex-wrap: wrap; }
+.filters input[type=text] { width: 110px; flex: 1 1 80px; font-family: var(--mono); }
+.legend { color: var(--dim); font-weight: 400; font-size: 11px; }
+
+/* 备注 */
+#labels { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--line); flex: none; }
+#labels input[type=text] { width: 120px; }
+#labels #lname { width: 200px; }
+.chip { font-family: var(--mono); border: 1px solid var(--line); border-radius: 3px; padding: 0 2px 0 6px; white-space: nowrap; }
+.chip b { color: var(--warn); font-weight: 400; font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+.chip button { border: 0; background: none; color: var(--dim); padding: 0 4px; }
+.chip button:hover { color: var(--bad); }
+#lmsg { color: var(--bad); }
+@media (max-width: 1000px) { #main { grid-template-columns: 1fr; overflow: auto; } .panel { min-height: 240px; } body { height: auto; } }
+</style>
+</head>
+<body>
+<div id="top"></div>
+
+<div id="main">
+  <div class="col">
+    <section class="panel" style="flex: 1.1 1 0">
+      <h2>在线客户端 <span class="cnt" id="c-clients"></span></h2>
+      <div class="scroll" id="clients"></div>
+    </section>
+    <section class="panel" style="flex: 1.3 1 0">
+      <h2>房间 <span class="cnt" id="c-rooms"></span><span class="sp"></span>
+        <button id="rooms-empty" title="也显示现在没人的房间">空房间</button>
+        <span class="legend">点一行看时间线；红底 = 这条 PUBLISH 没有转发给任何别的客户端</span></h2>
+      <div class="scroll" id="rooms"></div>
+    </section>
+    <section class="panel" style="flex: 1 1 0">
+      <h2>最近断开的连接 <span class="cnt" id="c-closed"></span><span class="sp"></span>
+        <button id="closed-short" title="只看活了不到 30 秒的">只看短命的</button>
+        <span class="legend"><span class="h-clean">■</span> 正常断开（发了 DISCONNECT） <span class="h-closed">■</span> 直接关了 <span class="h-timeout">■</span> 超时 / 出错</span></h2>
+      <div class="scroll" id="closed"></div>
+    </section>
+  </div>
+  <div class="col">
+    <section class="panel">
+      <h2>事件流 <span class="cnt" id="c-feed"></span><span class="sp"></span>
+        <button id="f-ping">PING</button>
+        <button id="f-relay" class="on" title="走 broker 中转的数据（房间/r/…/up|down 上的 PUBLISH）。关掉后只留牵线消息和没人收到的">中转数据</button>
+        <button id="f-pause">暂停</button>
+        <button id="f-clear">清筛选</button></h2>
+      <div class="filters">
+        <input type="text" id="f-ip" placeholder="IP 前缀" spellcheck="false">
+        <input type="text" id="f-cid" placeholder="client id" spellcheck="false">
+        <input type="text" id="f-topic" placeholder="房间 / topic" spellcheck="false">
+      </div>
+      <div class="scroll" id="feed"></div>
+    </section>
+  </div>
+</div>
+
+<form id="labels" autocomplete="off">
+  <span class="c-dim">IP 备注</span>
+  <input type="text" id="lprefix" placeholder="IP 前缀，如 223.104." spellcheck="false" class="mono">
+  <input type="text" id="lname" placeholder="名字，如 某用户的手机 移动 5G" maxlength="60">
+  <button type="submit">保存</button>
+  <span id="lmsg"></span>
+  <span id="chips" style="display: contents"></span>
+</form>
+
+<script>
+'use strict'
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+const FEED_KEEP = 4000, FEED_SHOW = 600
+
+let S = null          // 最新的状态快照
+let sys = null        // 最新的系统采样
+let labels = {}
+let feed = []         // 事件流缓冲
+let sseOk = false
+const openRooms = new Set()
+const ui = { ping: false, relay: true, paused: false, emptyRooms: false, shortOnly: false, ip: '', cid: '', topic: '' }
+
+// ───── 格式 ─────
+const p2 = (n) => String(n).padStart(2, '0')
+function hms(t) { // 本机时区 HH:MM:SS
+  if (t == null) return '--:--:--'
+  const d = new Date(t * 1000)
+  return p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds())
+}
+function dur(s) {
+  if (s == null) return '?'
+  s = Math.max(0, Math.round(s))
+  if (s < 60) return s + 's'
+  if (s < 3600) return Math.floor(s / 60) + 'm' + p2(s % 60) + 's'
+  if (s < 86400) return Math.floor(s / 3600) + 'h' + p2(Math.floor(s % 3600 / 60)) + 'm'
+  return Math.floor(s / 86400) + 'd' + p2(Math.floor(s % 86400 / 3600)) + 'h'
+}
+function bytes(n) {
+  if (n == null) return '–'
+  if (n < 1024) return n + ' B'
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' K'
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' M'
+  return (n / 1073741824).toFixed(2) + ' G'
+}
+const rate = (n) => (n == null ? '–' : bytes(Math.round(n)) + '/s')
+const shortCid = (c) => (c ? c.replace(/^cw/, '').slice(0, 8) : '?')
+const baseOf = (t) => { const m = /^(cw1\/[0-9a-f]{32})(?:\/|$)/.exec(t || ''); return m ? m[1] : t }
+function shortCh(ch) { // r/<会话>/up → r/F9g3…/up
+  const m = /^r\/([^/]+)\/(up|down)$/.exec(ch)
+  return m ? 'r/' + m[1].slice(0, 4) + '…/' + m[2] : ch
+}
+function shortTopic(t) {
+  if (!t) return '?'
+  const m = /^cw1\/([0-9a-f]{8})[0-9a-f]*(?:\/(.*))?$/.exec(t)
+  if (!m) return t.length > 24 ? t.slice(0, 24) + '…' : t
+  return m[1] + (m[2] ? '/' + shortCh(m[2]) : '')
+}
+const isRelay = (t) => /^cw1\/[0-9a-f]{32}\//.test(t || '')
+const uniqRooms = (topics) => [...new Set(topics.map(baseOf))]
+function labelFor(ip) {
+  if (!ip) return null
+  let best = null
+  for (const p in labels) if (ip.startsWith(p) && (!best || p.length > best.length)) best = p
+  return best ? labels[best] : null
+}
+const HOW = { clean: '正常断开', closed: '直接关了', timeout: '超时', error: '出错', takeover: '被同名新连接顶掉', broker: 'broker 重启', unsub: '退订' }
+const vpsNow = () => Date.now() / 1000 + (S ? S.skew : 0)
+
+// ───── 小片段 ─────
+const cidH = (c) => '<span class="cid" data-cid="' + esc(c) + '" title="' + esc(c) + '（点一下按它筛选事件流）">' + esc(shortCid(c)) + '</span>'
+function ipH(ip) {
+  if (!ip) return '<span class="unk" title="它在回放窗口之前就连上了，日志里没看到它的 IP">未知</span>'
+  const l = labelFor(ip)
+  return '<span class="ip" data-ip="' + esc(ip) + '" title="点一下：按它筛选，并填进下面的备注框">' + esc(ip) + '</span>' + (l ? '<span class="lbl">' + esc(l) + '</span>' : '')
+}
+const roomH = (t) => '<span class="room" data-topic="' + esc(baseOf(t)) + '" title="' + esc(t) + '">' + esc(shortTopic(t)) + '</span>'
+const howH = (how, detail) => '<span class="tag h-' + esc(how) + '"' + (detail ? ' title="' + esc(detail) + '"' : '') + '>' + esc(HOW[how] || how) + '</span>'
+const durH = (d) => '<span class="' + (d != null && d < 30 ? 'short' : '') + '">' + dur(d) + '</span>'
+
+// ───── 顶部 ─────
+function renderTop() {
+  const cell = (k, v, s) => '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + (s || '&nbsp;') + '</div></div>'
+  let h = ''
+  const linkCell = (name, l) => {
+    if (!sseOk) return '<span class="dot bad"></span><span class="c-bad">本机服务没连上</span>'
+    if (!l) return '<span class="dot"></span>–'
+    if (l.state === 'ok') return '<span class="dot ok"></span><span class="c-ok">正常</span>'
+    if (l.state === 'connecting') return '<span class="dot warn"></span><span class="c-warn">连接中</span>'
+    return '<span class="dot bad"></span><span class="c-bad" title="' + esc(l.err || '') + '">重连中 #' + l.tries + '</span>'
+  }
+  const L = S && S.link
+  h += cell('VPS 连接 · 日志', linkCell('log', L && L.log), L && L.log.state !== 'ok' && L.log.err ? esc(L.log.err.slice(0, 40)) : esc(S ? S.host : ''))
+  h += cell('VPS 连接 · 系统', linkCell('sys', L && L.sys), sys ? '已运行 ' + dur(sys.uptime) : '')
+  const stale = !sys || !L || L.sys.state !== 'ok'
+  const v = (x) => (stale ? '<span class="c-dim">' + x + '</span>' : x)
+  if (sys) {
+    const lc = sys.load[0] > sys.cpus ? 'c-bad' : sys.load[0] > sys.cpus * 0.7 ? 'c-warn' : ''
+    h += cell('负载 1 / 5 / 15 分钟', v('<span class="' + lc + '">' + sys.load[0].toFixed(2) + '</span> ' + sys.load[1].toFixed(2) + ' ' + sys.load[2].toFixed(2)),
+      'CPU ' + (sys.cpuPct == null ? '–' : sys.cpuPct.toFixed(0) + '%') + ' · ' + sys.cpus + ' 核')
+    const mp = sys.memTotal ? sys.memUsed / sys.memTotal * 100 : 0
+    h += cell('内存', v('<span class="' + (mp > 90 ? 'c-bad' : mp > 75 ? 'c-warn' : '') + '">' + mp.toFixed(0) + '%</span>'),
+      bytes(sys.memUsed) + ' / ' + bytes(sys.memTotal) + ' · swap ' + bytes(sys.swapUsed))
+    if (sys.disk) {
+      const dp = sys.disk.used / (sys.disk.used + sys.disk.avail) * 100
+      h += cell('磁盘 /', v('<span class="' + (dp > 90 ? 'c-bad' : dp > 80 ? 'c-warn' : '') + '">' + dp.toFixed(0) + '%</span>'), '剩 ' + bytes(sys.disk.avail))
+    }
+    h += cell('下行（VPS 收）', v(rate(sys.rxRate)), '累计 ' + bytes(sys.rxTotal))
+    h += cell('上行（VPS 发）', v(rate(sys.txRate)), '累计 ' + bytes(sys.txTotal))
+    const svc = Object.entries(sys.svc).map(([n, st]) => '<span title="' + esc(st) + '"><span class="dot ' + (st === 'active' ? 'ok' : 'bad') + '"></span><span class="' + (st === 'active' ? '' : 'c-bad') + '">' + esc(n) + '</span></span>').join(' &nbsp;')
+    h += '<div class="stat"><div class="k">服务</div><div class="v" style="font-size:12px;line-height:22px">' + svc + '</div><div class="s">' +
+      Object.values(sys.svc).filter((x) => x !== 'active').length + ' 个不在跑</div></div>'
+    h += cell('TCP 连接', v(sys.tcp ? sys.tcp.estab : '–'), ':443 ' + (sys.c443 ?? '–') + ' · :9001 ' + (sys.c9001 ?? '–'))
+  } else {
+    h += cell('系统数据', '<span class="c-dim">等待采样…</span>', '')
+  }
+  if (S) {
+    h += cell('MQTT 在线', S.clients.length, '房间 ' + S.rooms.filter((r) => r.members.length).length + ' · 没握手就关 ' + S.counts.anonCloses)
+    h += cell('没人收到的 PUBLISH', '<span class="' + (S.counts.lost ? 'c-bad' : '') + '">' + S.counts.lost + '</span>', '共 ' + S.counts.pubs + ' 条 · 回放 ' + S.replay + ' 行起')
+  }
+  $('top').innerHTML = h
+}
+
+// ───── 在线客户端 ─────
+function renderClients() {
+  const el = $('clients')
+  $('c-clients').textContent = S.clients.length
+  if (!S.clients.length) { el.innerHTML = '<div class="empty">现在没有客户端在线</div>'; return }
+  const now = vpsNow()
+  let h = '<table><tr><th>client</th><th>IP</th><th class="n">连上多久</th><th>房间</th><th class="n">发</th><th class="n">收</th><th class="n">最后活动</th></tr>'
+  for (const c of S.clients) {
+    const idle = now - c.last
+    h += '<tr><td>' + cidH(c.cid) + '</td><td>' + ipH(c.ip) + '</td>' +
+      '<td class="n"' + (c.t0 ? ' title="' + hms(c.t0) + ' 连上"' : ' title="在回放窗口之前就连着"') + '>' + (c.t0 ? dur(now - c.t0) : '<span class="unk">窗口前</span>') + '</td>' +
+      '<td>' + (c.topics.length ? uniqRooms(c.topics).map(roomH).join(' ') + (c.topics.some(isRelay) ? ' <span class="c-dim" title="还订阅着中转数据的 topic（/r/…）">+中转</span>' : '') : '<span class="unk">' + (c.t0 ? '没订阅' : '未知') + '</span>') + '</td>' +
+      '<td class="n">' + c.sent + ' <span class="c-dim">/ ' + bytes(c.sentBytes) + '</span></td>' +
+      '<td class="n">' + c.recv + ' <span class="c-dim">/ ' + bytes(c.recvBytes) + '</span></td>' +
+      '<td class="n" title="' + dur(idle) + ' 前"><span class="' + (c.keepalive && idle > c.keepalive * 1.5 ? 'c-bad' : '') + '">' + hms(c.last) + '</span></td></tr>'
+  }
+  el.innerHTML = h + '</table>'
+}
+
+// ───── 房间 ─────
+function timelineH(r) {
+  if (!r.timeline.length) return '<div class="tl"><div class="r c-dim">还没有记录</div></div>'
+  let h = '<div class="tl">'
+  const chH = (ch) => (ch ? '<span class="c-dim" title="' + esc(ch) + '">' + esc(shortCh(ch)) + '</span>' : '')
+  let hidden = 0
+  for (const it of r.timeline) {
+    if (it.ch && !ui.relay && !it.lost) { hidden++; continue }
+    if (it.k === 'pub') {
+      const others = it.to.filter((x) => x.cid !== it.from)
+      const self = it.to.some((x) => x.cid === it.from)
+      let to
+      if (others.length) to = '<span class="to">→ ' + others.map((x) => cidH(x.cid)).join(' ') + '</span>'
+      else if (it.lost) to = '<span class="warn">✕ 没有转发给任何别的客户端（' + (it.othersThen ? '当时这个 topic 上还有 ' + it.othersThen + ' 个别的订阅者' : '日志里没看到这个 topic 上有别的订阅者') + '）</span>'
+      else to = '<span class="c-dim">→ …</span>'
+      h += '<div class="r pub' + (it.lost ? ' lost' : '') + '"><span class="t">' + hms(it.t) + '</span><span style="color:var(--pub)">' + (it.ch ? '中转' : '牵线') + '</span>' + cidH(it.from) +
+        '<span>' + String(it.bytes).padStart(5, ' ') + ' B</span>' + chH(it.ch) + to + (self ? '<span class="self">（也回给了自己）</span>' : '') + '</div>'
+    } else if (it.k === 'join') {
+      h += '<div class="r join"><span class="t">' + hms(it.t) + '</span><span>' + (it.ch ? '订阅' : '进来') + '</span>' + cidH(it.cid) + (it.ip ? ipH(it.ip) : '') + chH(it.ch) + '</div>'
+    } else if (it.k === 'leave') {
+      h += '<div class="r leave"><span class="t">' + hms(it.t) + '</span><span>' + (it.ch ? '退订' : '离开') + '</span>' + cidH(it.cid) + (it.ch ? chH(it.ch) : '<span class="h-' + esc(it.how) + '">' + esc(HOW[it.how] || it.how) + '</span>') + '</div>'
+    } else {
+      h += '<div class="r stray"><span class="t">' + hms(it.t) + '</span><span>转发</span><span>→ ' + cidH(it.cid) + ' ' + it.bytes + ' B</span>' + chH(it.ch) + '<span class="c-dim">（日志里没对上是谁发的）</span></div>'
+    }
+  }
+  if (hidden) h += '<div class="r c-dim">另有 ' + hidden + ' 条中转数据没显示（事件流上面的「中转数据」打开）</div>'
+  return h + '</div>'
+}
+function renderRooms() {
+  const el = $('rooms')
+  const rooms = S.rooms.filter((r) => ui.emptyRooms || r.members.length || openRooms.has(r.topic) || r.lost)
+  $('c-rooms').textContent = S.rooms.filter((r) => r.members.length).length + ' 个有人 / 共 ' + S.rooms.length
+  if (!rooms.length) { el.innerHTML = '<div class="empty">回放窗口里没有人订阅过房间（老连接的订阅发生在窗口之前，看不到）</div>'; return }
+  const keep = el.scrollTop
+  let h = ''
+  for (const r of rooms) {
+    const open = openRooms.has(r.topic)
+    const n = r.members.length
+    h += '<div class="rm"><div class="hd" data-room="' + esc(r.topic) + '"><span class="caret">' + (open ? '▾' : '▸') + '</span>' +
+      '<span class="mono" style="color:var(--info)" title="' + esc(r.topic) + '">' + esc(shortTopic(r.topic)) + '</span>' +
+      '<span class="num ' + (n === 2 ? 'c-ok' : n === 1 ? 'c-warn' : 'c-dim') + '" title="一对设备都在的话是 2">' + n + ' 人</span>' +
+      '<span class="who">' + (r.members.map((m) => '<span class="m">' + cidH(m.cid) + ' ' + ipH(m.ip) + '</span>').join('') || '空') + '</span>' +
+      (r.lost ? '<span class="lostn" title="没人收到的 PUBLISH">✕ ' + r.lost + '</span>' : '') +
+      '<span class="num c-dim">' + r.pubs + ' 条</span><span class="num c-dim">' + hms(r.last) + '</span></div>' +
+      (open ? timelineH(r) : '') + '</div>'
+  }
+  el.innerHTML = h
+  el.scrollTop = keep
+}
+
+// ───── 最近断开 ─────
+function renderClosed() {
+  const el = $('closed')
+  let list = S.closed.slice().reverse()
+  if (ui.shortOnly) list = list.filter((c) => c.dur != null && c.dur < 30)
+  $('c-closed').textContent = list.length + (ui.shortOnly ? ' / ' + S.closed.length : '')
+  if (!list.length) { el.innerHTML = '<div class="empty">' + (ui.shortOnly ? '没有活了不到 30 秒的连接' : '回放窗口里还没有连接断开') + '</div>'; return }
+  const keep = el.scrollTop
+  let h = '<table><tr><th>断开时间</th><th>client</th><th>IP</th><th class="n">活了</th><th>断法</th><th>房间</th><th class="n">发</th><th class="n">收</th></tr>'
+  for (const c of list) {
+    h += '<tr><td class="n" style="text-align:left">' + hms(c.t1) + '</td><td>' + cidH(c.cid) + '</td><td>' + ipH(c.ip) + '</td><td class="n">' + durH(c.dur) + '</td>' +
+      '<td>' + howH(c.how, c.detail) + '</td><td>' + (c.topics.length ? uniqRooms(c.topics).map(roomH).join(' ') : '<span class="unk">没订阅</span>') + '</td>' +
+      '<td class="n">' + c.sent + '</td><td class="n">' + c.recv + '</td></tr>'
+  }
+  el.innerHTML = h + '</table>'
+  el.scrollTop = keep
+}
+
+// ───── 事件流 ─────
+function passes(e) {
+  if (e.k === 'ping' && !ui.ping) return false
+  if (!ui.relay && (e.k === 'pub_in' || e.k === 'pub_out') && isRelay(e.topic) && e.others !== 0) return false
+  if (ui.ip && !(e.ip && e.ip.startsWith(ui.ip))) return false
+  if (ui.cid && !(e.cid && e.cid.includes(ui.cid)) && !(e.from && e.from.includes(ui.cid))) return false
+  if (ui.topic && !(e.topic && e.topic.includes(ui.topic))) return false
+  return true
+}
+function evH(e) {
+  let kd = '', d = '', cls = 'ev k-' + e.k
+  const who = e.cid ? cidH(e.cid) + ' ' + ipH(e.ip) : ''
+  switch (e.k) {
+    case 'connect': kd = '连上'; d = who + ' <span class="c-dim">keepalive ' + e.keepalive + 's</span>'; break
+    case 'disconnect':
+      kd = '断开'; cls += ' h-' + e.how
+      d = who + ' ' + howH(e.how, e.detail) + ' 活了 ' + durH(e.dur) + ' <span class="c-dim">发 ' + e.sent + ' 收 ' + e.recv + '</span>'
+      break
+    case 'anon': kd = '关闭'; d = '有个连接没发 CONNECT 就关了（日志里没有它的 IP）'; break
+    case 'sub': kd = '订阅'; d = who + ' → ' + roomH(e.topic) + ' <span class="c-dim">另有 ' + e.others + ' 个订阅者</span>'; break
+    case 'unsub': kd = '退订'; d = who + ' ← ' + roomH(e.topic); break
+    case 'pub_in':
+      kd = 'PUB 进'; if (e.others === 0) cls += ' alone'
+      d = who + ' → ' + roomH(e.topic) + ' ' + e.bytes + ' B' + (e.others === 0 ? ' <span class="c-bad">这个 topic 上没有别的订阅者</span>' : ' <span class="c-dim">另有 ' + e.others + ' 个订阅者</span>')
+      break
+    case 'pub_out':
+      kd = 'PUB 出'
+      d = who + ' ← ' + roomH(e.topic) + ' ' + e.bytes + ' B ' + (e.self ? '<span class="c-dim">回给发布者自己</span>' : e.from ? '<span class="c-dim">来自</span> ' + cidH(e.from) : '<span class="c-dim">没对上是谁发的</span>')
+      break
+    case 'ping': kd = 'PING'; d = who; break
+    case 'broker': kd = 'broker'; d = esc(e.text); break
+    default: kd = '其它'; d = esc(e.text)
+  }
+  return '<div class="' + cls + '"><span class="t">' + hms(e.t) + '</span><span class="kd">' + kd + '</span><span class="d">' + d + '</span></div>'
+}
+function atBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 30 }
+function renderFeed() {
+  const el = $('feed')
+  const list = feed.filter(passes)
+  const show = list.slice(-FEED_SHOW)
+  el.innerHTML = show.length ? show.map(evH).join('') : '<div class="empty">没有符合筛选的事件' + (ui.ping ? '' : '（PING 默认不显示，点右上角的 PING 打开）') + '</div>'
+  el.scrollTop = el.scrollHeight
+  feedCount(list.length)
+}
+function feedCount(n) {
+  $('c-feed').textContent = (n == null ? '' : n + ' 条 · ') + '缓冲 ' + feed.length + (ui.paused ? ' · 已暂停' : '')
+}
+let pendingWhilePaused = 0
+function pushEvent(e) {
+  feed.push(e)
+  if (feed.length > FEED_KEEP + 500) feed.splice(0, feed.length - FEED_KEEP)
+  if (ui.paused) { pendingWhilePaused++; $('f-pause').textContent = '继续（+' + pendingWhilePaused + '）'; return }
+  if (!passes(e)) return
+  const el = $('feed')
+  const stick = atBottom(el)
+  if (el.firstElementChild && el.firstElementChild.className === 'empty') el.innerHTML = ''
+  el.insertAdjacentHTML('beforeend', evH(e))
+  while (el.childElementCount > FEED_SHOW) el.firstElementChild.remove()
+  if (stick) el.scrollTop = el.scrollHeight
+  feedCount()
+}
+
+// ───── 备注 ─────
+function renderLabels() {
+  $('chips').innerHTML = Object.entries(labels).map(([p, n]) =>
+    '<span class="chip">' + esc(p) + ' <b>' + esc(n) + '</b><button type="button" data-del="' + esc(p) + '" title="删掉这条备注">×</button></span>').join('')
+}
+async function saveLabel(prefix, name) {
+  $('lmsg').textContent = ''
+  try {
+    const r = await fetch('/labels', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prefix, name }) })
+    if (!r.ok) throw new Error(await r.text())
+    labels = await r.json()
+    renderLabels(); renderAll(); renderFeed()
+    return true
+  } catch (e) { $('lmsg').textContent = '没存上：' + e.message; return false }
+}
+
+function renderAll() {
+  renderTop()
+  if (!S) return
+  // 选着字的时候不重画表，免得选区被冲掉
+  const sel = window.getSelection()
+  if (sel && !sel.isCollapsed && $('main').contains(sel.anchorNode) && !$('feed').contains(sel.anchorNode)) return
+  renderClients(); renderRooms(); renderClosed()
+}
+
+// ───── 交互 ─────
+function setFilter(key, val) { ui[key] = val; $('f-' + key).value = val; renderFeed() }
+for (const key of ['ip', 'cid', 'topic']) $('f-' + key).addEventListener('input', (e) => { ui[key] = e.target.value.trim(); renderFeed() })
+$('f-ping').onclick = (e) => { ui.ping = !ui.ping; e.target.classList.toggle('on', ui.ping); renderFeed() }
+$('f-relay').onclick = (e) => { ui.relay = !ui.relay; e.target.classList.toggle('on', ui.relay); renderFeed(); if (S) renderRooms() }
+$('f-pause').onclick = (e) => {
+  ui.paused = !ui.paused
+  e.target.classList.toggle('on', ui.paused)
+  e.target.textContent = ui.paused ? '继续' : '暂停'
+  pendingWhilePaused = 0
+  if (!ui.paused) renderFeed(); else feedCount()
+}
+$('f-clear').onclick = () => { for (const k of ['ip', 'cid', 'topic']) { ui[k] = ''; $('f-' + k).value = '' } renderFeed() }
+$('rooms-empty').onclick = (e) => { ui.emptyRooms = !ui.emptyRooms; e.target.classList.toggle('on', ui.emptyRooms); if (S) renderRooms() }
+$('closed-short').onclick = (e) => { ui.shortOnly = !ui.shortOnly; e.target.classList.toggle('on', ui.shortOnly); if (S) renderClosed() }
+document.addEventListener('click', (e) => {
+  const t = e.target
+  if (!(t instanceof Element)) return
+  if (t.dataset.del) { saveLabel(t.dataset.del, ''); return }
+  if (t.dataset.cid) { setFilter('cid', t.dataset.cid); e.stopPropagation(); return }
+  if (t.dataset.ip) {
+    setFilter('ip', t.dataset.ip)
+    const ip = t.dataset.ip
+    $('lprefix').value = ip.includes('.') ? ip.split('.').slice(0, 2).join('.') + '.' : ip
+    $('lname').value = labelFor(ip) || ''
+    return
+  }
+  if (t.dataset.topic) {
+    setFilter('topic', t.dataset.topic)
+    openRooms.add(t.dataset.topic)
+    if (S) renderRooms()
+    return
+  }
+  const hd = t.closest('.hd[data-room]')
+  if (hd) {
+    const topic = hd.dataset.room
+    if (openRooms.has(topic)) openRooms.delete(topic); else openRooms.add(topic)
+    if (S) renderRooms()
+  }
+})
+$('labels').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const prefix = $('lprefix').value.trim(), name = $('lname').value.trim()
+  if (!prefix) { $('lmsg').textContent = '先填 IP 前缀'; return }
+  if (!name) { $('lmsg').textContent = '先填名字（要删掉备注点它后面的 ×）'; return }
+  if (await saveLabel(prefix, name)) { $('lprefix').value = ''; $('lname').value = '' }
+})
+
+// ───── SSE ─────
+const es = new EventSource('/events')
+es.onopen = () => { sseOk = true; renderTop() }
+es.onerror = () => { sseOk = false; renderTop() }
+es.addEventListener('init', (m) => {
+  const d = JSON.parse(m.data)
+  S = d.snapshot; sys = d.sys; labels = d.labels || {}; feed = d.feed || []
+  sseOk = true
+  renderLabels(); renderAll(); renderFeed()
+})
+es.addEventListener('snapshot', (m) => { S = JSON.parse(m.data); renderAll() })
+es.addEventListener('ev', (m) => pushEvent(JSON.parse(m.data)))
+es.addEventListener('sys', (m) => { sys = JSON.parse(m.data); renderTop() })
+es.addEventListener('labels', (m) => { labels = JSON.parse(m.data); renderLabels(); renderAll(); renderFeed() })
+renderTop()
+</script>
+</body>
+</html>

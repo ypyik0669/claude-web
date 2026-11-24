@@ -65,7 +65,7 @@ export interface SessionOptions {
   /** Waits before each redial attempt (0, 2 s, 5 s). */
   redialDelays?: number[];
   wait?: (ms: number) => Promise<void>;
-  /** The first dial right after pairing: once more on pc-silent (the PC may still be subscribing the new room). */
+  /** The first dial right after pairing. Every first dial is tried once more on pc-silent now, so this changes nothing. */
   justPaired?: boolean;
   /** No RTCPeerConnection here: the dials are the slow relay only, and a failure's 原文 says why (C4). */
   rtcMissing?: boolean;
@@ -283,13 +283,15 @@ export class Session {
   }
 
   /**
-   * The first link and the app's files over it. A dial that fails ends it (once more on pc-silent right after
-   * pairing); a link that drops while the files come is dialed again, like a redial.
+   * The first link and the app's files over it. A dial that fails ends it, except pc-silent, which is dialed once
+   * more on fresh broker connections (the dial says each hello again by itself, so silence through all of them is
+   * more likely connections that died under it than a lost message; and right after pairing the PC may still be
+   * subscribing the new room). A link that drops while the files come is dialed again, like a redial.
    */
   private async firstLink(): Promise<{ mux: Mux; got: Build }> {
     const delays = this.o.redialDelays ?? REDIAL_DELAYS;
     const wait = this.o.wait ?? sleep;
-    let silentRetry = !!this.o.justPaired;
+    let silentRetry = true;
     let again = 0;
     let fresh = false;
     for (;;) {
@@ -299,6 +301,7 @@ export class Session {
       } catch (e) {
         if (silentRetry && (e as { code?: string }).code === 'pc-silent' && !this.closed) {
           silentRetry = false;
+          fresh = true;
           continue;
         }
         throw e;

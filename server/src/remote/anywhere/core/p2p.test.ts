@@ -12,12 +12,14 @@ import {
   ICE_TIMEOUT_MS,
   MAX_EARLY_FRAMES,
   MAX_FRAME_BYTES,
+  MAX_STEP_REPEATS,
   P2P_DISCONNECT_GRACE_MS,
   P2P_FLAG,
   P2P_PIECE_BYTES,
   PAIR_KIND_TIMEOUT_MS,
   RELAY_AGAIN_ICE_MS,
   RELAY_CONFIRM_MS,
+  SIGNAL_RESEND_MS,
   ReplayGuard,
   SignalChannel,
   b64u,
@@ -458,15 +460,27 @@ describe('dial and Acceptor', () => {
     return { ...out, took: Date.now() - t0, lost, ends };
   }
 
-  it('relay: the confirm lost, dial goes ahead after one resend interval; frames sent meanwhile are handed over', async () => {
+  it('relay: the confirm lost, the phone asks again after one resend interval and the PC confirms again', async () => {
+    const { r: dialed, took, lost, ends } = await lostConfirm(0);
+    const r = dialed!;
+    const mine = watch(r.link);
+    expect(lost.dropped).toBe(1);
+    expect(r.link.kind).toBe('relay');
+    expect(took).toBeGreaterThanOrEqual(SIGNAL_RESEND_MS - 50);
+    expect(took).toBeLessThan(SIGNAL_RESEND_MS * 2);
+    await exchange(mine, ends[0], [0, 300]);
+    expect(mine.closed).toEqual([]);
+  });
+
+  it('relay: the confirm lost, but a frame from the PC says as much; frames sent meanwhile are handed over', async () => {
     const { r: dialed, took, lost, ends } = await lostConfirm(3);
     const r = dialed!;
     const mine = watch(r.link);
     expect(lost.dropped).toBe(1);
     expect(r.link.kind).toBe('relay');
-    expect(took).toBeGreaterThanOrEqual(RELAY_CONFIRM_MS - 50);
-    expect(took).toBeLessThan(RELAY_CONFIRM_MS + 2500);
-    // what came while dial waited, handed to the first onframe at once, in order
+    expect(took).toBeLessThan(RELAY_CONFIRM_MS);
+    // what came while dial waited (and right after), handed over in order
+    await until(() => mine.got.length === 3, 'the three frames');
     expect(mine.got.map((f) => f[0])).toEqual([1, 2, 3]);
     await exchange(mine, ends[0], [0, 300]);
     expect(mine.closed).toEqual([]);
@@ -959,6 +973,194 @@ function fakeLink() {
   link.onclose = (why) => closed.push(why);
   return { pc, dc, link, got, closed };
 }
+
+/**
+ * Loses signaling messages on their way out of a pool, as if every broker dropped them: `lose(msg, nth)` is asked for
+ * each one (nth counts the messages of that type so far, from 1). `lost` lists the types that went.
+ */
+function lossy(p: Brokers, room: Room, from: Side, lose: (m: { t: string; s: string }, nth: number) => boolean) {
+  const pub = p.publish.bind(p);
+  const lost: string[] = [];
+  const seen = new Map<string, number>();
+  vi.spyOn(p, 'publish').mockImplementation((topic, payload, opts) => {
+    if (topic !== room.topic) return pub(topic, payload, opts);
+    const raw = typeof payload === 'string' ? payload : dec.decode(payload);
+    // opened as the other side would: our own messages are the ones with from === `from`
+    void openEnvelope(room, raw, from === 'phone' ? 'pc' : 'phone', new ReplayGuard()).then((m) => {
+      if (!m) return void pub(topic, payload, opts);
+      const nth = (seen.get(m.t) ?? 0) + 1;
+      seen.set(m.t, nth);
+      if (lose(m, nth)) lost.push(m.t);
+      else pub(topic, payload, opts);
+    });
+    return 1;
+  });
+  return lost;
+}
+
+describe('lost signaling (every step is said again until it is answered)', () => {
+  const fast = { resendMs: 150, helloAgainMs: 600 };
+
+  it('the control: with no resends, a lost ack is pc-silent (what a phone on mobile data hit, 2026-11-24)', async () => {
+    const e = await env();
+    lossy(e.pc, e.room, 'pc', (m, nth) => m.t === 'ack' && nth === 1);
+    const err = await e.dialNow({ helloTimeoutMs: 1200, resendMs: 60_000, helloAgainMs: 60_000 }).catch((x) => x);
+    expect(err).toBeInstanceOf(DialError);
+    expect(err.code).toBe('pc-silent');
+    // says what the pool looked like, for the next report
+    expect(err.message).toMatch(/no answer from the PC within 1200 ms \(1 hellos; brokers up: local\)/);
+  });
+
+  it('a lost ack: the hello goes out again, the PC acks the same session again, the dial connects', async () => {
+    const fails: string[] = [];
+    const e = await env({ halfOpenMs: 1500, onFailure: (_id, why) => fails.push(why) });
+    const lost = lossy(e.pc, e.room, 'pc', (m, nth) => m.t === 'ack' && nth <= 2);
+    const r = await e.dialNow(fast);
+    expect(lost).toEqual(['ack', 'ack']);
+    expect(['p2p-v4', 'p2p-v6']).toContain(r.link.kind);
+    await until(() => e.links.length === 1, 'the PC side link');
+    await exchange(r.end, e.links[0], [0, 300]);
+    // one session on the PC, and nothing reported as a failed attempt
+    await sleep(1800);
+    expect(e.links).toHaveLength(1);
+    expect(fails).toEqual([]);
+  });
+
+  it('a lost hello: said again', async () => {
+    const e = await env();
+    const lost = lossy(e.phone, e.room, 'phone', (m, nth) => m.t === 'hello' && nth <= 2);
+    const r = await e.dialNow(fast);
+    expect(lost).toEqual(['hello', 'hello']);
+    expect(['p2p-v4', 'p2p-v6']).toContain(r.link.kind);
+  });
+
+  it('a PC from before resends (one ack per session, ever): a fresh hello gets through, the loser goes quietly', async () => {
+    const fails: string[] = [];
+    const e = await env({ halfOpenMs: 1500, onFailure: (_id, why) => fails.push(why) });
+    // every ack of the first session is lost: only a new session can be acked
+    let first: string | undefined;
+    lossy(e.pc, e.room, 'pc', (m) => m.t === 'ack' && (first ??= m.s) === m.s);
+    const r = await e.dialNow(fast);
+    expect(['p2p-v4', 'p2p-v6']).toContain(r.link.kind);
+    await until(() => e.links.length === 1, 'the PC side link');
+    await exchange(r.end, e.links[0], [0, 300]);
+    // the first hello's session was dropped with the link of its sibling: not a failed attempt
+    await sleep(1800);
+    expect(fails).toEqual([]);
+  });
+
+  it('a lost offer, a lost answer: still direct, well inside the ICE window', async () => {
+    for (const [side, type] of [['phone', 'offer'], ['pc', 'answer']] as const) {
+      const e = await env();
+      const lost = lossy(side === 'phone' ? e.phone : e.pc, e.room, side, (m, nth) => m.t === type && nth === 1);
+      const t0 = Date.now();
+      const r = await e.dialNow(fast);
+      expect(lost).toEqual([type]);
+      expect(['p2p-v4', 'p2p-v6']).toContain(r.link.kind);
+      expect(r.directWhy).toBeUndefined();
+      expect(Date.now() - t0).toBeLessThan(ICE_TIMEOUT_MS / 2);
+      await until(() => e.links.length === 1, 'the PC side link');
+      await exchange(r.end, e.links[0], [0, 300]);
+    }
+  });
+
+  it('every first candidate lost on both sides: they go out once more, still direct', async () => {
+    const e = await env({ dropCandidates: false });
+    const sent = new Set<string>();
+    const once = (m: { t: string; c?: { candidate?: string } }) => {
+      if (m.t !== 'cand') return false;
+      const k = String(m.c?.candidate);
+      if (sent.has(k)) return false;
+      sent.add(k);
+      return true;
+    };
+    const a = lossy(e.phone, e.room, 'phone', once as never);
+    const b = lossy(e.pc, e.room, 'pc', once as never);
+    const r = await e.dialNow({ ...fast, iceTimeoutMs: 8000 });
+    expect(a.length + b.length).toBeGreaterThan(0);
+    expect(['p2p-v4', 'p2p-v6']).toContain(r.link.kind);
+  });
+
+  it('a lost relay request: asked again, the PC takes the link up', async () => {
+    const e = await env();
+    const lost = lossy(e.phone, e.room, 'phone', (m, nth) => m.t === 'relay' && nth === 1);
+    const r = await e.dialNow({ ...fast, forceRelay: true });
+    expect(lost).toEqual(['relay']);
+    expect(r.link.kind).toBe('relay');
+    await until(() => e.links.length === 1, 'the PC side link');
+    await exchange(r.end, e.links[0], [0, 300]);
+  });
+
+  it('repeats are bounded: a flood of the same hello gets at most MAX_STEP_REPEATS more acks', async () => {
+    const e = await env();
+    const ch = new SignalChannel(e.phone, e.room, 'phone');
+    cleanup.push(() => ch.close());
+    let acks = 0;
+    ch.on((m) => {
+      if (m.t === 'ack') acks++;
+    });
+    await ch.open();
+    const pn = b64u(rand(16));
+    for (let i = 0; i < 60; i++) await ch.send({ t: 'hello', s: 'flood', pn });
+    // another phone's nonce under the same session id is not answered at all
+    await ch.send({ t: 'hello', s: 'flood', pn: b64u(rand(16)) });
+    await sleep(600);
+    expect(acks).toBe(1 + MAX_STEP_REPEATS);
+  });
+
+  it('leaves no timers behind, whichever step the dial ended in', async () => {
+    const live = ourTimers();
+    const e = await env();
+    const a = await e.dialNow(fast);
+    a.link.close();
+    const b = await e.dialNow({ ...fast, forceRelay: true });
+    b.link.close();
+    lossy(e.pc, e.room, 'pc', (m) => m.t === 'ack');
+    await expect(e.dialNow({ ...fast, helloTimeoutMs: 500 })).rejects.toThrow(DialError);
+    e.acc.close();
+    await sleep(100);
+    expect(live()).toBe(0);
+  });
+
+  /**
+   * The soak: every signaling message from either side is lost with probability `loss`, on every broker at once
+   * (worse than real life, where the brokers fail apart). CW_SOAK_DIALS / CW_SOAK_LOSS for a long run:
+   *   CW_SOAK_DIALS=2000 npx vitest run src/remote/anywhere/core/p2p.test.ts -t soak
+   */
+  it('soak: with 30 % of all signaling lost, every dial still ends in a link', async () => {
+    const dials = Number(process.env.CW_SOAK_DIALS) || 30;
+    const loss = Number(process.env.CW_SOAK_LOSS) || 0.3;
+    const e = await env({ dropCandidates: false });
+    lossy(e.phone, e.room, 'phone', () => Math.random() < loss);
+    lossy(e.pc, e.room, 'pc', () => Math.random() < loss);
+    const kinds: Record<string, number> = {};
+    const took: number[] = [];
+    const failed: string[] = [];
+    for (let i = 0; i < dials; i++) {
+      const t0 = Date.now();
+      try {
+        // the real intervals, a relay now and then (ICE over a lossy channel is not what is being tested)
+        const r = await dial({ brokers: e.phone, room: e.room, stun: [], rtc: e.phoneRtc.Ctor, forceRelay: i % 3 === 2, iceTimeoutMs: 6000 });
+        took.push(Date.now() - t0);
+        kinds[r.link.kind] = (kinds[r.link.kind] ?? 0) + 1;
+        const mine = watch(r.link);
+        await until(() => e.links.length === i + 1 - failed.length, 'the PC side link', 10_000);
+        await exchange(mine, e.links[e.links.length - 1], [300]);
+        r.link.close();
+      } catch (x) {
+        failed.push(`#${i}: ${(x as Error).message}`);
+      }
+    }
+    // everything down before the next test (a connection still closing sets timers of its own)
+    await until(() => e.links.every((l) => l.closed.length === 1), 'every PC side link ended', 30_000);
+    e.acc.close();
+    await until(() => [...e.phoneRtc.pcs, ...e.pcRtc.pcs].every((p) => p.connectionState === 'closed'), 'every connection closed', 30_000);
+    await sleep(300);
+    took.sort((a, b) => a - b);
+    console.log(`soak: ${dials} dials at ${loss * 100} % loss, ${failed.length} failed; kinds ${JSON.stringify(kinds)}; median ${took[took.length >> 1]} ms, worst ${took[took.length - 1]} ms`);
+    expect(failed).toEqual([]);
+  }, 1_800_000);
+});
 
 describe('direct link contract', () => {
   it('splits frames into END / MORE pieces of at most P2P_PIECE_BYTES, and puts them back together', () => {
