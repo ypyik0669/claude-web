@@ -4,6 +4,13 @@
 
 每个版本的变化都记在这里；安装包在 [Releases](https://github.com/ypyik0669/claude-web/releases) 下载。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.17] — 2026-11-27
+
+### 修复
+
+- **Mac 版在 macOS 12 上又能打开了。** 以前的 Mac 版在 macOS 12 Monterey 上提示「要求 macOS 13.0 或更高版本」：它用的 Electron 不再支持 macOS 12。现在 Mac 版改用还支持 macOS 12 的 Electron 43（Windows 版不变）。在 macOS 12 上对话用内置引擎跑；官方 Claude Code 二进制要求 macOS 13，设成用它的供应商在这台 Mac 上会自动改用内置引擎。
+- **手机用流量连电脑更稳了。** 在一些移动网络上（移动 5G 遇到过），电脑明明收到了，手机却报「15000 ms 内电脑没有回应」。现在连接的每一步没收到回应就会再发，丢了一条回复也不会卡住。
+
 ## [0.5.16] — 2026-11-21
 
 ### 修复

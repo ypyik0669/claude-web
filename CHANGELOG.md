@@ -4,6 +4,13 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.17] — 2026-11-27
+
+### Fixed
+
+- **The Mac version opens on macOS 12 again.** The Mac app said "requires macOS 13.0 or later" on macOS 12 Monterey: the Electron it is built on dropped macOS 12. The Mac builds now use Electron 43, the last one that still runs there (Windows is unchanged). On macOS 12 conversations run on the built-in engine; the official Claude Code binary needs macOS 13, so a provider that was set to use it falls back to the built-in engine there.
+- **Connecting from the phone over mobile data is more reliable.** On some mobile networks (seen on China Mobile 5G) the phone gave up with "no answer from the PC within 15000 ms" even though the PC had heard it. Each connection step is now sent again until the other side answers, so a reply that went missing no longer stalls the connection.
+
 ## [0.5.16] — 2026-11-21
 
 ### Fixed
