@@ -4,6 +4,14 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.18] — 2026-11-28
+
+### Fixed
+
+- **`claude-web://` links in replies can be clicked.** When Claude wrote a link like `[Open](claude-web://new?folder=…&q=…)`, it showed up but did nothing when clicked. Now it opens inside the app, the same way the link does from anywhere else: a new conversation in that folder with the text filled in (never sent on its own), or the named conversation. Like links from web pages, a network folder is never opened and a folder that isn't there is dropped. (#18)
+- **Finished subagents no longer stay "running".** In Automation's Running list, a subagent that had already finished could stay "running" for good, and Stop then failed with "No task found". A subagent now counts as finished as soon as its result comes back to the conversation, and stopping one that has already ended just marks it ended. (#19)
+- **WebRTC direct connections work on older Macs.** The Mac build now compiles the WebRTC module itself for macOS 12. The prebuilt one only loaded on macOS 12.3 and later (Apple Silicon) or macOS 15 and later (Intel). Below that, the phone couldn't connect to the computer directly and always went through the relay.
+
 ## [0.5.17] — 2026-11-27
 
 ### Fixed
