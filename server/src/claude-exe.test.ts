@@ -20,7 +20,7 @@ vi.mock('node:child_process', async (orig) => {
     spawn: (cmd: string, args: string[], opts: any) => { spawns.push({ cmd, args, opts }); return { pid: 1 } as any; },
   };
 });
-const { globalRoot, globalRootAsync, versionOf, engineInfo, spawnClaude, resetLookups, resolveCcbEntry, LOOKUP_FAIL_TTL_MS } = await import('./claude-exe.js');
+const { globalRoot, globalRootAsync, versionOf, engineInfo, spawnClaude, resetLookups, resolveCcbEntry, resolveEngine, officialBinaryRuns, LOOKUP_FAIL_TTL_MS } = await import('./claude-exe.js');
 
 describe('claude-exe lookups: successes kept, failures kept only LOOKUP_FAIL_TTL_MS', () => {
   let now = 0;
@@ -111,6 +111,20 @@ describe('the engine is our own claude-web-engine, never a global claude-code-be
     try {
       expect(await versionOf(entry)).toBe('2.8.4-cw.1');
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('macOS 12: the official binary needs macOS 13, so a session that wants it runs on our engine', () => {
+  it('Darwin 21 (macOS 12) cannot run it; Darwin 22+ and other systems can', () => {
+    expect(officialBinaryRuns('darwin', '21.2.0')).toBe(false);
+    expect(officialBinaryRuns('darwin', '22.1.0')).toBe(true);
+    expect(officialBinaryRuns('darwin', '25.0.0')).toBe(true);
+    expect(officialBinaryRuns('win32', '10.0.26200')).toBe(true);
+    expect(officialBinaryRuns('linux', '6.1.0')).toBe(true);
+    expect(officialBinaryRuns('darwin', 'weird')).toBe(true);
+  });
+  it.runIf(process.platform === 'darwin' && !officialBinaryRuns())('here (macOS 12) prefer claude gives ccb', () => {
+    expect(resolveEngine('claude').kind).toBe('ccb');
   });
 });
 

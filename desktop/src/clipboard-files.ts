@@ -3,7 +3,8 @@
 // Chromium hands a paste of files copied in Explorer / Finder to the page as File objects, and `webUtils.getPathForFile`
 // (preload) turns each into its path — the whole list, on every system. What the page cannot tell from a File is
 // whether it is a folder (it cannot read one), so the page sends those paths here and gets back what each one is.
-// When the page was handed no File at all, the shell reads the clipboard itself. Electron 44's clipboard is the async,
+// When the page was handed no File at all, the shell reads the clipboard itself (the macOS build is on Electron 43, whose
+// clipboard is the old `readBuffer(format)` one: clipboardReader() dresses it up as below). Electron 44's clipboard is the async,
 // web-shaped one (`read()` → ClipboardItem[]; the old `readBuffer(format)` is gone): a file list shows up as the MIME
 // type `text/uri-list` (Chromium reports one for CF_HDROP / a Finder copy), and the platform's own formats as
 // `electron application/osclipboard;format="<name>"`. Tried in this order:
@@ -26,6 +27,37 @@ export interface ClipPath { path: string; name: string; dir: boolean; size?: num
 /** The parts of Electron's `clipboard` this reads (its ClipboardItem: `types`, and `getType` → a Blob). */
 export interface ClipboardReader {
   read(): Promise<readonly { readonly types: readonly string[]; getType(type: string): Promise<unknown> }[]>;
+}
+
+/** Electron 43 and older (the macOS build: Electron 44 needs macOS 13): `readBuffer(format)` reads a raw format by name. */
+export interface LegacyClipboard {
+  readBuffer(format: string): Buffer;
+  availableFormats?(type?: 'clipboard' | 'selection'): string[];
+}
+
+/** The raw formats asked for by name on an old clipboard (whichever of them this system has). */
+const LEGACY_FORMATS = ['FileNameW', 'NSFilenamesPboardType', 'public.file-url', 'x-special/gnome-copied-files', 'text/uri-list'];
+
+/**
+ * Electron's `clipboard` as a ClipboardReader: Electron 44's already is one; an older one (no async `read()`, but
+ * `readBuffer`) becomes one item offering its MIME types plus the raw formats above, each read with `readBuffer` (a
+ * format the system does not have reads empty, and clipboardPaths moves on to the next).
+ */
+export function clipboardReader(cb: ClipboardReader | LegacyClipboard): ClipboardReader {
+  const old = cb as Partial<LegacyClipboard>;
+  if (typeof old.readBuffer !== 'function') return cb as ClipboardReader;
+  const readBuffer = old.readBuffer.bind(cb);
+  return {
+    read: async () => {
+      let mimes: string[] = [];
+      try { mimes = old.availableFormats?.call(cb) ?? []; } catch { /* none listed */ }
+      const types = [...mimes, ...LEGACY_FORMATS.map((f) => `electron application/osclipboard;format="${f}"`)];
+      return [{
+        types,
+        getType: async (type: string) => readBuffer(rawFormatName(type) ?? type),
+      }];
+    },
+  };
 }
 
 /** `FileNameW`: UTF-16LE text, NUL-separated (and -terminated). */
@@ -73,6 +105,7 @@ export function rawFormatName(type: string): string | null {
 
 async function bytesOf(v: unknown): Promise<Buffer | null> {
   if (typeof v === 'string') return Buffer.from(v, 'utf8');
+  if (v instanceof Uint8Array) return Buffer.from(v); // an old clipboard's readBuffer
   if (v && typeof (v as Blob).arrayBuffer === 'function') return Buffer.from(await (v as Blob).arrayBuffer());
   return null;
 }

@@ -101,6 +101,8 @@ mac:
   hardenedRuntime: false
   gatekeeperAssess: false
   darkModeSupport: true
+  # macOS 12 too: the mac jobs package Electron 43 (.github/workflows/release.yml), the last one that runs there
+  minimumSystemVersion: "12.0"
 dmg:
   artifactName: ClaudeWeb-${version}-mac-${arch}.${ext}
 linux:

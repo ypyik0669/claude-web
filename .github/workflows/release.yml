@@ -36,12 +36,14 @@ jobs:
           - os: windows-latest
             args: --win --x64
             sidecar_platform: win32-x64
+          # mac builds run on Electron 43: Electron 44 needs macOS 13, 43 still runs on macOS 12 (2026-11-27, a user on
+          # 12.1 got "requires macOS 13.0"); Windows stays on the Electron in package.json
           - os: macos-latest
-            args: --mac --arm64
+            args: --mac --arm64 -c.electronVersion=43.8.13
             sidecar_platform: darwin-arm64
           # Intel runner: npm installs the SDK binary and ccb's ripgrep for the runner's own CPU only
           - os: macos-15-intel
-            args: --mac --x64
+            args: --mac --x64 -c.electronVersion=43.8.13
             sidecar_platform: darwin-x64
     runs-on: ${{ matrix.os }}
     steps:

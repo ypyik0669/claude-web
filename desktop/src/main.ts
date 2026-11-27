@@ -22,7 +22,7 @@ import { PendingPicks, SourceCache, displayMediaGrant, listSources, oneAtATime, 
 import { CrashGuard, allowNavigation, externalAllowed, sameOrigin, windowOpenAction } from './nav-guard';
 import { FileGuard, guardSession } from './file-guard';
 import { fromOurWindow, openablePath, type IpcAsker } from './ipc-guard';
-import { pastedFiles } from './clipboard-files';
+import { clipboardReader, pastedFiles } from './clipboard-files';
 import { LAST_PICK_FILE, dialogStart, readLastPick, saveLastPick } from './dialog-start';
 import { CAFE_SCRIPT_URL, OPENING_SCHEME, fancyOpeningHtml, logoTarget, openingHold, openingHtml, openingLength, setOpeningNote } from './opening';
 import { cafeScriptPath, chooseOpening, dataDir, groundOf, localDay, openingSettings, packFileUrl, packResponse, pickOpening, readMetaSettings, readWebEntry } from './opening-pack';
@@ -905,7 +905,7 @@ ipcMain.handle('desktop:capture:choose', (e, p: CapturePick) => {
 });
 // 粘贴文件 / 文件夹 (clipboard-files.ts): what the pasted paths are (folder or file, size) — the page's own list from
 // webUtils.getPathForFile, or, when it was handed no file, the system clipboard's
-ipcMain.handle('desktop:clipboard:files', (e, paths: unknown) => (ours(e) ? pastedFiles(paths, clipboard, process.platform) : []));
+ipcMain.handle('desktop:clipboard:files', (e, paths: unknown) => (ours(e) ? pastedFiles(paths, clipboardReader(clipboard), process.platform) : []));
 /** A page's wishes for the open dialog (a title, which files): only short plain strings get through. */
 function dialogOpts(o: unknown): { title?: string; filters?: Electron.FileFilter[] } {
   const x = (o && typeof o === 'object' ? o : {}) as { title?: unknown; filters?: unknown };

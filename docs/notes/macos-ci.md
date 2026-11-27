@@ -1,5 +1,8 @@
 # macOS / CI（2026-09-27）
 
+- **mac 包用 Electron 43，为了 macOS 12**（2026-11-27 用户报告：macOS 12.1 上弹「要求 macOS 13.0 或更高版本」）：Electron 44 起 Chromium 不支持 macOS 12（38 起不支持 11）。`release.yml` 两个 mac job 的 args 带 `-c.electronVersion=43.8.13`，electron-builder 打进去的是 43，`package.json` / 本机开发 / Windows 仍是 44；`electron-builder.yml` 的 `mac.minimumSystemVersion: "12.0"`。**43 的 clipboard 还是旧接口**（`readBuffer(format)`，没有异步 `read()`），`clipboard-files.ts` 的 `clipboardReader()` 把它包成 44 的样子；以后改 desktop 代码用了 44 才有的 API，先拿 43 的 `electron.d.ts` 编一遍（`npm pack electron@43.8.13`，临时 tsconfig 的 `paths` 把 `electron` 指过去）。**升级 mac 的 Electron 前看清它要求的 macOS**（Electron 的 breaking-changes 页）。43 停止维护（46 正式版出来）后要么继续钉着 43、要么放弃 macOS 12，到时候问用户。
+  - **安装包里各个 mac 二进制的最低系统**（读 Mach-O 的 LC_BUILD_VERSION，2026-11-27）：SDK 的官方 `claude`（0.3.322）**13.0**——macOS 12 上跑不了，`claude-exe.ts` 的 `officialBinaryRuns()`（Darwin < 22 = macOS 12）让 `resolveEngine('claude')` 退回 ccb（ccb 由 Electron 当 Node 跑，43 带 Node 24.22）；node-pty 10.7 / 11.0、sharp 10.15 没问题；**node-datachannel 0.33.4 arm64 要 14.0、x64 标的是 26.0**——它是按需加载的（`remote/anywhere/rtc.ts`），加载失败手机走转发，不影响启动，但意味着这些 Mac 上没有 P2P 直连。
+
 - **mac 包只能在 mac 上打**：`.github/workflows/release.yml` 用 `macos-latest`（arm64）+ `macos-15-intel`（x64）分别构建。不能在 arm 机器上交叉打 x64：npm 只装本机 CPU 的 SDK 二进制，ccb 的 ripgrep 也是 postinstall 按 `process.arch` 下载的。推 `v*` tag 才发布到 Releases，`workflow_dispatch` 只产出 artifact。仓库 2026-09-30 起公开（MIT），electron-updater 直接读公开的 Releases；安装包里带着 Agent SDK 的官方 Claude Code（Anthropic 条款）和 ccb（没有声明许可证），发布安装包前先想清楚这两样能不能再分发（README「许可证与致谢」，v0.1.0 起用户决定照发）。
   - **Windows job 卡在「fetch sidecars」的「no wb2api.exe in the archive」**（2026-11-21，0.5.15）：runner 镜像换成 11-16
     版后 Expand-Archive 报错却退出 0，什么都没解出来（`free-sources` 笔记「Windows 上解 zip」）。现在退回 tar.exe，日志里有

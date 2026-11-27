@@ -2,6 +2,7 @@ import { spawn, exec, execFile, execSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { nodeRuntime } from './agents/resolve.js';
@@ -135,6 +136,17 @@ function sourceOf(file: string): EngineInfo['source'] {
   return file.includes('app.asar') || file.includes('claude-agent-sdk') || file.includes(path.join('node_modules', 'claude-web-engine')) || file.includes(path.join('claude-web', 'node_modules')) ? 'bundled' : 'global';
 }
 
+/**
+ * Whether the official Claude Code binary can run here: its macOS builds need macOS 13 (minos 13.0 in the Mach-O of
+ * the SDK's claude-agent-sdk-darwin-* 0.3.322). Darwin 22 = macOS 13. The desktop app itself runs on macOS 12 (its
+ * mac build is on Electron 43: Electron 44 needs macOS 13 too).
+ */
+export function officialBinaryRuns(platform: NodeJS.Platform = process.platform, release: string = os.release()): boolean {
+  if (platform !== 'darwin') return true;
+  const major = Number.parseInt(release, 10);
+  return !Number.isFinite(major) || major >= 22;
+}
+
 let cached: { file: string; kind: RuntimeKind } | null = null;
 /**
  * The one runtime every session uses. Our engine (claude-web-engine, a superset of Claude Code with the same
@@ -143,7 +155,12 @@ let cached: { file: string; kind: RuntimeKind } | null = null;
  */
 export function resolveEngine(prefer?: RuntimeKind): { file: string; kind: RuntimeKind } {
   const want = prefer ?? (process.env.CLAUDE_WEB_RUNTIME === 'claude' ? 'claude' : 'ccb');
-  if (want === 'claude') return { file: resolveClaudeExe(), kind: 'claude' };
+  if (want === 'claude') {
+    // macOS 12: the official binary cannot start there; our engine (run by the app's own Node) can — a relay that
+    // only lets the official client through says so itself, which beats a dyld error
+    const ccb = officialBinaryRuns() ? null : resolveCcbEntry();
+    return ccb ? { file: ccb, kind: 'ccb' } : { file: resolveClaudeExe(), kind: 'claude' };
+  }
   if (cached) return cached;
   const c = resolveCcbEntry();
   cached = c ? { file: c, kind: 'ccb' } : { file: resolveClaudeExe(), kind: 'claude' };

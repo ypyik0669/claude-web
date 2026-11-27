@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_CLIP_PATHS, baseName, clipboardPaths, describePaths, parseFileNameW, parseFileUrls, parseFilenamesPlist, pastedFiles, rawFormatName, type ClipboardReader } from './clipboard-files';
+import { MAX_CLIP_PATHS, baseName, clipboardPaths, clipboardReader, describePaths, parseFileNameW, parseFileUrls, parseFilenamesPlist, pastedFiles, rawFormatName, type ClipboardReader } from './clipboard-files';
 
 const utf16 = (s: string) => Buffer.from(s, 'utf16le');
 
@@ -80,6 +80,30 @@ describe('clipboardPaths (Electron 44: read() → ClipboardItem[])', () => {
   it('a clipboard that throws, or an item whose read fails, is just empty', async () => {
     expect(await clipboardPaths({ read: async () => { throw new Error('x'); } }, 'win32')).toEqual([]);
     expect(await clipboardPaths({ read: async () => [{ types: ['text/uri-list'], getType: async () => { throw new Error('gone'); } }] }, 'win32')).toEqual([]);
+  });
+});
+
+describe('clipboardReader (Electron 43, the macOS build: readBuffer(format))', () => {
+  /** an old clipboard: readBuffer gives the named format's bytes, empty for one the system does not have */
+  const legacy = (data: Record<string, string | Buffer>, formats: string[] = []) => ({
+    readBuffer: (f: string) => (f in data ? Buffer.from(data[f]) : Buffer.alloc(0)),
+    availableFormats: () => formats,
+  });
+  it("Electron 44's clipboard is passed through as it is", () => {
+    const r: ClipboardReader = { read: async () => [] };
+    expect(clipboardReader(r)).toBe(r);
+  });
+  it('macOS: NSFilenamesPboardType, else public.file-url', async () => {
+    expect(await clipboardPaths(clipboardReader(legacy({ NSFilenamesPboardType: '<array><string>/Users/a/x</string><string>/Users/a/文件夹</string></array>' })), 'darwin')).toEqual(['/Users/a/x', '/Users/a/文件夹']);
+    expect(await clipboardPaths(clipboardReader(legacy({ 'public.file-url': 'file:///Users/a/y' })), 'darwin')).toEqual(['/Users/a/y']);
+  });
+  it('Windows: FileNameW; a listed text/uri-list that reads empty is skipped', async () => {
+    expect(await clipboardPaths(clipboardReader(legacy({ FileNameW: utf16('C:\\a\\b.md\0') }, ['text/uri-list'])), 'win32')).toEqual(['C:\\a\\b.md']);
+  });
+  it('nothing on the clipboard, or availableFormats throwing: empty', async () => {
+    expect(await clipboardPaths(clipboardReader(legacy({})), 'darwin')).toEqual([]);
+    const bad = { readBuffer: () => Buffer.alloc(0), availableFormats: () => { throw new Error('x'); } };
+    expect(await clipboardPaths(clipboardReader(bad), 'win32')).toEqual([]);
   });
 });
 
