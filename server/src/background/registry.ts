@@ -17,10 +17,15 @@ export interface BgState extends BgSession {
   /** Foreground steps the CLI tracks as tasks (`isForeground`), by task id: kept out of the picture until the CLI
    *  moves one to the background (task_updated patch.is_backgrounded), when it shows up as if it had started then. */
   held: Map<string, { m: any; at: number }>;
+  /** The turn's foreground sub-agent calls (an Agent / Task tool_use without run_in_background), by tool_use id: the
+   *  call's tool_result coming back is that sub-agent's end, whatever task messages the stream did or did not carry. */
+  syncCalls: Set<string>;
 }
 
 /** At most this many held foreground steps (they go when they end; a lost notification must not grow the map). */
 const MAX_HELD = 64;
+/** At most this many foreground calls remembered (an answered one is dropped; a turn has a few at a time). */
+const MAX_SYNC_CALLS = 256;
 
 /** A step something waits on, not background work: a command the turn or a sub-agent runs in the foreground
  *  (official 2.1.283 reports a long `sleep` as a local_bash task with is_backgrounded false — a workflow agent's one
@@ -29,7 +34,7 @@ const MAX_HELD = 64;
 export const isForeground = (m: any): boolean => m?.is_backgrounded === false && (m.task_type === 'local_bash' || m.owned_by_subagent === true);
 
 export function createBgState(sessionId: string): BgState {
-  return { sessionId, updatedAt: 0, tasks: [], events: [], nextColor: 0, allEvents: [], held: new Map() };
+  return { sessionId, updatedAt: 0, tasks: [], events: [], nextColor: 0, allEvents: [], held: new Map(), syncCalls: new Set() };
 }
 
 const kindOf = (type: unknown, subagentType: unknown): BgKind =>
@@ -289,6 +294,49 @@ function applyTaskMessage(s: BgState, m: any, now: number): boolean {
     }
   }
   return false;
+}
+
+/** The tool names a sub-agent is started with (Claude Code's Agent; older builds and ccb call it Task). */
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
+
+/**
+ * The main conversation's own messages (2026-11-27, issue #19: two finished sub-agents stayed 在跑 and their Stop said
+ * "No task found"): an assistant message's foreground Agent calls are remembered, and a user message's tool_result for
+ * one ends the sub-agent task started by it (`tool_use_id`) — the call returns only when the sub-agent is done. A
+ * background one (run_in_background, is_backgrounded, or moved there) returns at once and is left to its notification;
+ * a resumed one (SendMessage) is never a foreground Agent call. Sub-agents' own messages (parent_tool_use_id) are not
+ * the turn's. Returns true when the background changed.
+ */
+export function applyTurnMessage(s: BgState, m: any, now: number): boolean {
+  if ((m?.type !== 'assistant' && m?.type !== 'user') || m.parent_tool_use_id) return false;
+  const content = m.message?.content;
+  if (!Array.isArray(content)) return false;
+  let changed = false;
+  for (const b of content) {
+    if (m.type === 'assistant' && b?.type === 'tool_use' && typeof b.id === 'string' && AGENT_TOOLS.has(b.name) && b.input?.run_in_background !== true) {
+      if (s.syncCalls.size >= MAX_SYNC_CALLS) s.syncCalls.delete(s.syncCalls.values().next().value!);
+      s.syncCalls.add(b.id);
+    } else if (m.type === 'user' && b?.type === 'tool_result' && typeof b.tool_use_id === 'string' && s.syncCalls.delete(b.tool_use_id)) {
+      const t = s.tasks.find((x) => x.toolUseId === b.tool_use_id && x.kind === 'agent');
+      if (!t || t.status !== 'running' || t.backgrounded === true) continue;
+      endTask(s, t, b.is_error === true ? 'failed' : 'completed', now);
+      changed = true;
+    }
+  }
+  if (changed) s.updatedAt = now;
+  return changed;
+}
+
+/**
+ * A task the CLI says it does not have (its Stop answered "No task found"): it ended without us hearing. Shown as
+ * stopped, not left 在跑 with a Stop that can only fail. Returns true when it was still running here.
+ */
+export function endGone(s: BgState, taskId: string, now: number): boolean {
+  const t = s.tasks.find((x) => x.id === taskId);
+  if (!t || t.status !== 'running') return false;
+  endTask(s, t, 'stopped', now, undefined, tr('停止前就已经结束了'));
+  s.updatedAt = now;
+  return true;
 }
 
 /** The CLI process went away (closed, crashed, restarted): its background work went with it. */

@@ -1840,6 +1840,7 @@ export const EN_SERVER: Record<string, string> = {
   "这里需要一个文件夹，但给的是一个文件。": "A folder is needed here, but a file was given.",
   "这里需要一个文件，但给的是一个文件夹。": "A file is needed here, but a folder was given.",
   "进程结束了": "The process ended",
+  "停止前就已经结束了": "It had already ended",
   "进程退出 {code}": "Process exited with {code}",
   "远程 Magpie": "Remote Magpie",
   "远程同步设置请在「备份与同步」里保存": "Save the remote sync settings under “Backup & Sync”",

@@ -103,7 +103,7 @@ import type { ThemeService } from '../themes/service.js';
 import type { OpeningService } from '../openings/service.js';
 import { usable } from '../themes/tools.js';
 import { handleOrchestra, isOrchestraRequest } from '../orchestra/handlers.js';
-import { handleBackground, isBackgroundRequest, type BackgroundService } from '../background/service.js';
+import { handleBackground, isBackgroundRequest, isTaskGone, type BackgroundService } from '../background/service.js';
 import { isWebKeySetting, maskWebSettings, type WebService } from '../web/service.js';
 import { setWebAgentBrowser, setWebMcpEnabled } from '../web/launcher.js';
 import { egoStatus } from '../web/ego.js';
@@ -1113,7 +1113,13 @@ export class Hub {
         return s.previews.start(req.cwd, req.name);
       }
       case 'session.stopTask':
-        await this.runner(req.sessionId).stopTask?.(req.taskId);
+        try {
+          await this.runner(req.sessionId).stopTask?.(req.taskId);
+        } catch (e) {
+          // the CLI no longer has it (issue #19): it ended without us hearing — 后台 shows it ended, no 停止失败
+          if (!isTaskGone(e)) throw e;
+          s.background.markGone(req.sessionId, req.taskId);
+        }
         return null;
       case 'permission.respond': {
         if (s.computer.respond(req.requestId, req.response)) return null;

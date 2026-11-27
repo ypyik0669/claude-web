@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundService, KEEP_ENDED_MS, KEEP_TASK_MS, handleBackground, isBackgroundRequest } from './service.js';
+import { BackgroundService, KEEP_ENDED_MS, KEEP_TASK_MS, handleBackground, isBackgroundRequest, isTaskGone } from './service.js';
 import type { BgHistoryPage, BgSession } from './types.js';
 
 const sys = (subtype: string, o: Record<string, unknown>) => ({ type: 'system', subtype, uuid: 'u', session_id: 's', ...o });
@@ -123,5 +123,38 @@ describe('BackgroundService', () => {
     expect(await handleBackground(svc, { kind: 'background.run', sessionId: '00000000-0000-0000-0000-000000000000', runId: 'wf_x' })).toBeNull();
     expect(await handleBackground(svc, { kind: 'background.transcript', sessionId: '00000000-0000-0000-0000-000000000000', agentId: 'abcdef12' })).toEqual([]);
     svc.dispose();
+  });
+});
+
+describe('BackgroundService: finished sub-agents do not stay 在跑 (issue #19)', () => {
+  it('the Agent call before its task (no state yet) is remembered; its result ends the task; nothing listed before a task', () => {
+    vi.useFakeTimers();
+    const { pool, svc, pushes, tick } = setup();
+    pool.emit('message', 's1', { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Agent', input: { prompt: 'p' } }] } });
+    expect(svc.list()).toEqual([]);
+    expect(pushes.length).toBe(0);
+    pool.emit('message', 's1', sys('task_started', { task_id: 'a1', tool_use_id: 'tu1', description: 'x', task_type: 'local_agent' }));
+    tick(1000);
+    pool.emit('message', 's1', { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'ok' }] } });
+    tick(1000);
+    expect(svc.hasRunning('s1')).toBe(false);
+    expect(pushes.at(-1)!.tasks[0].status).toBe('completed');
+    svc.dispose();
+  });
+  it('markGone: a running task ends as stopped; an unknown one changes nothing', () => {
+    vi.useFakeTimers();
+    const { pool, svc, tick } = setup();
+    pool.emit('message', 's1', sys('task_started', { task_id: 'a1', description: 'x', task_type: 'local_agent' }));
+    tick(1000);
+    expect(svc.markGone('s1', 'a1')).toBe(true);
+    expect(svc.hasRunning('s1')).toBe(false);
+    expect(svc.markGone('s1', 'a1')).toBe(false);
+    expect(svc.markGone('s2', 'a1')).toBe(false);
+    svc.dispose();
+  });
+  it("isTaskGone: the CLI's answer, not other failures", () => {
+    expect(isTaskGone(new Error('No task found with ID: a7c600f5f6811e6cd'))).toBe(true);
+    expect(isTaskGone('no task found with id: x')).toBe(true);
+    expect(isTaskGone(new Error('process exited'))).toBe(false);
   });
 });

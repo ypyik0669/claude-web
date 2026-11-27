@@ -21,6 +21,15 @@ spec 和实施记录：`docs/superpowers/specs/2026-10-12-background-office-desi
 - **一轮进行中结束的后台任务，流上没有 `task_notification`**（2026-10-17 用户报告「后台 · 19 条命令」）：CLI 把这种结束通知当附件塞进这一轮
   （transcript 里 `queue-operation` enqueue 之后马上 remove），只在下一轮才处理的那种才走流。`BackgroundService.reconcile()` 每 5 秒读有在跑任务的
   对话的 transcript 新增部分，只认 `"queue-operation"` 行里的 `<task-notification>`，补上结束。详见「照官方桌面版录屏改的界面」第二轮。
+- **跑完的子代理还显示在跑、停止报「No task found」**（2026-11-27，GitHub issue #19，v0.5.16 Windows，报告里没有日志，根因没定）：
+  两层兜底。① 前台子代理的结束看它那个 Agent 调用的 `tool_result`（`registry.ts` 的 `applyTurnMessage`；service 的 `observe` 现在也看
+  主对话的 assistant / user 消息，`parent_tool_use_id` 有值的是子代理自己的不算）：assistant 里名字是 `Agent` / `Task`、没带
+  `run_in_background: true` 的 tool_use 记进 `syncCalls`，它的 tool_result 回来就把 `toolUseId` 对上的子代理任务标完成（`is_error` 标失败）；
+  `backgrounded === true` 的、SendMessage 续上的不动（它们的 tool_result 立刻就回来）。ccb 的 `task_started` 不带 `is_backgrounded`，所以只能
+  靠调用参数判断前后台。Agent 调用比 `task_started` 先到，那时对话可能还没有登记表，先放在 service 的 `early`（不进列表，最多 100 个）。
+  ② 停止时 CLI 回「No task found」= 它早就结束了：hub 的 `session.stopTask` 接住（`isTaskGone`），`BackgroundService.markGone` 标成
+  「已停止 · 停止前就已经结束了」，不再弹「停止失败」。顺带核对过 transcript 里结束通知的写法：`queue-operation:enqueue` 几乎都有；官方较新的
+  还写 `attachment: queued_command`，ccb 写普通 user 行——reconcile 只认第一种，目前够用。
 
 ## 跑完的任务一分钟后离开（2026-11-05，用户报告：跑完的卡片和网吧里坐着的人一多就卡）
 

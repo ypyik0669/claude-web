@@ -3,11 +3,17 @@
 // once a second per conversation, and what is on disk about it (finished runs, sub-agent transcripts) on request.
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
-import { applyBg, createBgState, endRunning, snapshotBg, type BgState } from './registry.js';
+import { applyBg, applyTurnMessage, endGone, createBgState, endRunning, snapshotBg, type BgState } from './registry.js';
 import { listRuns, readAgentTranscript, readRun, sessionDirOf } from './disk.js';
 import { BgHistory } from './history.js';
 import type { BackgroundRequest, BgHistoryPage, BgHistoryQuery, BgRunSummary, BgSession, BgTask } from './types.js';
 import { tr } from '../i18n/index.js';
+
+/** The CLI's answer to stopping a task it no longer has (the SDK's stopTask control request): "No task found with ID: …". */
+export const isTaskGone = (e: unknown): boolean => /no task found/i.test(String((e as Error)?.message ?? e));
+
+/** At most this many conversations waiting in `early` (a foreground Agent call seen, no task yet). */
+const MAX_EARLY = 100;
 
 /** A conversation whose background has all ended is kept this long (the page's 「结束了」). */
 export const KEEP_ENDED_MS = 24 * 3600_000;
@@ -95,14 +101,39 @@ export class BackgroundService extends EventEmitter {
   }
 
   observe(sessionId: string, m: unknown): void {
-    const t = (m as any)?.type === 'system' ? (m as any).subtype : undefined;
+    const type = (m as any)?.type;
+    if (type === 'assistant' || type === 'user') { this.observeTurn(sessionId, m); return; }
+    const t = type === 'system' ? (m as any).subtype : undefined;
     if (typeof t !== 'string' || !t.startsWith('task_')) return;
-    let s = this.states.get(sessionId);
-    const fresh = !s;
+    let s = this.states.get(sessionId) ?? this.early.get(sessionId);
+    const fresh = !this.states.has(sessionId);
     if (!s) s = createBgState(sessionId);
     if (!applyBg(s, m, this.now())) return;
-    if (fresh) { this.states.set(sessionId, s); this.trim(); this.markRead(sessionId); }
+    if (fresh) { this.early.delete(sessionId); this.states.set(sessionId, s); this.trim(); this.markRead(sessionId); }
     this.schedule(sessionId);
+  }
+
+  /**
+   * Conversations whose foreground Agent call came before any task (the tool_use arrives before its task_started):
+   * their state waits here, out of the list, until a task makes it a background of its own.
+   */
+  private early = new Map<string, BgState>();
+
+  /** The turn's own messages: a foreground sub-agent's call and its result (registry.ts applyTurnMessage). */
+  private observeTurn(sessionId: string, m: any): void {
+    let s = this.states.get(sessionId);
+    if (!s) {
+      const calls = m.type === 'assistant' && Array.isArray(m.message?.content) && m.message.content.some((b: any) => b?.type === 'tool_use');
+      s = this.early.get(sessionId);
+      if (!s && !calls) return;
+      if (!s) {
+        if (this.early.size >= MAX_EARLY) this.early.delete(this.early.keys().next().value!);
+        s = createBgState(sessionId);
+        this.early.set(sessionId, s);
+      }
+    }
+    if (m.type === 'user' && !s.syncCalls.size) return;
+    if (applyTurnMessage(s, m, this.now()) && this.states.has(sessionId)) this.schedule(sessionId);
   }
 
   /** Start reading the transcript where it ends now: ends written before this conversation had background work are not ours. */
@@ -142,6 +173,17 @@ export class BackgroundService extends EventEmitter {
     for (const n of noticesIn(queued)) if (applyBg(s, { type: 'system', subtype: 'task_notification', ...n }, this.now())) changed = true;
     if (changed) this.schedule(sessionId);
     return changed;
+  }
+
+  /**
+   * The CLI answered a Stop with "No task found" (issue #19): the task ended without us hearing. Marked stopped here,
+   * so 后台 stops showing it 在跑. Returns true when it was still running.
+   */
+  markGone(sessionId: string, taskId: string): boolean {
+    const s = this.states.get(sessionId);
+    if (!s || !endGone(s, taskId, this.now())) return false;
+    this.schedule(sessionId);
+    return true;
   }
 
   /** The first change goes out at once; changes after it are gathered for `flushMs`. */

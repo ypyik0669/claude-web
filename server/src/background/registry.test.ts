@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyBg, createBgState, endRunning, snapshotBg, MAX_EVENTS, MAX_EVENT_TEXT, MAX_EVENT_WHO, SNAPSHOT_EVENTS } from './registry.js';
+import { applyBg, applyTurnMessage, createBgState, endGone, endRunning, snapshotBg, MAX_EVENTS, MAX_EVENT_TEXT, MAX_EVENT_WHO, SNAPSHOT_EVENTS } from './registry.js';
 
 const T0 = 1_790_000_000_000;
 const sys = (subtype: string, o: Record<string, unknown>) => ({ type: 'system', subtype, uuid: 'u', session_id: 's', ...o });
@@ -182,5 +182,55 @@ ${'x'.repeat(300)}` })]), T0 + 1);
     const s = createBgState('s1');
     for (let i = 0; i < 12; i++) applyBg(s, sys('task_started', { task_id: `a${i}`, description: 'x', task_type: 'local_agent' }), T0 + i);
     expect(snapshotBg(s).tasks.map((t) => t.agents[0].color)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2]);
+  });
+});
+
+describe('a foreground sub-agent ends when its Agent call returns (issue #19)', () => {
+  const call = (id: string, input: Record<string, unknown> = {}, name = 'Agent') => ({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id, name, input: { description: 'd', prompt: 'p', ...input } }] } });
+  const result = (id: string, o: Record<string, unknown> = {}, parent: string | null = null) => ({ type: 'user', parent_tool_use_id: parent, message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'done', ...o }] } });
+  const started = (taskId: string, toolUseId: string, extra: Record<string, unknown> = {}) => sys('task_started', { task_id: taskId, tool_use_id: toolUseId, description: 'Write merged DESIGN.md', task_type: 'local_agent', ...extra });
+
+  it('ccb: no is_backgrounded, no task_notification — the tool_result ends it', () => {
+    const s = createBgState('s1');
+    expect(applyTurnMessage(s, call('tu1'), T0)).toBe(false);
+    applyBg(s, started('a7c600f5f6811e6cd', 'tu1'), T0 + 1);
+    expect(applyTurnMessage(s, result('tu1'), T0 + 60_000)).toBe(true);
+    expect(snapshotBg(s).tasks[0]).toMatchObject({ status: 'completed', endedAt: T0 + 60_000 });
+    expect(snapshotBg(s).tasks[0].agents[0].state).toBe('done');
+    // the notification arriving after all changes nothing but the summary
+    expect(applyBg(s, sys('task_notification', { task_id: 'a7c600f5f6811e6cd', status: 'completed' }), T0 + 60_001)).toBe(false);
+  });
+  it('an error result: failed; the old Task tool name counts too', () => {
+    const s = createBgState('s1');
+    applyTurnMessage(s, call('tu1', {}, 'Task'), T0);
+    applyBg(s, started('a1', 'tu1'), T0);
+    applyTurnMessage(s, result('tu1', { is_error: true }), T0 + 5);
+    expect(snapshotBg(s).tasks[0].status).toBe('failed');
+  });
+  it('background ones are left to their notification: run_in_background, is_backgrounded, a SendMessage resume', () => {
+    const s = createBgState('s1');
+    applyTurnMessage(s, call('bg', { run_in_background: true }), T0);
+    applyBg(s, started('a1', 'bg'), T0);
+    applyTurnMessage(s, call('moved'), T0);
+    applyBg(s, started('a2', 'moved', { is_backgrounded: true }), T0);
+    applyTurnMessage(s, { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'resume', name: 'SendMessage', input: { to: 'a3', message: 'go on' } }] } }, T0);
+    applyBg(s, started('a3', 'resume'), T0);
+    for (const id of ['bg', 'moved', 'resume']) expect(applyTurnMessage(s, result(id), T0 + 10)).toBe(false);
+    expect(snapshotBg(s).tasks.map((t) => t.status)).toEqual(['running', 'running', 'running']);
+  });
+  it("a sub-agent's own tool results (parent_tool_use_id) are not the turn's", () => {
+    const s = createBgState('s1');
+    applyTurnMessage(s, call('tu1'), T0);
+    applyBg(s, started('a1', 'tu1'), T0);
+    expect(applyTurnMessage(s, result('tu1', {}, 'tu1'), T0 + 1)).toBe(false);
+    expect(snapshotBg(s).tasks[0].status).toBe('running');
+  });
+  it('a task the CLI no longer has (Stop: "No task found") is shown stopped; twice changes nothing', () => {
+    const s = createBgState('s1');
+    applyBg(s, started('a1', 'tu1'), T0);
+    expect(endGone(s, 'a1', T0 + 1)).toBe(true);
+    expect(snapshotBg(s).tasks[0]).toMatchObject({ status: 'stopped', reason: '停止前就已经结束了' });
+    expect(endGone(s, 'a1', T0 + 2)).toBe(false);
+    expect(endGone(s, 'nope', T0 + 2)).toBe(false);
   });
 });
