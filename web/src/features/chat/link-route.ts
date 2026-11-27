@@ -2,16 +2,19 @@ import { useStore } from '@/store';
 import { desktop } from '@/desktop';
 import { blockRemoteOpen } from '@/features/remote-guard';
 import { openInBrowser } from '@/features/workbench/right-panel';
+import { openAppLink, parseAppLink, type AppLink } from './deep-link';
 
 /**
  * Where a link in a reply goes (spec 2026-10-24 A1). Every link in a reply is decided here: a page → the browser,
- * a file Claude made → the in-app preview, mail / tel → the system, anything else → nothing. Left to Electron, a
+ * a file Claude made → the in-app preview, mail / tel → the system, a claude-web:// link → this app (deep-link.ts;
+ * issue #18), anything else → nothing. Left to Electron, a
  * relative link resolved against the app's own address and took the whole window off the app (the mac white screen).
  */
 export type LinkRoute =
   | { to: 'web'; url: string }
   | { to: 'file'; path: string; line?: number }
   | { to: 'external'; url: string }
+  | { to: 'app'; link: AppLink }
   | { to: 'anchor' }
   | { to: 'none' };
 
@@ -77,6 +80,7 @@ export function routeLink(href: string, cwd: string | undefined): LinkRoute {
   if (UNC.test(h) || UNC.test(d)) return { to: 'none' };
   if (/^https?:/i.test(h)) return { to: 'web', url: h };
   if (/^(mailto|tel):/i.test(h)) return { to: 'external', url: h };
+  if (/^claude-web:/i.test(h)) { const link = parseAppLink(h); return link ? { to: 'app', link } : { to: 'none' }; }
   if (/^file:/i.test(h)) {
     // file://host/x names another machine; only file:///x and file://localhost/x are this one
     const m = /^file:(?:\/\/([^/\\]*))?(.*)$/is.exec(h)!;
@@ -109,6 +113,7 @@ export function followLink(r: LinkRoute, sessionId: string | null | undefined, o
     return openExternal(r.url);
   }
   if (r.to === 'external') return openExternal(r.url);
+  if (r.to === 'app') { void openAppLink(r.link); return; }
   if (r.to !== 'file') return;
   if (blockRemoteOpen(sessionId, r.path)) return;
   useStore.getState().openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: r.path, ...(r.line ? { line: r.line } : {}) }, 'tab');

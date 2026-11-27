@@ -30,7 +30,8 @@ const CodeRunCtx = createContext<CodeRunContext | undefined>(undefined);
  * `C`), `C:\…` (→ `C:%5C…`), `tel:` — and a blank link opens nothing (2026-10-24 review I1). Those hrefs pass through;
  * routeLink is what decides (and refuses) where a link goes. `src` and everything else keep the default.
  */
-const urlTransform: UrlTransform = (url, key) => (key === 'href' && /^(file:|tel:|[a-zA-Z]:)/i.test(url) ? url : key === 'src' && localImagePath(url) ? url : defaultUrlTransform(url));
+// claude-web: — issue #18: a 深链接 in a reply was blanked and could not be clicked (deep-link.ts opens it in the app)
+const urlTransform: UrlTransform = (url, key) => (key === 'href' && /^(file:|tel:|claude-web:|[a-zA-Z]:)/i.test(url) ? url : key === 'src' && localImagePath(url) ? url : defaultUrlTransform(url));
 
 type LinkMouse = { button: number; ctrlKey?: boolean; metaKey?: boolean; preventDefault(): void };
 

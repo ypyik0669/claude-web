@@ -52,7 +52,7 @@ import { setSafeMode } from '@/themes/apply';
 import { CustomCss } from './custom-css';
 import { AddAccountHost } from '@/features/settings/ClaudeAccounts';
 import { FileMenu } from '@/features/files/FileMenu';
-import { fillComposer } from '@/features/composer/fill';
+import { openAppLink } from '@/features/chat/deep-link';
 import { quoteInComposer } from '@/features/composer/quote';
 import { WhatsNewModal, useWhatsNewOnUpdate } from '@/features/update/WhatsNew';
 import { startNavHistory } from '@/features/workbench/nav-history';
@@ -269,11 +269,8 @@ export function App() {
     // 深链接: claude-web://new?folder=…&q=… fills the new-conversation page (never sends); …/session/<id> opens one
     const takeLink = async () => {
       const l = await desktop?.takeDeepLink?.().catch(() => null);
-      if (!l) return;
-      const st = useStore.getState();
-      if (l.kind === 'session') { if (st.open[l.id]) st.setActive(l.id); else void st.loadHistory(l.id); return; }
-      runCommand('new');
-      requestAnimationFrame(() => fillComposer({ cwd: l.folder, text: l.q, focus: true }));
+      // the shell checked the folder already (desktop/src/deep-link.ts); a link in a reply opens the same way (#18)
+      if (l) await openAppLink(l, true);
     };
     const offLink = desktop.onDeepLink?.(() => void takeLink());
     void takeLink();

@@ -19,6 +19,10 @@ const links = vi.hoisted(() => ({
 }));
 vi.mock('@/desktop', () => ({ get desktop() { return links.desktop; } }));
 vi.mock('@/features/remote-guard', () => ({ blockRemoteOpen: () => false }));
+// deep-link.ts (issue #18) imports these; a link here is only routed
+vi.mock('@/ws/client', () => ({ ws: { request: async () => null }, authToken: () => null }));
+vi.mock('@/features/workbench/commands', () => ({ runCommand: () => {} }));
+vi.mock('@/features/composer/fill', () => ({ fillComposer: () => {} }));
 vi.mock('./CodeBlock', () => ({ CodeBlock: () => null }));
 vi.mock('@/features/workbench/right-panel', () => ({ openInBrowser: (u: string) => links.openInBrowser(u) }));
 
@@ -41,6 +45,11 @@ describe('<Markdown> links keep their href and route', () => {
   it('tel: survives and goes to the system', () => {
     const [h] = hrefs('[call](tel:+123)');
     expect(routeLink(h, undefined)).toEqual({ to: 'external', url: 'tel:+123' });
+  });
+  // issue #18: the assistant's 「[打开](claude-web://new?folder=…&q=…)」 rendered as a link that could not be clicked
+  it('claude-web: survives and opens in the app', () => {
+    const [h] = hrefs('[打开](claude-web://new?folder=C%3A%5Cproj&q=%E4%BF%AE%E6%B5%8B%E8%AF%95)');
+    expect(routeLink(h, undefined)).toEqual({ to: 'app', link: { kind: 'new', folder: 'C:\\proj', q: '修测试' } });
   });
   it('dangerous schemes are still blanked by the default transform', () => {
     expect(hrefs('[x](javascript:alert(1))')).toEqual(['']);

@@ -10,6 +10,10 @@ const env = vi.hoisted(() => ({
 vi.mock('@/store', () => ({ useStore: { getState: () => ({ settings: env.settings }) } }));
 vi.mock('@/desktop', () => ({ get desktop() { return env.desktop; } }));
 vi.mock('@/features/remote-guard', () => ({ blockRemoteOpen: () => false }));
+// deep-link.ts (issue #18) imports these; a link here is only routed
+vi.mock('@/ws/client', () => ({ ws: { request: async () => null } }));
+vi.mock('@/features/workbench/commands', () => ({ runCommand: () => {} }));
+vi.mock('@/features/composer/fill', () => ({ fillComposer: () => {} }));
 vi.mock('@/features/workbench/right-panel', () => ({ openInBrowser: (u: string) => env.openInBrowser(u) }));
 
 // stage B task 1: a page link in a reply opens in the built-in browser; Ctrl / Cmd, or the setting off → the system's
@@ -71,6 +75,10 @@ describe('routeLink', () => {
     expect(routeLink('tel:123', undefined)).toEqual({ to: 'external', url: 'tel:123' });
   });
   it('dangerous or unknown schemes open nothing', () => {
+    // issue #18: a 深链接 opens in the app; a malformed one opens nothing
+    expect(routeLink('claude-web://new?folder=C%3A%5Cproj&q=hi', undefined)).toEqual({ to: 'app', link: { kind: 'new', folder: 'C:\\proj', q: 'hi' } });
+    expect(routeLink('claude-web://session/abc', '/p')).toEqual({ to: 'app', link: { kind: 'session', id: 'abc' } });
+    expect(routeLink('claude-web://settings', undefined)).toEqual({ to: 'none' });
     expect(routeLink('javascript:alert(1)', undefined)).toEqual({ to: 'none' });
     expect(routeLink('data:text/html,<b>x</b>', undefined)).toEqual({ to: 'none' });
     expect(routeLink('vbscript:x', undefined)).toEqual({ to: 'none' });

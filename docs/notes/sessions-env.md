@@ -70,6 +70,13 @@
   `claude-web://session/<id>`。主进程存 `pendingLink`，页面 ready 时 `desktop:deepLink:take` 取一次，之后的链接发 nudge 再取。
   `electron-builder.yml` 的 `protocols` 让安装包注册；**只有打包版 `setAsDefaultProtocolClient`**（开发运行会把系统的链接抢过来）。
   `new` 只预填新对话页，从不自动发送。**桌面版里没真点过链接**（只有解析的单测）；设置里的示例行没做。
+- **回复里的深链接在应用里打开**（2026-11-27，GitHub issue #18：助手写的 `[打开](claude-web://new?…)` 点了没反应）：两处拦着——
+  `Markdown.tsx` 的 `urlTransform`（react-markdown 默认把白名单外的协议清成空 href）和 `link-route.ts`（别的协议一律 `none`）。现在
+  `claude-web:` 放行，`routeLink` 给 `{ to: 'app', link }`，`followLink` 调 `web/src/features/chat/deep-link.ts` 的 `openAppLink`——
+  不交给系统（系统只会把它转回这个应用，网页版根本没有系统处理程序）。解析 `parseAppLink` 照抄桌面版 `parseDeepLink` 的规则（两份，
+  `deep-link.test.ts` 和桌面版的单测是同一套用例；改一处记得改另一处）：回复里的链接是模型写的，和任意网页上的一样不可信。文件夹只收本机
+  绝对路径，再 `fs.stat` 确认是目录，不在就丢；桌面版主进程交来的链接已经查过（`openAppLink(l, true)`），App.tsx 的 `takeLink` 也走这个函数。
+  加了这条依赖后 rolldown 把 ChatView 那一组切成了单独的块（boot-*.js 从 1.83 MB 变成 1.14 MB + ChatView-*.js 0.63 MB）：boot 静态导入它、index 预加载它，首屏下的东西没变，只是多一个文件；`import()` 改不改都一样（试过）。`deep-link.ts` 静态导入 ws / commands / composer，引入 `link-route.ts` 的测试（link-route / markdown-links）mock 这三个（ws 一导入就要 `location`）。
 
 ## 分屏快捷
 
