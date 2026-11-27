@@ -11,6 +11,8 @@ vendor/sidecars/*
 # CLIProxyAPI / Magpie builds, fetched by scripts/engines/fetch.mjs before packaging (never committed)
 vendor/engines/*
 !vendor/engines/.gitkeep
+# node-datachannel compiled for macOS 12 by scripts/mac/build-datachannel.sh (the mac release jobs cache it)
+vendor/datachannel/
 *.log
 hello.txt
 color.txt

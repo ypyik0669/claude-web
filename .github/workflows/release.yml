@@ -57,6 +57,21 @@ jobs:
         run: node scripts/sidecars/fetch.mjs --platform ${{ matrix.sidecar_platform }}
       - name: fetch engines (pinned, SHA256 checked)
         run: node scripts/engines/fetch.mjs --platform ${{ matrix.sidecar_platform }}
+      # node-datachannel (the phone's direct link) for macOS 12: npm's darwin builds need 12.3 (arm64) / 15.0 (x64);
+      # scripts/mac/build-datachannel.sh compiles the installed version for 12.0 and swaps it into node_modules
+      - name: node-datachannel version
+        if: runner.os == 'macOS'
+        id: ndc
+        run: echo "v=$(node -p "JSON.parse(require('fs').readFileSync('node_modules/node-datachannel/package.json','utf8')).version")" >> "$GITHUB_OUTPUT"
+      - name: node-datachannel built for macOS 12 (cache)
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: vendor/datachannel
+          key: datachannel-${{ matrix.sidecar_platform }}-${{ steps.ndc.outputs.v }}-${{ hashFiles('scripts/mac/build-datachannel.sh') }}
+      - name: node-datachannel built for macOS 12
+        if: runner.os == 'macOS'
+        run: bash scripts/mac/build-datachannel.sh vendor/datachannel
       - run: npm run build:all
       - name: package
         shell: bash
@@ -71,6 +86,16 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then EXE="dist-desktop/win-unpacked/Claude Web.exe"
           else EXE="$(find dist-desktop -path '*Claude Web.app/Contents/MacOS/Claude Web' -type f | head -1)"; fi
           node scripts/smoke-packaged.mjs "$EXE" "dist-desktop/smoke-${{ strategy.job-index }}.png"
+      # every binary in the .app runs on macOS 12 (electron-builder.yml mac.minimumSystemVersion). Allowed above it:
+      # the official claude binary (needs 13.0; not used there — server/src/claude-exe.ts officialBinaryRuns) and
+      # CLIProxyAPI (says 15.0 from a cgo link on macOS 15; Go 1.26, the last Go for macOS 12, and its imports are all
+      # in 12 — checked 2026-11-27). Any Go binary from Go 1.27 on fails, allowed or not
+      - name: everything in the app runs on macOS 12
+        if: runner.os == 'macOS'
+        run: |
+          APP="$(find dist-desktop -maxdepth 2 -name 'Claude Web.app' -type d | head -1)"
+          node scripts/mac/check-min-os.mjs "$APP" --max 12.0 --go-max 1.26 \
+            --allow 'claude-agent-sdk-darwin-[^/]+/claude$' --allow 'engines/darwin-[^/]+/cliproxyapi/cli-proxy-api$'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
